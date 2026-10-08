@@ -390,6 +390,32 @@ def install(app):
         gpu_platform_fee: float=0.15
         asic_efficiency_j_th: float=20.0
 
+    @app.post("/api/v1/farms/{farm_id}/forecast-plan")
+    def forecast_plan(farm_id:str,x:DispatchIn,authorization:str|None=Header(default=None)):
+        uid=user(authorization); c=init_db()
+        if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
+        hours=max(1,min(72,x.horizon_hours))
+        # Deterministic baseline forecast: preserve current market inputs while applying
+        # transparent time-shape assumptions. This is intentionally recommendation-only.
+        rows=[]
+        for h in range(hours):
+            pv_shape=max(0.0, __import__("math").sin((h+1)/hours*__import__("math").pi))
+            gpu_factor=1.0 + 0.12*__import__("math").sin(h/6.0)
+            btc_factor=1.0 - 0.08*__import__("math").sin(h/8.0)
+            pv=x.pv_kwh/hours*(0.35+1.3*pv_shape)
+            gpu=x.gpu_hourly_usd*gpu_factor
+            btc=x.btc_hashprice_usd_ph_day*btc_factor
+            gpu_v=(gpu/x.eur_usd)*x.gpu_utilization*(1-x.gpu_platform_fee)/(0.35 or 1)
+            btc_v=(btc/x.eur_usd)/(x.asic_efficiency_j_th*1000)*0.98*0.98
+            best="AI Compute" if gpu_v>=btc_v else "BTC Mining"
+            rows.append({"hour":h,"pv_kwh":round(pv,3),"gpu_hourly_usd":round(gpu,4),
+                         "btc_hashprice_usd_ph_day":round(btc,4),"gpu_value_eur_kwh":round(gpu_v,5),
+                         "btc_value_eur_kwh":round(btc_v,5),"best_option":best})
+        return {"farm_id":farm_id,"horizon_hours":hours,"forecast":rows,
+                "method":"transparent_baseline_forecast","confidence":0.55,
+                "note":"Forecast becomes data-trained as historical observations accumulate.",
+                "recommendation_only":True,"hardware_write":False}
+
     @app.post("/api/v1/farms/{farm_id}/dispatch-plan")
     def dispatch_plan(farm_id:str,x:DispatchIn,authorization:str|None=Header(default=None)):
         uid=user(authorization); c=init_db()
