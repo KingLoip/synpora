@@ -90,6 +90,7 @@ SCRIPT = r"""
       nav.querySelectorAll("button").forEach(x=>x.classList.remove("active"));b.classList.add("active");
       if(name==="Overview"){panel.classList.remove("show");window.scrollTo({top:0,behavior:"smooth"});return}
       panel.classList.add("show");
+      if(name==="Assets") setTimeout(loadAssets,50);
       const titles={Assets:"Asset Registry",Economics:"Economics & Value per kWh","AI Decision":"AI Decision Center",Simulation:"What-if Simulation Lab",Reports:"Reports & Audit Trail"};
       panel.querySelector("h2").textContent=titles[name]||"SYNPORA Workspace";
       toast(name+" workspace geöffnet");
@@ -97,6 +98,30 @@ SCRIPT = r"""
     };
     nav.appendChild(b);
   });
+
+
+  async function loadAssets(){
+    const acc=JSON.parse(localStorage.getItem("synpora_account")||"null");
+    if(!acc?.token){toast("Bitte zuerst Workspace verbinden");return}
+    const farms=await fetch("/api/v1/farms",{headers:{Authorization:"Bearer "+acc.token}}).then(r=>r.json());
+    const farm=farms[0]; if(!farm){toast("Noch keine Farm vorhanden");return}
+    const assets=await fetch("/api/v1/farms/"+farm.id+"/assets",{headers:{Authorization:"Bearer "+acc.token}}).then(r=>r.json());
+    const box=panel.querySelector(".sp-assets")||document.createElement("div");
+    box.className="sp-assets"; box.style.marginTop="18px";
+    const rows=assets.map(a=>"<div class='sp-row'><span>"+a.name+" · "+a.kind+"</span><strong>"+Number(a.power_kw).toFixed(1)+" kW</strong></div>").join("");
+    box.innerHTML="<div class='sp-label'>CONNECTED ASSETS</div>"+(rows||"<div class='sp-mini'>Noch keine Assets.</div>")+"<button class='sp-action' id='sp-add-asset'>+ Asset hinzufügen</button>";
+    panel.appendChild(box); document.getElementById("sp-add-asset").onclick=addAsset;
+  }
+  async function addAsset(){
+    const acc=JSON.parse(localStorage.getItem("synpora_account")||"null"); if(!acc?.token)return;
+    const name=window.prompt("Asset-Name, z.B. GPU Server"); if(!name)return;
+    const kind=window.prompt("Typ: BTC / GPU / PV / BATTERY / GRID / OTHER","GPU"); if(!kind)return;
+    const power=Number(window.prompt("Leistung in kW","10")||0);
+    const farms=await fetch("/api/v1/farms",{headers:{Authorization:"Bearer "+acc.token}}).then(r=>r.json());
+    const res=await fetch("/api/v1/farms/"+farms[0].id+"/assets",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+acc.token},body:JSON.stringify({name,kind,power_kw:power})});
+    if(!res.ok){toast("Asset konnte nicht gespeichert werden");return}
+    toast("Asset gespeichert"); loadAssets();
+  }
 
   function mount(){
     if(!document.body || document.getElementById("synpora-nav")) return;
