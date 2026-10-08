@@ -130,6 +130,29 @@ def install(app):
         gpu=((x.gpu_hourly_usd/x.eur_usd)*x.gpu_utilization*(1-x.gpu_platform_fee))/max(x.gpu_power_kw,0.01)
         return {"AI Compute":max(0,gpu),"BTC Mining":max(0,btc),"Battery":x.battery_value_eur_kwh,"Grid":x.grid_value_eur_kwh}
 
+    @app.post("/api/v1/market/snapshot")
+    def market_snapshot():
+        c=init_db()
+        snap={"timestamp":time.time(),"btc_hashprice_usd_ph_day":39.6395,"eur_usd":1.1205,
+              "gpu_l40s_usd_hour":1.09,"gpu_l40s_power_kw":0.35}
+        # SQLite/Postgres-compatible JSON snapshot store.
+        if DB_URL and c.__class__.__module__.startswith("psycopg"):
+            c.execute("CREATE TABLE IF NOT EXISTS market_snapshots(id TEXT PRIMARY KEY,ts DOUBLE PRECISION NOT NULL,payload TEXT NOT NULL)")
+            c.execute("INSERT INTO market_snapshots VALUES(%s,%s,%s)",(secrets.token_hex(12),snap["timestamp"],json.dumps(snap)))
+        else:
+            c.execute("CREATE TABLE IF NOT EXISTS market_snapshots(id TEXT PRIMARY KEY,ts REAL NOT NULL,payload TEXT NOT NULL)")
+            c.execute("INSERT INTO market_snapshots VALUES(?,?,?)",(secrets.token_hex(12),snap["timestamp"],json.dumps(snap))); c.commit()
+        return snap
+
+    @app.get("/api/v1/market/history")
+    def market_history(limit:int=100):
+        c=init_db()
+        try:
+            rows=c.execute("SELECT ts,payload FROM market_snapshots ORDER BY ts DESC LIMIT ?",(min(limit,500),)).fetchall()
+        except Exception:
+            rows=[]
+        return [{"timestamp":r[0],"data":json.loads(r[1])} for r in rows]
+
     @app.post("/api/v1/farms/{farm_id}/scenario")
     def scenario(farm_id:str,x:ScenarioIn,authorization:str|None=Header(default=None)):
         uid=user(authorization); c=init_db()
@@ -148,13 +171,14 @@ def install(app):
         if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
         base=ScenarioIn()
         multipliers=[0.65,0.8,0.95,1.0,1.1,1.25,1.4]
-        samples=[]
+        samples=[]; total_ai=total_btc=0.0
         for m in multipliers:
             s=ScenarioIn(energy_kwh=100,energy_cost_eur_kwh=0.05,btc_hashprice_usd_ph_day=base.btc_hashprice_usd_ph_day*m,gpu_hourly_usd=base.gpu_hourly_usd*m)
             vals=_economics(s); best=max(vals,key=vals.get)
-            samples.append({"market_multiplier":m,"best":best,"best_value_eur_kwh":round(vals[best],5)})
+            samples.append({"market_multiplier":m,"best":best,"best_value_eur_kwh":round(vals[best],5),"ai_net_eur":round((vals["AI Compute"]-s.energy_cost_eur_kwh)*100,2),"btc_net_eur":round((vals["BTC Mining"]-s.energy_cost_eur_kwh)*100,2)})
+            total_ai+=(vals["AI Compute"]-s.energy_cost_eur_kwh)*100; total_btc+=(vals["BTC Mining"]-s.energy_cost_eur_kwh)*100
         wins={k:sum(1 for s in samples if s["best"]==k) for k in ["AI Compute","BTC Mining","Battery","Grid"]}
-        return {"farm_id":farm_id,"samples":samples,"wins":wins,"method":"synthetic_market_sensitivity","recommendation_only":True}
+        return {"farm_id":farm_id,"samples":samples,"wins":wins,"cumulative_net_eur":{"ai":round(total_ai,2),"btc":round(total_btc,2),"delta_ai_vs_btc":round(total_ai-total_btc,2)},"method":"synthetic_market_sensitivity","recommendation_only":True}
 
     class AuthIn(BaseModel):
         email: str
