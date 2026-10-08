@@ -461,6 +461,26 @@ def install(app):
         hit=sum(1 for a,b in pairs if (a>=0)==(b>=0))/len(pairs)
         return {"samples":len(pairs),"mae":round(mae,8),"directional_hit_rate":round(hit,3)}
 
+    def _online_learning_update(c, farm_id):
+        snaps=c.execute("SELECT ts,btc_hashprice_usd_ph_day,gpu_hourly_usd,austria_spot_eur_kwh FROM market_snapshots ORDER BY ts DESC LIMIT 168").fetchall()
+        decisions=c.execute("SELECT id,chosen,predicted_value,ts FROM decision_ledger WHERE farm_id=? AND status='open' ORDER BY ts ASC LIMIT 100",(farm_id,)).fetchall()
+        settled=0
+        for d in decisions:
+            strategy=d[1]; predicted=float(d[2] or 0); best=None
+            for s in snaps:
+                if strategy=="BTC Mining" and s[1] is not None: actual=float(s[1])
+                elif strategy=="AI Compute" and s[2] is not None: actual=float(s[2])
+                elif strategy in ("Battery","Grid") and s[3] is not None: actual=float(s[3])
+                else: continue
+                best=actual; break
+            if best is None: continue
+            # Store an observed normalized market value; later calibration can compare
+            # the direction and magnitude of the prediction without controlling hardware.
+            c.execute("UPDATE decision_ledger SET actual_value=?,status='settled' WHERE id=?",(best,d[0]))
+            settled+=1
+        c.commit()
+        return {"settled_now":settled,"open_remaining":len(decisions)-settled}
+
     @app.get("/api/v1/farms/{farm_id}/forecast-health")
     def forecast_health(farm_id:str,authorization:str|None=Header(default=None)):
         uid=user(authorization); c=init_db()
