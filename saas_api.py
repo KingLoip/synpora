@@ -482,6 +482,13 @@ def install(app):
         remaining=max(0,len(decisions)-settled)
         return {"settled_now":settled,"open_remaining":remaining}
 
+    @app.get("/api/v1/system/release")
+    def release_status():
+        return {"product":"SYNPORA","release":"1.0.1","ai_core":"self_learning_v1",
+                "mode":"recommendation_only","hardware_write":False,
+                "features":["market_intelligence","adaptive_forecast","model_selection","decision_ledger","self_learning","calibrated_confidence"],
+                "status":"production_candidate"}
+
     @app.get("/api/v1/system/production-readiness")
     def production_readiness():
         db_configured=bool(os.getenv("DATABASE_URL") or os.getenv("POSTGRES_URL"))
