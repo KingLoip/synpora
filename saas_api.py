@@ -455,30 +455,49 @@ def install(app):
 
     def _settled_learning_stats(c, farm_id, strategy):
         rows=c.execute("SELECT predicted_value,actual_value FROM decision_ledger WHERE farm_id=? AND chosen=? AND status='settled' AND predicted_value IS NOT NULL AND actual_value IS NOT NULL ORDER BY ts DESC LIMIT 100",(farm_id,strategy)).fetchall()
-        if not rows: return {"samples":0,"mae":None,"directional_hit_rate":None}
+        if not rows: return {"samples":0,"mae":None,"forecast_hit_rate":None}
         pairs=[(float(r[0]),float(r[1])) for r in rows]
         mae=sum(abs(a-b) for a,b in pairs)/len(pairs)
-        hit=sum(1 for a,b in pairs if (a>=0)==(b>=0))/len(pairs)
-        return {"samples":len(pairs),"mae":round(mae,8),"directional_hit_rate":round(hit,3)}
+        hits=sum(1 for a,b in pairs if abs(a-b)<=max(0.01,abs(a)*0.10))/len(pairs)
+        return {"samples":len(pairs),"mae":round(mae,8),"forecast_hit_rate":round(hits,3)}
 
     def _online_learning_update(c, farm_id):
         # Settle against the first market snapshot strictly newer than the decision.
-        snaps=c.execute("SELECT ts,btc_hashprice_usd_ph_day,gpu_hourly_usd,austria_spot_eur_kwh FROM market_snapshots ORDER BY ts ASC").fetchall()
+        # IMPORTANT: actual_value is normalized to the same €/kWh economics used by the optimizer.
+        snaps=c.execute("SELECT ts,payload FROM market_snapshots ORDER BY ts ASC").fetchall()
         decisions=c.execute("SELECT id,chosen,predicted_value,ts FROM decision_ledger WHERE farm_id=? AND status='open' ORDER BY ts ASC LIMIT 100",(farm_id,)).fetchall()
         settled=0
         for d in decisions:
-            decision_ts=str(d[3] or "")
+            decision_ts=float(d[3]) if isinstance(d[3],(int,float)) else None
+            if decision_ts is None:
+                try: decision_ts=datetime.fromisoformat(str(d[3]).replace("Z","+00:00")).timestamp()
+                except Exception: continue
             actual=None
             for s in snaps:
-                if str(s[0])<=decision_ts: continue
-                if d[1]=="BTC Mining" and s[1] is not None: actual=float(s[1])
-                elif d[1]=="AI Compute" and s[2] is not None: actual=float(s[2])
-                elif d[1] in ("Battery","Grid") and s[3] is not None: actual=float(s[3])
-                if actual is not None: break
-            if actual is None: continue
-            c.execute("UPDATE decision_ledger SET actual_value=?,status='settled' WHERE id=?",(actual,d[0]))
-            settled+=1
-        c.commit()
+                try: snap_ts=float(s[0])
+                except Exception: continue
+                if snap_ts<=decision_ts: continue
+                try: payload=json.loads(s[1])
+                except Exception: continue
+                h=payload.get("btc_hashprice_usd_ph_day")
+                g=payload.get("gpu_l40s_usd_hour")
+                if h is None and g is None: continue
+                scenario=ScenarioIn(
+                    btc_hashprice_usd_ph_day=float(h or 39.64),
+                    gpu_hourly_usd=float(g or 1.09),
+                    eur_usd=float(payload.get("eur_usd") or 1.1205),
+                    energy_cost_eur_kwh=float(payload.get("austria_spot_eur_kwh") or 0.2055),
+                    gpu_power_kw=float(payload.get("gpu_l40s_power_kw") or 0.35),
+                    gpu_utilization=float(payload.get("gpu_utilization") or 0.70),
+                    gpu_platform_fee=float(payload.get("gpu_platform_fee") or 0.15)
+                )
+                actual=_economics(scenario).get(d[1])
+                if actual is not None:
+                    c.execute("UPDATE decision_ledger SET actual_value=?,status='settled',settled_at=? WHERE id=?",(float(actual),time.time(),d[0]))
+                    settled+=1
+                break
+        try: c.commit()
+        except Exception: pass
         remaining=max(0,len(decisions)-settled)
         return {"settled_now":settled,"open_remaining":remaining}
 
@@ -493,10 +512,26 @@ def install(app):
     def production_readiness():
         db_configured=bool(os.getenv("DATABASE_URL") or os.getenv("POSTGRES_URL"))
         jwt_configured=bool(os.getenv("SYNPORA_JWT_SECRET","").strip())
-        return {"database_configured":db_configured,"jwt_secret_configured":jwt_configured,
+        db_reachable=False
+        db_backend="sqlite_fallback"
+        db_error=None
+        try:
+            c=init_db()
+            c.execute("SELECT 1").fetchone()
+            db_reachable=bool(DB_URL and c.__class__.__module__.startswith("psycopg"))
+            db_backend="postgresql" if db_reachable else "sqlite_fallback"
+            try: c.close()
+            except Exception: pass
+        except Exception as e:
+            db_error=type(e).__name__
+        ready=bool(db_configured and jwt_configured and db_reachable)
+        return {"database_configured":db_configured,"database_reachable":db_reachable,
+                "database_backend":db_backend,"database_error":db_error,
+                "jwt_secret_configured":jwt_configured,
                 "hardware_write_enabled":False,"autonomous_control_enabled":False,
                 "recommendation_only":True,"external_market_layer":True,
-                "status":"ready_with_configuration" if (db_configured and jwt_configured) else "configuration_required"}
+                "status":"ready" if ready else "configuration_required"}
+
 
     @app.get("/api/v1/farms/{farm_id}/ai-status")
     def ai_status(farm_id:str,authorization:str|None=Header(default=None)):
