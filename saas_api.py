@@ -54,10 +54,10 @@ def _uid(token):
 
 def install(app):
     from fastapi import Header, HTTPException
-    from pydantic import BaseModel, EmailStr
+    from pydantic import BaseModel
     init_db()
     class AuthIn(BaseModel):
-        email: EmailStr
+        email: str
         password: str
     class FarmIn(BaseModel):
         name: str
