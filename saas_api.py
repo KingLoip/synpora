@@ -248,7 +248,7 @@ def install(app):
         rows=data if isinstance(data,list) else data.get("data",[])
         rows=rows[-min(limit,365):]
         c=init_db()
-        c.execute("CREATE TABLE IF NOT EXISTS market_snapshots(id TEXT PRIMARY KEY,ts REAL NOT NULL,payload TEXT NOT NULL)")
+        _ensure_market_table(c)
         inserted=0
         for row in rows:
             if isinstance(row,dict):
@@ -258,7 +258,20 @@ def install(app):
             if ts:
                 payload=json.dumps(row)
                 try:
-                    c.execute("INSERT INTO market_snapshots VALUES(?,?,?)",(secrets.token_hex(12),float(ts)/1000 if float(ts)>1e11 else float(ts),payload)); inserted+=1
+                    ts_value=float(ts)/1000 if float(ts)>1e11 else float(ts)
+                    rowd=row if isinstance(row,dict) else {}
+                    vals=(secrets.token_hex(12),ts_value,payload,rowd.get("btcPrice") or rowd.get("btc_price_usd"),
+                          rowd.get("hashpriceUsd") or rowd.get("btc_hashprice_usd_ph_day"),
+                          rowd.get("difficulty") or rowd.get("btc_difficulty"),
+                          rowd.get("networkHashrate") or rowd.get("network_hashrate_eh"),
+                          rowd.get("eur_usd") or 1.1205,rowd.get("gpu_l40s_usd_hour") or rowd.get("gpuHourlyUsd") or 1.09,
+                          rowd.get("gpu_l40s_power_kw") or 0.35,rowd.get("gpu_utilization") or 0.70,
+                          rowd.get("gpu_platform_fee") or 0.15,rowd.get("austria_spot_eur_kwh") or 0.2055)
+                    c.execute("""INSERT INTO market_snapshots
+                        (id,ts,payload,btc_price_usd,btc_hashprice_usd_ph_day,btc_difficulty,network_hashrate_eh,eur_usd,
+                         gpu_l40s_usd_hour,gpu_l40s_power_kw,gpu_utilization,gpu_platform_fee,austria_spot_eur_kwh)
+                        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",vals)
+                    inserted+=1
                 except Exception: pass
         try: c.commit()
         except Exception: pass
