@@ -91,7 +91,7 @@ SCRIPT = r"""
       if(name==="Overview"){panel.classList.remove("show");window.scrollTo({top:0,behavior:"smooth"});return}
       panel.classList.add("show");
       if(name==="Assets") setTimeout(loadAssets,50);
-      if(name==="Economics" || name==="AI Decision") setTimeout(runOptimizer,80);\n      if(name==="Simulation") setTimeout(runScenarioLab,80);
+      if(name==="Economics" || name==="AI Decision") setTimeout(runOptimizer,80);\n      if(name==="Simulation") setTimeout(runScenarioLab,80);\n      if(name==="Reports") setTimeout(loadBenchmark,120);
       const titles={Assets:"Asset Registry",Economics:"Economics & Value per kWh","AI Decision":"AI Decision Center",Simulation:"What-if Simulation Lab",Reports:"Reports & Audit Trail"};
       panel.querySelector("h2").textContent=titles[name]||"SYNPORA Workspace";
       toast(name+" workspace geöffnet");
@@ -101,6 +101,16 @@ SCRIPT = r"""
   });
 
 
+
+  async function loadBenchmark(){
+    const acc=JSON.parse(localStorage.getItem("synpora_account")||"null"); if(!acc?.token){toast("Bitte zuerst Workspace verbinden");return}
+    const farms=await fetch("/api/v1/farms",{headers:{Authorization:"Bearer "+acc.token}}).then(r=>r.json()); if(!farms[0])return;
+    const d=await fetch("/api/v1/farms/"+farms[0].id+"/benchmark",{headers:{Authorization:"Bearer "+acc.token}}).then(r=>r.json());
+    const old=panel.querySelector(".sp-benchmark"); if(old)old.remove();
+    const box=document.createElement("div");box.className="sp-benchmark sp-card";box.style.marginTop="18px";
+    box.innerHTML="<div class='sp-label'>HISTORICAL BENCHMARK</div><div class='sp-value'>"+d.samples+" snapshots</div><div style='margin-top:8px'>AI: €"+d.ai_total_net_eur.toFixed(2)+" · BTC: €"+d.btc_total_net_eur.toFixed(2)+"</div><div class='sp-good' style='margin-top:6px'>AI delta vs BTC: €"+d.ai_delta_vs_btc_eur.toFixed(2)+"</div><div class='sp-mini' style='margin-top:6px'>AI war in "+(d.winner_share==null?"–":Math.round(d.winner_share*100)+"%")+" der gespeicherten Zeitpunkte besser.</div>";
+    panel.appendChild(box);
+  }
 
   async function runScenarioLab(){
     const acc=JSON.parse(localStorage.getItem("synpora_account")||"null");
@@ -211,7 +221,7 @@ SCRIPT = r"""
         panel.scrollIntoView({behavior:"smooth",block:"start"});
       }catch(e){toast(e.message)}
     };
-    document.getElementById("sp-sim").onclick=()=>toast("Simulation vorbereitet · nächste Stufe: echte Tarif- und Asset-Daten");
+    document.getElementById("sp-sim").onclick=()=>runScenarioLab();
   }
   if(document.readyState==="loading") document.addEventListener("DOMContentLoaded",mount); else mount();
   setTimeout(mount,800);
