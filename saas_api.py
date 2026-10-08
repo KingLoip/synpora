@@ -397,37 +397,43 @@ def install(app):
         assets=[dict(r) for r in c.execute("SELECT id,name,kind,power_kw FROM assets WHERE farm_id=? ORDER BY created_at",(farm_id,)).fetchall()]
         gpu_value=(x.gpu_hourly_usd/x.eur_usd)*x.gpu_utilization*(1-x.gpu_platform_fee)
         btc_value=(x.btc_hashprice_usd_ph_day/x.eur_usd)/(x.asic_efficiency_j_th*1000)*0.98*0.98
-        gpu_assets=[a for a in assets if a["kind"].upper()=="GPU" and a["power_kw"]>0]
-        btc_assets=[a for a in assets if a["kind"].upper()=="BTC" and a["power_kw"]>0]
-        total_load=sum(float(a["power_kw"]) for a in assets if a["kind"].upper() in ("GPU","BTC"))
-        pv_remaining=max(0,x.pv_kwh)
+        candidates=[]
+        for a in assets:
+            kind=a["kind"].upper(); power=max(float(a["power_kw"] or 0),0)
+            if kind=="GPU": candidates.append({"id":a["id"],"name":a["name"],"kind":kind,"power_kw":power,"value":gpu_value})
+            elif kind=="BTC": candidates.append({"id":a["id"],"name":a["name"],"kind":kind,"power_kw":power,"value":btc_value})
+        hours=max(1,min(168,x.horizon_hours)); dt=max(0.25,x.interval_hours)
         reserve=max(0,min(100,x.battery_reserve_pct))
-        battery_available=max(0,(x.battery_soc_pct-reserve)/100*x.battery_capacity_kwh)
-        hourly=[]
-        for h in range(max(1,min(168,x.horizon_hours))):
-            available_pv=pv_remaining/(max(1,x.horizon_hours-h)) if pv_remaining else 0
-            candidates=[]
-            if gpu_assets: candidates.append(("AI Compute",gpu_value,max(float(a["power_kw"]) for a in gpu_assets),gpu_assets[0]["name"]))
-            if btc_assets: candidates.append(("BTC Mining",btc_value,max(float(a["power_kw"]) for a in btc_assets),btc_assets[0]["name"]))
-            candidates.append(("Battery",x.battery_value_eur_kwh,0,"Battery"))
-            candidates.append(("Grid",x.grid_value_eur_kwh,0,"Grid"))
-            candidates.sort(key=lambda z:z[1],reverse=True)
-            chosen=candidates[0]
-            supply=min(max(available_pv,0),chosen[2] if chosen[2] else available_pv)
-            if supply<=0 and chosen[0] in ("AI Compute","BTC Mining"):
-                supply=min(chosen[2]*x.interval_hours, max(0,battery_available))
-                source="Battery" if supply>0 else "Grid"
-                if source=="Battery": battery_available-=supply
-            else:
-                source="PV" if supply>0 else "Grid"
-            if chosen[0] in ("AI Compute","BTC Mining") and supply<=0: chosen=("Grid",x.grid_value_eur_kwh,0,"Grid")
-            hourly.append({"hour":h,"source":source,"action":chosen[0],"asset":chosen[3],"energy_kwh":round(supply,3),"value_eur_kwh":round(chosen[1],5),"net_eur":round((chosen[1]-x.energy_cost_eur_kwh)*supply,2)})
-            pv_remaining=max(0,pv_remaining-supply)
-        total=sum(r["net_eur"] for r in hourly)
-        return {"farm_id":farm_id,"horizon_hours":x.horizon_hours,"plan":hourly,"total_net_eur":round(total,2),
-                "battery_remaining_kwh":round(battery_available,2),"pv_remaining_kwh":round(pv_remaining,2),
-                "constraints":{"battery_reserve_pct":reserve,"battery_capacity_kwh":x.battery_capacity_kwh,"total_asset_load_kw":total_load},
-                "mode":"recommendation_only","hardware_write":False}
+        battery=max(0,(x.battery_soc_pct-reserve)/100*x.battery_capacity_kwh)
+        # Joint horizon optimization: rank every asset-hour opportunity globally,
+        # then allocate the finite PV/battery/asset capacity to the highest-value slots.
+        opportunities=[]
+        for h in range(hours):
+            for a in candidates:
+                kwh=a["power_kw"]*dt
+                if kwh>0: opportunities.append({"hour":h,"asset":a,"capacity_kwh":kwh,"value":a["value"]})
+        opportunities.sort(key=lambda z:z["value"],reverse=True)
+        pv_budget=max(0,x.pv_kwh)
+        allocations={}
+        for op in opportunities:
+            supply=min(op["capacity_kwh"],pv_budget+battery)
+            if supply<=0: continue
+            pv_used=min(supply,pv_budget); pv_budget-=pv_used
+            batt_used=supply-pv_used; battery=max(0,battery-batt_used)
+            key=(op["hour"],op["asset"]["id"])
+            allocations[key]={"hour":op["hour"],"asset":op["asset"]["name"],"kind":op["asset"]["kind"],
+                              "energy_kwh":round(supply,3),"source":"PV" if batt_used==0 else ("PV+Battery" if pv_used else "Battery"),
+                              "value_eur_kwh":round(op["value"],5),
+                              "net_eur":round((op["value"]-x.energy_cost_eur_kwh)*supply,2)}
+        plan=sorted(allocations.values(),key=lambda z:z["hour"])
+        total=sum(r["net_eur"] for r in plan)
+        used=sum(r["energy_kwh"] for r in plan)
+        return {"farm_id":farm_id,"horizon_hours":hours,"interval_hours":dt,"plan":plan,
+                "total_net_eur":round(total,2),"energy_allocated_kwh":round(used,3),
+                "energy_unallocated_kwh":round(max(0,x.pv_kwh+max(0,(x.battery_soc_pct-reserve)/100*x.battery_capacity_kwh)-used),3),
+                "battery_remaining_kwh":round(battery,2),"pv_remaining_kwh":round(pv_budget,2),
+                "constraints":{"battery_reserve_pct":reserve,"battery_capacity_kwh":x.battery_capacity_kwh},
+                "optimizer":"multi_period_value_rank","mode":"recommendation_only","hardware_write":False}
 
     @app.post("/api/v1/farms/{farm_id}/scenario")
     def scenario(farm_id:str,x:ScenarioIn,authorization:str|None=Header(default=None)):
