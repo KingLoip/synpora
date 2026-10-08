@@ -270,6 +270,39 @@ def install(app):
         mae=sum(abs(e) for e in errors)/len(errors) if errors else None
         return {"settled":len(errors),"mae_eur_kwh":round(mae,6) if mae is not None else None}
 
+    @app.get("/api/v1/farms/{farm_id}/learning/calibration")
+    def learning_calibration(farm_id:str,authorization:str|None=Header(default=None)):
+        uid=user(authorization); c=init_db()
+        if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
+        _ensure_learning_tables(c)
+        rows=c.execute("SELECT chosen,predicted_value,actual_value,confidence FROM decision_ledger WHERE farm_id=? AND status='settled' AND actual_value IS NOT NULL ORDER BY ts DESC LIMIT 500",(farm_id,)).fetchall()
+        by={}
+        for r in rows:
+            name=str(r[0]); by.setdefault(name,[]).append(r)
+        result={}
+        for name,items in by.items():
+            errors=[abs(float(r[2])-float(r[1])) for r in items]
+            hits=[1 if float(r[2])>=float(r[1]) else 0 for r in items]
+            mae=sum(errors)/len(errors)
+            hit=sum(hits)/len(hits)
+            # Confidence combines directional hit-rate and normalized error.
+            calibrated=max(0.50,min(0.98,0.45+0.40*hit+0.15*(1/(1+mae*10))))
+            result[name]={"samples":len(items),"hit_rate":round(hit,3),"mae_eur_kwh":round(mae,6),"calibrated_confidence":round(calibrated,3)}
+        overall=max(result.values(),key=lambda x:x["calibrated_confidence"])["calibrated_confidence"] if result else 0.70
+        return {"farm_id":farm_id,"strategies":result,"overall_confidence":overall,"calibration_ready":len(rows)>=5}
+
+    @app.get("/api/v1/farms/{farm_id}/model-score")
+    def model_score(farm_id:str,authorization:str|None=Header(default=None)):
+        uid=user(authorization); c=init_db()
+        if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
+        _ensure_learning_tables(c)
+        rows=c.execute("SELECT chosen,predicted_value,actual_value FROM decision_ledger WHERE farm_id=? AND status='settled' AND actual_value IS NOT NULL",(farm_id,)).fetchall()
+        if not rows: return {"samples":0,"score":0.0,"status":"cold_start"}
+        mae=sum(abs(float(r[2])-float(r[1])) for r in rows)/len(rows)
+        directional=sum(1 for r in rows if float(r[2])>=float(r[1]))/len(rows)
+        score=max(0,min(100,50*directional+50*(1/(1+mae*10))))
+        return {"samples":len(rows),"mae_eur_kwh":round(mae,6),"directional_accuracy":round(directional,3),"score":round(score,1),"status":"learning"}
+
     @app.get("/api/v1/farms/{farm_id}/learning")
     def learning_status(farm_id:str,authorization:str|None=Header(default=None)):
         uid=user(authorization); c=init_db()
