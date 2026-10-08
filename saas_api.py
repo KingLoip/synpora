@@ -94,6 +94,9 @@ def install(app):
         gpu_platform_fee: float=0.15
         battery_value_eur_kwh: float=0.071
         grid_value_eur_kwh: float=0.055
+        samples: int=500
+        seed: int=42
+        risk_aversion: float=0.75
         btc_hashprice_usd_ph_day: float=39.64
         eur_usd: float=1.1205
         asic_efficiency_j_th: float=20.0
