@@ -34,7 +34,9 @@ def _conn():
         except Exception as e:
             if os.getenv("SYNPORA_REQUIRE_DATABASE","0")=="1":
                 raise RuntimeError("PostgreSQL connection required but unavailable") from e
-    conn=sqlite3.connect(DB_PATH, check_same_thread=False)\n    conn.row_factory=sqlite3.Row\n    return _DBCompat(conn, postgres=False)
+    conn=sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn.row_factory=sqlite3.Row
+    return _DBCompat(conn, postgres=False)
 
 def init_db():
     c=_conn()
