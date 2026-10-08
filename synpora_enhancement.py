@@ -91,7 +91,7 @@ SCRIPT = r"""
       if(name==="Overview"){panel.classList.remove("show");window.scrollTo({top:0,behavior:"smooth"});return}
       panel.classList.add("show");
       if(name==="Assets") setTimeout(loadAssets,50);
-      if(name==="Economics" || name==="AI Decision") setTimeout(runOptimizer,80);\n      if(name==="Simulation") setTimeout(runScenarioLab,80);\n      if(name==="Reports") setTimeout(loadBenchmark,120);
+      if(name==="Economics" || name==="AI Decision") setTimeout(runOptimizer,80);\n      if(name==="Simulation") setTimeout(runScenarioLab,80);\n      if(name==="Reports"){setTimeout(loadBenchmark,120);setTimeout(loadLearningHealth,180);}
       const titles={Assets:"Asset Registry",Economics:"Economics & Value per kWh","AI Decision":"AI Decision Center",Simulation:"What-if Simulation Lab",Reports:"Reports & Audit Trail"};
       panel.querySelector("h2").textContent=titles[name]||"SYNPORA Workspace";
       toast(name+" workspace geöffnet");
@@ -101,6 +101,16 @@ SCRIPT = r"""
   });
 
 
+
+  async function loadLearningHealth(){
+    const acc=JSON.parse(localStorage.getItem("synpora_account")||"null"); if(!acc?.token)return;
+    const farms=await fetch("/api/v1/farms",{headers:{Authorization:"Bearer "+acc.token}}).then(r=>r.json()); if(!farms[0])return;
+    const d=await fetch("/api/v1/farms/"+farms[0].id+"/learning",{headers:{Authorization:"Bearer "+acc.token}}).then(r=>r.json());
+    const old=panel.querySelector(".sp-learning"); if(old)old.remove();
+    const box=document.createElement("div");box.className="sp-learning sp-card";box.style.marginTop="18px";
+    box.innerHTML="<div class='sp-label'>MODEL HEALTH</div><div class='sp-value'>"+(d.learning_ready?"Learning active":"Cold start")+"</div><div style='margin-top:8px'>Samples: "+d.samples+" · Settled: "+d.settled+"</div><div class='sp-mini'>MAE: "+(d.mae_eur_kwh==null?"–":d.mae_eur_kwh.toFixed(4)+" €/kWh")+"</div>";
+    panel.appendChild(box);
+  }
 
   async function loadBenchmark(){
     const acc=JSON.parse(localStorage.getItem("synpora_account")||"null"); if(!acc?.token){toast("Bitte zuerst Workspace verbinden");return}
