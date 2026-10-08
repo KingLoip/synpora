@@ -3,6 +3,15 @@ from backend.app.main import app
 from backend.app.saas_api import install
 app = install(app)
 
+@app.middleware("http")
+async def security_headers(request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    return response
+
 def _market_loop():
     # Collect a fresh market snapshot every 15 minutes. Failure is non-fatal.
     while True:
