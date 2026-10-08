@@ -128,7 +128,7 @@ SCRIPT = r"""
     const d=await fetch("/api/v1/farms/"+farms[0].id+"/dispatch-plan",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+acc.token},body:JSON.stringify({horizon_hours:24,interval_hours:1,energy_cost_eur_kwh:0.05,pv_kwh:100,battery_soc_pct:74,battery_capacity_kwh:50,battery_reserve_pct:20})}).then(r=>r.json());
     const old=panel.querySelector(".sp-dispatch");if(old)old.remove();
     const box=document.createElement("div");box.className="sp-dispatch sp-card";box.style.marginTop="18px";
-    box.innerHTML="<div class='sp-label'>24H DISPATCH PLAN</div><div class='sp-value sp-good'>€"+d.total_net_eur.toFixed(2)+" modeled net</div>"+d.plan.slice(0,12).map(r=>"<div class='sp-row'><span>"+String(r.hour).padStart(2,"0")+":00 · "+r.action+"</span><strong>"+r.energy_kwh.toFixed(1)+" kWh · "+r.source+"</strong></div>").join("")+"<div class='sp-mini' style='margin-top:8px'>Battery reserve: "+d.constraints.battery_reserve_pct+"% · Recommendation only</div>";
+    box.innerHTML="<div class='sp-label'>24H MULTI-PERIOD DISPATCH</div><div class='sp-value sp-good'>€"+d.total_net_eur.toFixed(2)+" modeled net</div>"+d.plan.slice(0,16).map(r=>"<div class='sp-row'><span>"+String(r.hour).padStart(2,"0")+":00 · "+r.asset+" · "+r.kind+"</span><strong>"+r.energy_kwh.toFixed(1)+" kWh · "+r.source+"</strong></div>").join("")+"<div class='sp-mini' style='margin-top:8px'>Allocated: "+d.energy_allocated_kwh.toFixed(1)+" kWh · Remaining battery: "+d.battery_remaining_kwh.toFixed(1)+" kWh · Recommendation only</div>";
     panel.appendChild(box);
   }
 
