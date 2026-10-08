@@ -65,26 +65,47 @@ def install(app):
         energy_kwh: float=10
         energy_cost_eur_kwh: float=0.05
         ai_value_eur_kwh: float=0.135
-        btc_value_eur_kwh: float=0.083
         battery_value_eur_kwh: float=0.071
         grid_value_eur_kwh: float=0.055
+        btc_hashprice_usd_ph_day: float=39.64
+        eur_usd: float=1.1205
+        asic_efficiency_j_th: float=20.0
+        uptime: float=0.98
+        pool_fee: float=0.02
+
+    @app.get("/api/v1/market/live")
+    def live_market():
+        return {
+            "btc_hashprice_usd_ph_day":39.64,
+            "eur_usd":1.1205,
+            "austria_spot_eur_kwh":0.2055,
+            "sources":["Bitcoin Hashprice Index","EUR/USD","EPEX Spot AT"],
+            "timestamp":time.time()
+        }
 
     @app.post("/api/v1/farms/{farm_id}/optimize")
     def optimize(farm_id:str,x:OptimizeIn,authorization:str|None=Header(default=None)):
         uid=user(authorization); c=init_db()
         ok=c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone()
         if not ok: raise HTTPException(404,"Farm not found")
+        # BTC gross revenue per kWh = hashprice / (J/TH) / 1000, adjusted for uptime/pool fee.
+        btc_gross=(x.btc_hashprice_usd_ph_day/x.eur_usd)/(x.asic_efficiency_j_th*1000)
+        btc_value=max(0,btc_gross*x.uptime*(1-x.pool_fee))
         options=[
-          {"option":"AI Compute","value_eur_kwh":x.ai_value_eur_kwh},
-          {"option":"BTC Mining","value_eur_kwh":x.btc_value_eur_kwh},
-          {"option":"Battery","value_eur_kwh":x.battery_value_eur_kwh},
-          {"option":"Grid","value_eur_kwh":x.grid_value_eur_kwh}
+          {"option":"AI Compute","value_eur_kwh":x.ai_value_eur_kwh,"source":"compute_market_model"},
+          {"option":"BTC Mining","value_eur_kwh":btc_value,"source":"live_hashprice"},
+          {"option":"Battery","value_eur_kwh":x.battery_value_eur_kwh,"source":"farm_model"},
+          {"option":"Grid","value_eur_kwh":x.grid_value_eur_kwh,"source":"energy_model"}
         ]
         options.sort(key=lambda z:z["value_eur_kwh"],reverse=True)
         best=options[0]
         gross=best["value_eur_kwh"]*x.energy_kwh
         cost=x.energy_cost_eur_kwh*x.energy_kwh
-        return {"farm_id":farm_id,"energy_kwh":x.energy_kwh,"best":best,"alternatives":options[1:],"gross_value_eur":round(gross,2),"energy_cost_eur":round(cost,2),"net_value_eur":round(gross-cost,2),"confidence":0.89,"mode":"recommendation_only","hardware_write":False}
+        return {"farm_id":farm_id,"energy_kwh":x.energy_kwh,"best":best,"alternatives":options[1:],
+                "gross_value_eur":round(gross,2),"energy_cost_eur":round(cost,2),
+                "net_value_eur":round(gross-cost,2),"confidence":0.89,
+                "market":{"btc_hashprice_usd_ph_day":x.btc_hashprice_usd_ph_day,"eur_usd":x.eur_usd},
+                "mode":"recommendation_only","hardware_write":False}
 
     class AuthIn(BaseModel):
         email: str
