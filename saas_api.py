@@ -2,7 +2,7 @@ import os, sqlite3, hashlib, hmac, secrets, json, time
 from pathlib import Path
 from urllib.parse import urlparse
 
-DB_URL = os.getenv("DATABASE_URL","").strip()
+DB_URL = os.getenv("DATABASE_URL","").strip() or os.getenv("POSTGRES_URL","").strip()
 JWT_SECRET = os.getenv("SYNPORA_JWT_SECRET","change-me-in-production")
 DB_PATH = os.getenv("SYNPORA_SQLITE_PATH","/tmp/synpora.db")
 
@@ -11,8 +11,9 @@ def _conn():
         try:
             import psycopg
             return psycopg.connect(DB_URL, autocommit=True)
-        except Exception:
-            pass
+        except Exception as e:
+            if os.getenv("SYNPORA_REQUIRE_DATABASE","0")=="1":
+                raise RuntimeError("PostgreSQL connection required but unavailable") from e
     c=sqlite3.connect(DB_PATH, check_same_thread=False)
     c.row_factory=sqlite3.Row
     return c
@@ -56,6 +57,9 @@ def install(app):
     from fastapi import Header, HTTPException
     from pydantic import BaseModel
     init_db()
+    @app.get("/api/v1/system/status")
+    def status():
+        return {"service":"synpora","version":"1.1.0","database":{"type":"postgresql" if DB_URL else "sqlite_fallback","configured":bool(DB_URL)},"hardware_write":False,"mode":"recommendation_only"}
     class AuthIn(BaseModel):
         email: str
         password: str
