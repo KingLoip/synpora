@@ -485,6 +485,31 @@ def install(app):
         overall=max(result.values(),key=lambda x:x["calibrated_confidence"])["calibrated_confidence"] if result else 0.70
         return {"farm_id":farm_id,"strategies":result,"overall_confidence":overall,"calibration_ready":len(rows)>=5}
 
+    @app.get("/api/v1/farms/{farm_id}/decision-quality")
+    def decision_quality(farm_id:str,authorization:str|None=Header(default=None)):
+        uid=user(authorization); c=init_db()
+        if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone():
+            raise HTTPException(404,"Farm not found")
+        _ensure_learning_tables(c)
+        rows=c.execute("SELECT chosen,predicted_value,actual_value,actual_best_value,regret_eur_kwh,confidence FROM decision_ledger WHERE farm_id=? AND status='settled' AND actual_value IS NOT NULL ORDER BY ts",(farm_id,)).fetchall()
+        if not rows:
+            return {"farm_id":farm_id,"samples":0,"winner_accuracy":None,"avg_regret_eur_kwh":None,"p90_regret_eur_kwh":None,"confidence_calibration_gap":None,"status":"cold_start"}
+        winner=sum(1 for r in rows if r[3] is not None and abs(float(r[2])-float(r[3]))<=1e-9)/len(rows)
+        regrets=[max(0.0,float(r[4])) for r in rows if r[4] is not None]
+        if not regrets:
+            regrets=[max(0.0,float(r[3])-float(r[2])) for r in rows if r[3] is not None]
+        regrets.sort()
+        p90=regrets[min(len(regrets)-1,int((len(regrets)-1)*.90))] if regrets else None
+        confidence_gap=None
+        pairs=[(float(r[5]),1.0 if (r[3] is not None and abs(float(r[2])-float(r[3]))<=1e-9) else 0.0) for r in rows if r[5] is not None and r[3] is not None]
+        if pairs: confidence_gap=sum(a-b for a,b in pairs)/len(pairs)
+        return {"farm_id":farm_id,"samples":len(rows),"winner_accuracy":round(winner,3),
+                "avg_regret_eur_kwh":round(sum(regrets)/len(regrets),6) if regrets else 0.0,
+                "p90_regret_eur_kwh":round(p90,6) if p90 is not None else 0.0,
+                "confidence_calibration_gap":round(confidence_gap,3) if confidence_gap is not None else None,
+                "status":"validated" if len(rows)>=24 else "learning",
+                "recommendation_only":True}
+    
     @app.get("/api/v1/farms/{farm_id}/model-score")
     def model_score(farm_id:str,authorization:str|None=Header(default=None)):
         uid=user(authorization); c=init_db()
