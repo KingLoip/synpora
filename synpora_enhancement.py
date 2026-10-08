@@ -2,11 +2,11 @@ from pathlib import Path
 import re
 
 ROOT = Path("/app/frontend")
-MARKER = "/* SYNPORA_ENHANCEMENT_V1 */"
+MARKER = "/* SYNPORA_ENHANCEMENT_V2 */"
 
 SCRIPT = r"""
 <script>
-/* SYNPORA_ENHANCEMENT_V1 */
+/* SYNPORA_ENHANCEMENT_V2 */
 (function () {
   if (window.__synporaEnhanced) return;
   window.__synporaEnhanced = true;
@@ -26,7 +26,14 @@ SCRIPT = r"""
     .sp-good{color:#4de0b1}.sp-warn{color:#ffd166}
     .sp-row{display:flex;justify-content:space-between;gap:16px;padding:11px 0;border-bottom:1px solid #1b2d39}
     .sp-action{margin-top:16px;background:#4de0b1;color:#06120e;border:0;border-radius:10px;padding:10px 15px;font-weight:800;cursor:pointer}
-    @media(max-width:700px){#synpora-nav{padding:0 12px}.sp-grid{grid-template-columns:1fr}}
+    #sp-account{margin-left:auto;display:flex;gap:8px;align-items:center}
+    #sp-account button{background:transparent;border:1px solid #294253;color:#a9c6d9;border-radius:10px;padding:8px 12px;font-weight:700;cursor:pointer}
+    #sp-modal{position:fixed;inset:0;background:#02070bcc;z-index:10000;display:none;align-items:center;justify-content:center;padding:20px}
+    #sp-modal.show{display:flex}
+    .sp-modal-card{width:min(520px,100%);background:#0b151e;border:1px solid #294253;border-radius:18px;padding:24px;box-shadow:0 30px 100px #000b}
+    .sp-input{width:100%;box-sizing:border-box;background:#08111a;border:1px solid #294253;color:#eef8ff;border-radius:10px;padding:12px;margin:7px 0 12px}
+    .sp-mini{font-size:13px;color:#7f9db2}
+    @media(max-width:700px){#synpora-nav{padding:0 12px}.sp-grid{grid-template-columns:1fr}#sp-account{width:100%;margin-left:0}}
   `;
   document.head.insertAdjacentHTML("beforeend","<style>"+css+"</style>");
 
@@ -36,6 +43,24 @@ SCRIPT = r"""
     t.textContent=msg;t.classList.add("show");clearTimeout(window.__spToast);
     window.__spToast=setTimeout(()=>t.classList.remove("show"),2600);
   };
+
+  const modal = document.createElement("div");
+  modal.id="sp-modal";
+  modal.innerHTML=`
+    <div class="sp-modal-card">
+      <div class="sp-label">SYNPORA ACCOUNT</div>
+      <h2 style="margin:6px 0 8px">Workspace öffnen</h2>
+      <p class="sp-mini">Pilot-Modus: Zugang wird lokal im Browser gespeichert. Die echte Benutzerverwaltung folgt mit PostgreSQL.</p>
+      <label class="sp-mini">E-Mail</label>
+      <input id="sp-email" class="sp-input" type="email" placeholder="you@company.com">
+      <label class="sp-mini">Farm / Workspace</label>
+      <input id="sp-farm" class="sp-input" placeholder="Meine Energy Farm">
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button class="sp-action" id="sp-cancel">Abbrechen</button>
+        <button class="sp-action" id="sp-enter">Workspace erstellen</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
 
   const panel = document.createElement("section");
   panel.id="synpora-panel";
@@ -76,6 +101,13 @@ SCRIPT = r"""
   function mount(){
     if(!document.body || document.getElementById("synpora-nav")) return;
     const main=document.querySelector("main")||document.body.firstElementChild;
+    const account=document.createElement("div");
+    account.id="sp-account";
+    const saved=JSON.parse(localStorage.getItem("synpora_account")||"null");
+    account.innerHTML=saved
+      ? '<span class="sp-mini">'+(saved.farm||"Demo Farm")+'</span><button id="sp-account-btn">Workspace</button>'
+      : '<button id="sp-account-btn">Pilot Login</button>';
+    nav.appendChild(account);
     if(main && main.parentNode) main.parentNode.insertBefore(nav,main);
     else document.body.insertBefore(nav,document.body.firstChild);
     if(main && main.parentNode) main.parentNode.insertBefore(panel,main);
@@ -89,6 +121,22 @@ SCRIPT = r"""
       panel.scrollIntoView({behavior:"smooth",block:"start"});
     });
     document.getElementById("sp-close").onclick=()=>panel.classList.remove("show");
+    document.getElementById("sp-account-btn").onclick=()=>modal.classList.add("show");
+    document.getElementById("sp-cancel").onclick=()=>modal.classList.remove("show");
+    document.getElementById("sp-enter").onclick=()=>{
+      const email=document.getElementById("sp-email").value.trim();
+      const farm=document.getElementById("sp-farm").value.trim()||"Demo Farm";
+      if(!email){toast("Bitte E-Mail eingeben");return}
+      localStorage.setItem("synpora_account",JSON.stringify({email,farm,createdAt:new Date().toISOString()}));
+      modal.classList.remove("show");
+      toast("Workspace "+farm+" erstellt");
+      const label=account.querySelector(".sp-mini");
+      if(label) label.textContent=farm;
+      else account.insertAdjacentHTML("afterbegin",'<span class="sp-mini">'+farm+'</span>');
+      document.getElementById("sp-account-btn").textContent="Workspace";
+      panel.classList.add("show");
+      panel.scrollIntoView({behavior:"smooth",block:"start"});
+    };
     document.getElementById("sp-sim").onclick=()=>toast("Simulation vorbereitet · nächste Stufe: echte Tarif- und Asset-Daten");
   }
   if(document.readyState==="loading") document.addEventListener("DOMContentLoaded",mount); else mount();
