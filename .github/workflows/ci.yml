@@ -28,7 +28,6 @@ jobs:
       - name: Overlay production backend
         run: |
           cp "$GITHUB_WORKSPACE/saas_api.py" backend/app/saas_api.py
-          cp "$GITHUB_WORKSPACE/server.py" server.py
       - name: Syntax check
         run: |
           python -m py_compile backend/app/*.py
