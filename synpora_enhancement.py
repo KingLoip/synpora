@@ -91,7 +91,8 @@ SCRIPT = r"""
       if(name==="Overview"){panel.classList.remove("show");window.scrollTo({top:0,behavior:"smooth"});return}
       panel.classList.add("show");
       if(name==="Assets") setTimeout(loadAssets,50);
-      if(name==="Economics" || name==="AI Decision") setTimeout(runOptimizer,80);\n      if(name==="Simulation") {setTimeout(runScenarioLab,80);setTimeout(runPortfolio,300);setTimeout(runDispatch,500);}\n      if(name==="Reports"){setTimeout(loadBenchmark,120);setTimeout(loadLearningHealth,180);}
+      if(name==="Economics") setTimeout(runOptimizer,80);
+      if(name==="AI Decision"){setTimeout(runOptimizer,80);setTimeout(runDecisionRisk,300);}\n      if(name==="Simulation") {setTimeout(runScenarioLab,80);setTimeout(runPortfolio,300);setTimeout(runDispatch,500);}\n      if(name==="Reports"){setTimeout(loadBenchmark,120);setTimeout(loadLearningHealth,180);}
       const titles={Assets:"Asset Registry",Economics:"Economics & Value per kWh","AI Decision":"AI Decision Center",Simulation:"What-if Simulation Lab",Reports:"Reports & Audit Trail"};
       panel.querySelector("h2").textContent=titles[name]||"SYNPORA Workspace";
       toast(name+" workspace geöffnet");
@@ -134,8 +135,21 @@ SCRIPT = r"""
     const farms=await fetch("/api/v1/farms",{headers:{Authorization:"Bearer "+acc.token}}).then(r=>r.json()); if(!farms[0])return;
     const d=await fetch("/api/v1/farms/"+farms[0].id+"/dispatch-plan",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+acc.token},body:JSON.stringify({horizon_hours:24,interval_hours:1,energy_cost_eur_kwh:0.05,pv_kwh:100,battery_soc_pct:74,battery_capacity_kwh:50,battery_reserve_pct:20})}).then(r=>r.json());
     const old=panel.querySelector(".sp-dispatch");if(old)old.remove();
+    const summary=d.summary||{};
     const box=document.createElement("div");box.className="sp-dispatch sp-card";box.style.marginTop="18px";
-    box.innerHTML="<div class='sp-label'>24H MULTI-PERIOD DISPATCH</div><div class='sp-value sp-good'>€"+d.total_net_eur.toFixed(2)+" modeled net</div>"+d.plan.slice(0,16).map(r=>"<div class='sp-row'><span>"+String(r.hour).padStart(2,"0")+":00 · "+r.asset+" · "+r.kind+"</span><strong>"+r.energy_kwh.toFixed(1)+" kWh · "+r.source+"</strong></div>").join("")+"<div class='sp-mini' style='margin-top:8px'>Allocated: "+d.energy_allocated_kwh.toFixed(1)+" kWh · Remaining battery: "+d.battery_remaining_kwh.toFixed(1)+" kWh · Recommendation only</div>";
+    box.innerHTML="<div class='sp-label'>24H MULTI-PERIOD DISPATCH</div><div class='sp-value sp-good'>€"+Number(summary.net_value_eur||0).toFixed(2)+" modeled net</div>"+(d.plan||[]).slice(0,16).map(r=>"<div class='sp-row'><span>"+String(r.hour).padStart(2,"0")+":00 · "+r.asset+" · "+r.action+"</span><strong>"+Number(r.pv_kwh||0).toFixed(1)+" kWh · "+Number(r.value_eur_kwh||0).toFixed(3)+" €/kWh</strong></div>").join("")+"<div class='sp-mini' style='margin-top:8px'>BTC: "+Number(summary.btc_kwh||0).toFixed(1)+" kWh · GPU: "+Number(summary.gpu_kwh||0).toFixed(1)+" kWh · Grid: "+Number(summary.grid_export_kwh||0).toFixed(1)+" kWh · Recommendation only</div>";
+    panel.appendChild(box);
+  }
+
+  async function runDecisionRisk(){
+    const acc=JSON.parse(localStorage.getItem("synpora_account")||"null"); if(!acc?.token){toast("Bitte zuerst Workspace verbinden");return}
+    const farms=await fetch("/api/v1/farms",{headers:{Authorization:"Bearer "+acc.token}}).then(r=>r.json()); if(!farms[0])return;
+    const riskAversion=Number(window.prompt("Risk Aversion 0–1","0.75")||0.75);
+    const d=await fetch("/api/v1/farms/"+farms[0].id+"/decision-engine",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+acc.token},body:JSON.stringify({energy_kwh:100,energy_cost_eur_kwh:0.05,risk_aversion:Math.max(0,Math.min(1,riskAversion)),scenarios:500,seed:42})}).then(r=>r.json());
+    const old=panel.querySelector(".sp-risk");if(old)old.remove();
+    if(d.detail){toast(d.detail);return}
+    const box=document.createElement("div");box.className="sp-risk sp-card";box.style.marginTop="18px";
+    box.innerHTML="<div class='sp-label'>UNIFIED AI DECISION · RISK + REGRET</div><div class='sp-value sp-good'>"+d.recommended+"</div><div class='sp-mini'>Confidence "+Math.round(Number(d.confidence||0)*100)+"% · Risk Aversion "+Number(d.risk_aversion||0).toFixed(2)+" · "+d.samples+" Monte-Carlo scenarios</div><div class='sp-row'><span>Expected value</span><strong>"+Number(d.decision?.expected_value_eur_kwh||0).toFixed(4)+" €/kWh</strong></div><div class='sp-row'><span>P05</span><strong>"+Number(d.decision?.p05_eur_kwh||0).toFixed(4)+" €/kWh</strong></div><div class='sp-row'><span>Win probability</span><strong>"+Math.round(Number(d.decision?.win_probability||0)*100)+"%</strong></div><div class='sp-row'><span>Expected regret</span><strong>"+Number(d.decision?.expected_regret_eur_kwh||0).toFixed(4)+" €/kWh</strong></div><div class='sp-mini' style='margin-top:10px'>Fallback: "+(d.fallback||"—")+" · Recommendation only · No hardware action</div>";
     panel.appendChild(box);
   }
 
