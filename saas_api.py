@@ -88,7 +88,7 @@ def install(app):
             "eur_usd":1.1205,
             "austria_spot_eur_kwh":0.2055,
             "gpu":{"model":"L40S","hourly_usd":1.09,"power_kw":0.35,"utilization":0.70,"platform_fee":0.15,"source":"RunPod Secure Cloud"},
-            "sources":["Startmining API","EUR/USD reference","EPEX Spot AT reference","RunPod pricing"],
+            "sources":["Startmining API","EUR/USD reference","EPEX Spot AT reference","RunPod pricing"],\n            "data_quality":{"btc":"live_external" if ext.get("btcPrice") is not None else "fallback","hashprice":"live_external" if ext.get("hashpriceUsd") is not None else "fallback","gpu":"reference","energy":"reference","overall":"mixed"},
             "timestamp":time.time()
         }
 
