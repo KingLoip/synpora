@@ -865,6 +865,28 @@ def install(app):
                 "spread_eur_kwh":round(best["value_eur_kwh"]-rows[1]["value_eur_kwh"],5),
                 "recommendation_only":True,"hardware_write":False}
 
+    @app.post("/api/v1/farms/{farm_id}/risk-analysis")
+    def risk_analysis(farm_id:str,x:ScenarioIn,authorization:str|None=Header(default=None)):
+        uid=user(authorization); c=init_db()
+        if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
+        import math, random
+        samples=max(100,min(5000,int(getattr(x,"samples",500))))
+        seed=int(getattr(x,"seed",42)); rng=random.Random(seed)
+        base=_economics(x); results=[]
+        for _ in range(samples):
+            shock_btc=max(0.35,rng.lognormvariate(0,0.18)); shock_gpu=max(0.40,rng.lognormvariate(0,0.15)); shock_energy=max(0.30,rng.lognormvariate(0,0.20))
+            s=x.model_copy(update={"btc_hashprice_usd_ph_day":x.btc_hashprice_usd_ph_day*shock_btc,"gpu_hourly_usd":x.gpu_hourly_usd*shock_gpu,"energy_cost_eur_kwh":x.energy_cost_eur_kwh*shock_energy})
+            vals=_economics(s); best=max(vals,key=vals.get); results.append({"best":best,"values":vals})
+        strategies=list(base.keys()); stats={}
+        for k in strategies:
+            vals=[r["values"].get(k,0) for r in results]; wins=sum(1 for r in results if r["best"]==k)
+            vals_sorted=sorted(vals); p05=vals_sorted[max(0,int(.05*len(vals))-1)]; p50=vals_sorted[len(vals)//2]; p95=vals_sorted[min(len(vals)-1,int(.95*len(vals)))]
+            downside=sum(max(0,x.energy_cost_eur_kwh-v) for v in vals)/len(vals)
+            stats[k]={"mean_eur_kwh":round(sum(vals)/len(vals),5),"p05_eur_kwh":round(p05,5),"median_eur_kwh":round(p50,5),"p95_eur_kwh":round(p95,5),"win_probability":round(wins/len(results),4),"expected_downside_eur_kwh":round(downside,5)}
+        risk_score={k:stats[k]["mean_eur_kwh"]-0.75*max(0,base[k]-stats[k]["p05_eur_kwh"]) for k in strategies}
+        risk_best=max(risk_score,key=risk_score.get); expected_best=max(stats,key=lambda k:stats[k]["mean_eur_kwh"])
+        return {"farm_id":farm_id,"samples":samples,"seed":seed,"baseline":{k:round(v,5) for k,v in base.items()},"strategies":stats,"risk_adjusted_score":{k:round(v,5) for k,v in risk_score.items()},"recommended":risk_best,"expected_value_winner":expected_best,"method":"lognormal_market_shock_monte_carlo","risk_aversion":0.75,"recommendation_only":True}
+
     @app.post("/api/v1/farms/{farm_id}/backtest")
     def backtest(farm_id:str,authorization:str|None=Header(default=None)):
         uid=user(authorization); c=init_db()
