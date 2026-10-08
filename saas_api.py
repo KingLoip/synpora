@@ -195,6 +195,22 @@ def install(app):
         except Exception: pass
         return {"inserted":inserted,"requested":limit,"source":"Startmining price history"}
 
+    def _ensure_learning_tables(c):
+        c.execute("CREATE TABLE IF NOT EXISTS decision_ledger(id TEXT PRIMARY KEY,farm_id TEXT NOT NULL,ts REAL NOT NULL,chosen TEXT NOT NULL,predicted_value REAL NOT NULL,confidence REAL NOT NULL,status TEXT NOT NULL,actual_value REAL,settled_at REAL)")
+        try: c.commit()
+        except Exception: pass
+
+    @app.post("/api/v1/farms/{farm_id}/decision")
+    def record_decision(farm_id:str,x:ScenarioIn,authorization:str|None=Header(default=None)):
+        uid=user(authorization); c=init_db()
+        if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
+        _ensure_learning_tables(c)
+        vals=_economics(x); chosen=max(vals,key=vals.get); did=secrets.token_hex(12)
+        c.execute("INSERT INTO decision_ledger VALUES(?,?,?,?,?,?,?,?,?)",(did,farm_id,time.time(),chosen,vals[chosen],0.80,"open",None,None))
+        try: c.commit()
+        except Exception: pass
+        return {"decision_id":did,"chosen":chosen,"predicted_value_eur_kwh":round(vals[chosen],6),"confidence":0.80,"status":"open"}
+
     @app.post("/api/v1/market/snapshot")
     def market_snapshot():
         c=init_db()
