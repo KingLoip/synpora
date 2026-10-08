@@ -250,6 +250,36 @@ def install(app):
                 "winner_share":round(sum(p["winner"]=="AI Compute" for p in points)/len(points),3) if points else None,
                 "method":"stored_market_snapshots","recommendation_only":True}
 
+    @app.post("/api/v1/farms/{farm_id}/learning/settle")
+    def settle_learning(farm_id:str,authorization:str|None=Header(default=None)):
+        uid=user(authorization); c=init_db()
+        if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
+        _ensure_learning_tables(c)
+        rows=c.execute("SELECT id,chosen,predicted_value FROM decision_ledger WHERE farm_id=? AND status='open' ORDER BY ts LIMIT 100",(farm_id,)).fetchall()
+        markets=c.execute("SELECT ts,payload FROM market_snapshots ORDER BY ts").fetchall()
+        errors=[]
+        for r in rows:
+            if not markets: continue
+            d=json.loads(markets[-1][1]); h=d.get("btc_hashprice_usd_ph_day"); g=d.get("gpu_l40s_usd_hour")
+            if not h or not g: continue
+            s=ScenarioIn(btc_hashprice_usd_ph_day=float(h),gpu_hourly_usd=float(g))
+            actual=_economics(s).get(r[1],0); errors.append(actual-float(r[2]))
+            c.execute("UPDATE decision_ledger SET status='settled',actual_value=?,settled_at=? WHERE id=?",(actual,time.time(),r[0]))
+        try: c.commit()
+        except Exception: pass
+        mae=sum(abs(e) for e in errors)/len(errors) if errors else None
+        return {"settled":len(errors),"mae_eur_kwh":round(mae,6) if mae is not None else None}
+
+    @app.get("/api/v1/farms/{farm_id}/learning")
+    def learning_status(farm_id:str,authorization:str|None=Header(default=None)):
+        uid=user(authorization); c=init_db()
+        if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
+        _ensure_learning_tables(c)
+        rows=c.execute("SELECT status,predicted_value,actual_value,confidence FROM decision_ledger WHERE farm_id=? ORDER BY ts DESC LIMIT 500").fetchall()
+        settled=[r for r in rows if r[0]=="settled" and r[2] is not None]
+        mae=sum(abs(float(r[2])-float(r[1])) for r in settled)/len(settled) if settled else None
+        return {"samples":len(rows),"settled":len(settled),"open":len(rows)-len(settled),"mae_eur_kwh":round(mae,6) if mae is not None else None,"learning_ready":len(settled)>=5}
+
     @app.get("/api/v1/market/history")
     def market_history(limit:int=100):
         c=init_db()
