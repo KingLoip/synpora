@@ -114,7 +114,18 @@ def install(app):
         best=options[0]
         gross=best["value_eur_kwh"]*x.energy_kwh
         cost=x.energy_cost_eur_kwh*x.energy_kwh
-        spread=(best["value_eur_kwh"]-options[1]["value_eur_kwh"]) / max(best["value_eur_kwh"],0.0001)\n        confidence=max(0.55,min(0.97,0.72+0.22*spread))\n        risk={"AI Compute":"market_price_and_utilization","BTC Mining":"hashprice_and_difficulty","Battery":"cycle_and_tariff_assumptions","Grid":"spot_price_volatility"}[best["option"]]\n        return {"farm_id":farm_id,"energy_kwh":x.energy_kwh,"best":best,"alternatives":options[1:],\n                "gross_value_eur":round(gross,2),"energy_cost_eur":round(cost,2),\n                "net_value_eur":round(gross-cost,2),"confidence":round(confidence,2),"risk":risk,\n                "market":{"btc_hashprice_usd_ph_day":x.btc_hashprice_usd_ph_day,"eur_usd":x.eur_usd,"gpu_hourly_usd":x.gpu_hourly_usd,"gpu_power_kw":x.gpu_power_kw,"gpu_utilization":x.gpu_utilization,"gpu_platform_fee":x.gpu_platform_fee},\n                "mode":"recommendation_only","hardware_write":False}
+        spread=(best["value_eur_kwh"]-options[1]["value_eur_kwh"]) / max(best["value_eur_kwh"],0.0001)\n        confidence=max(0.55,min(0.97,0.72+0.22*spread))\n        learned_confidence=None
+        try:
+            _ensure_learning_tables(c)
+            lr=c.execute("SELECT actual_value,predicted_value FROM decision_ledger WHERE farm_id=? AND chosen=? AND status='settled' AND actual_value IS NOT NULL ORDER BY ts DESC LIMIT 50",(farm_id,best["option"])).fetchall()
+            if len(lr)>=5:
+                mae=sum(abs(float(r[0])-float(r[1])) for r in lr)/len(lr)
+                hit=sum(1 for r in lr if float(r[0])>=float(r[1]))/len(lr)
+                learned_confidence=max(0.50,min(0.98,0.45+0.40*hit+0.15*(1/(1+mae*10))))
+                confidence=round((confidence+learned_confidence)/2,2)
+        except Exception:
+            pass
+        risk={"AI Compute":"market_price_and_utilization","BTC Mining":"hashprice_and_difficulty","Battery":"cycle_and_tariff_assumptions","Grid":"spot_price_volatility"}[best["option"]]\n        return {"farm_id":farm_id,"energy_kwh":x.energy_kwh,"best":best,"alternatives":options[1:],\n                "gross_value_eur":round(gross,2),"energy_cost_eur":round(cost,2),\n                "net_value_eur":round(gross-cost,2),"confidence":round(confidence,2),"risk":risk,"learned_confidence":learned_confidence,\n                "market":{"btc_hashprice_usd_ph_day":x.btc_hashprice_usd_ph_day,"eur_usd":x.eur_usd,"gpu_hourly_usd":x.gpu_hourly_usd,"gpu_power_kw":x.gpu_power_kw,"gpu_utilization":x.gpu_utilization,"gpu_platform_fee":x.gpu_platform_fee},\n                "mode":"recommendation_only","hardware_write":False}
 
     class ScenarioIn(BaseModel):
         energy_kwh: float=100
