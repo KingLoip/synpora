@@ -333,6 +333,46 @@ def install(app):
             rows=[]
         return [{"timestamp":r[0],"data":json.loads(r[1])} for r in rows]
 
+    class PortfolioIn(BaseModel):
+        energy_kwh: float=100
+        horizon_hours: float=1
+        energy_cost_eur_kwh: float=0.05
+        btc_hashprice_usd_ph_day: float=38.75
+        eur_usd: float=1.1205
+        gpu_hourly_usd: float=1.09
+        gpu_utilization: float=0.70
+        gpu_platform_fee: float=0.15
+        asic_efficiency_j_th: float=20.0
+
+    @app.post("/api/v1/farms/{farm_id}/portfolio-optimize")
+    def portfolio_optimize(farm_id:str,x:PortfolioIn,authorization:str|None=Header(default=None)):
+        uid=user(authorization); c=init_db()
+        if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
+        assets=[dict(r) for r in c.execute("SELECT id,name,kind,power_kw FROM assets WHERE farm_id=? ORDER BY created_at",(farm_id,)).fetchall()]
+        candidates=[]
+        for a in assets:
+            kind=a["kind"].upper(); power=max(float(a["power_kw"] or 0),0.01)
+            if kind=="GPU":
+                value=(x.gpu_hourly_usd/x.eur_usd)*x.gpu_utilization*(1-x.gpu_platform_fee)/power
+                candidates.append({"asset_id":a["id"],"asset":a["name"],"kind":"GPU","value_eur_kwh":value,"capacity_kwh":power*x.horizon_hours})
+            elif kind=="BTC":
+                value=(x.btc_hashprice_usd_ph_day/x.eur_usd)/(x.asic_efficiency_j_th*1000)*0.98*0.98
+                candidates.append({"asset_id":a["id"],"asset":a["name"],"kind":"BTC","value_eur_kwh":value,"capacity_kwh":power*x.horizon_hours})
+        candidates.sort(key=lambda z:z["value_eur_kwh"],reverse=True)
+        remaining=max(0,x.energy_kwh); allocation=[]
+        for a in candidates:
+            kwh=min(remaining,a["capacity_kwh"])
+            if kwh>0:
+                allocation.append({**a,"allocated_kwh":round(kwh,3),"net_eur":round((a["value_eur_kwh"]-x.energy_cost_eur_kwh)*kwh,2)})
+                remaining-=kwh
+        grid_value=0.055
+        if remaining>0:
+            allocation.append({"asset_id":None,"asset":"Grid/Unallocated","kind":"GRID","value_eur_kwh":grid_value,"capacity_kwh":remaining,"allocated_kwh":round(remaining,3),"net_eur":round((grid_value-x.energy_cost_eur_kwh)*remaining,2)})
+        total=sum(a["net_eur"] for a in allocation)
+        return {"farm_id":farm_id,"energy_kwh":x.energy_kwh,"horizon_hours":x.horizon_hours,"allocation":allocation,
+                "unallocated_kwh":round(max(0,remaining),3),"total_net_eur":round(total,2),
+                "objective":"maximize_net_value","recommendation_only":True,"hardware_write":False}
+
     @app.post("/api/v1/farms/{farm_id}/scenario")
     def scenario(farm_id:str,x:ScenarioIn,authorization:str|None=Header(default=None)):
         uid=user(authorization); c=init_db()
