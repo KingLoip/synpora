@@ -50,14 +50,14 @@ SCRIPT = r"""
     <div class="sp-modal-card">
       <div class="sp-label">SYNPORA ACCOUNT</div>
       <h2 style="margin:6px 0 8px">Workspace öffnen</h2>
-      <p class="sp-mini">Pilot-Modus: Zugang wird lokal im Browser gespeichert. Die echte Benutzerverwaltung folgt mit PostgreSQL.</p>
+      <p class="sp-mini">Sicherer Workspace-Zugang über die SYNPORA API. Dein Session-Token bleibt nur in diesem Browser gespeichert.</p>
       <label class="sp-mini">E-Mail</label>
       <input id="sp-email" class="sp-input" type="email" placeholder="you@company.com">
       <label class="sp-mini">Farm / Workspace</label>
       <input id="sp-farm" class="sp-input" placeholder="Meine Energy Farm">
       <div style="display:flex;gap:8px;justify-content:flex-end">
         <button class="sp-action" id="sp-cancel">Abbrechen</button>
-        <button class="sp-action" id="sp-enter">Workspace erstellen</button>
+        <button class="sp-action" id="sp-logout" style="display:none">Abmelden</button><button class="sp-action" id="sp-enter">Workspace verbinden</button>
       </div>
     </div>`;
   document.body.appendChild(modal);
@@ -94,7 +94,7 @@ SCRIPT = r"""
       if(name==="Economics") setTimeout(runOptimizer,80);
       if(name==="AI Decision"){setTimeout(runOptimizer,80);setTimeout(runDecisionRisk,300);}
       if(name==="Simulation") {setTimeout(runScenarioLab,80);setTimeout(runPortfolio,300);setTimeout(runDispatch,500);}
-      if(name==="Reports"){setTimeout(loadBenchmark,120);setTimeout(loadLearningHealth,180);}
+      if(name==="Reports"){setTimeout(loadBenchmark,120);setTimeout(loadLearningHealth,180);setTimeout(loadDecisionQuality,240);}
       const titles={Assets:"Asset Registry",Economics:"Economics & Value per kWh","AI Decision":"AI Decision Center",Simulation:"What-if Simulation Lab",Reports:"Reports & Audit Trail"};
       panel.querySelector("h2").textContent=titles[name]||"SYNPORA Workspace";
       toast(name+" workspace geöffnet");
@@ -121,6 +121,18 @@ SCRIPT = r"""
       const r=await fetch("/api/v1/farms/"+id+"/learning/update",{method:"POST",headers:{Authorization:"Bearer "+acc.token}});
       const x=await r.json(); toast("Learning aktualisiert: "+(x.settlement?.settled_now||0)+" Decisions settled"); loadLearningHealth();
     };
+  }
+
+  async function loadDecisionQuality(){
+    const acc=JSON.parse(localStorage.getItem("synpora_account")||"null"); if(!acc?.token)return;
+    const farms=await fetch("/api/v1/farms",{headers:{Authorization:"Bearer "+acc.token}}).then(r=>r.json()); if(!farms[0])return;
+    const d=await fetch("/api/v1/farms/"+farms[0].id+"/learning",{headers:{Authorization:"Bearer "+acc.token}}).then(r=>r.json()).catch(()=>({}));
+    const old=panel.querySelector(".sp-quality"); if(old)old.remove();
+    const box=document.createElement("div");box.className="sp-quality sp-card";box.style.marginTop="18px";
+    const hit=d.winner_accuracy==null?"–":Math.round(Number(d.winner_accuracy)*100)+"%";
+    const regret=d.avg_regret_eur_kwh==null?"–":Number(d.avg_regret_eur_kwh).toFixed(4)+" €/kWh";
+    box.innerHTML="<div class='sp-label'>DECISION QUALITY</div><div class='sp-grid'><div><div class='sp-label'>Winner accuracy</div><div class='sp-value'>"+hit+"</div></div><div><div class='sp-label'>Average regret</div><div class='sp-value'>"+regret+"</div></div><div><div class='sp-label'>Settled decisions</div><div class='sp-value'>"+Number(d.settled||0)+"</div></div></div><div class='sp-mini' style='margin-top:10px'>Regret misst den entgangenen Wert gegenüber der tatsächlich besten Option im Nachhinein.</div>";
+    panel.appendChild(box);
   }
 
   async function loadBenchmark(){
@@ -234,6 +246,7 @@ SCRIPT = r"""
     const account=document.createElement("div");
     account.id="sp-account";
     const saved=JSON.parse(localStorage.getItem("synpora_account")||"null");
+    const logoutBtn=document.getElementById("sp-logout"); if(logoutBtn) logoutBtn.style.display=saved?"inline-block":"none";
     account.innerHTML=saved
       ? '<span class="sp-mini">'+(saved.farm||"Demo Farm")+'</span><button id="sp-account-btn">Workspace</button>'
       : '<button id="sp-account-btn">Pilot Login</button>';
@@ -253,6 +266,7 @@ SCRIPT = r"""
     document.getElementById("sp-close").onclick=()=>panel.classList.remove("show");
     document.getElementById("sp-account-btn").onclick=()=>modal.classList.add("show");
     document.getElementById("sp-cancel").onclick=()=>modal.classList.remove("show");
+    document.getElementById("sp-logout").onclick=()=>{localStorage.removeItem("synpora_account");modal.classList.remove("show");location.reload()};
     document.getElementById("sp-enter").onclick=async()=>{
       const email=document.getElementById("sp-email").value.trim();
       const farm=document.getElementById("sp-farm").value.trim()||"Demo Farm";
