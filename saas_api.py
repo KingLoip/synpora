@@ -462,32 +462,25 @@ def install(app):
         return {"samples":len(pairs),"mae":round(mae,8),"directional_hit_rate":round(hit,3)}
 
     def _online_learning_update(c, farm_id):
-        snaps=c.execute("SELECT ts,btc_hashprice_usd_ph_day,gpu_hourly_usd,austria_spot_eur_kwh FROM market_snapshots ORDER BY ts DESC LIMIT 168").fetchall()
+        # Settle against the first market snapshot strictly newer than the decision.
+        snaps=c.execute("SELECT ts,btc_hashprice_usd_ph_day,gpu_hourly_usd,austria_spot_eur_kwh FROM market_snapshots ORDER BY ts ASC").fetchall()
         decisions=c.execute("SELECT id,chosen,predicted_value,ts FROM decision_ledger WHERE farm_id=? AND status='open' ORDER BY ts ASC LIMIT 100",(farm_id,)).fetchall()
         settled=0
         for d in decisions:
-            strategy=d[1]; predicted=float(d[2] or 0); best=None
+            decision_ts=str(d[3] or "")
+            actual=None
             for s in snaps:
-                if strategy=="BTC Mining" and s[1] is not None: actual=float(s[1])
-                elif strategy=="AI Compute" and s[2] is not None: actual=float(s[2])
-                elif strategy in ("Battery","Grid") and s[3] is not None: actual=float(s[3])
-                else: continue
-                best=actual; break
-            if best is None: continue
-            # Store an observed normalized market value; later calibration can compare
-            # the direction and magnitude of the prediction without controlling hardware.
-            c.execute("UPDATE decision_ledger SET actual_value=?,status='settled' WHERE id=?",(best,d[0]))
+                if str(s[0])<=decision_ts: continue
+                if d[1]=="BTC Mining" and s[1] is not None: actual=float(s[1])
+                elif d[1]=="AI Compute" and s[2] is not None: actual=float(s[2])
+                elif d[1] in ("Battery","Grid") and s[3] is not None: actual=float(s[3])
+                if actual is not None: break
+            if actual is None: continue
+            c.execute("UPDATE decision_ledger SET actual_value=?,status='settled' WHERE id=?",(actual,d[0]))
             settled+=1
         c.commit()
-        return {"settled_now":settled,"open_remaining":len(decisions)-settled}
-
-    def _calibrated_confidence(c, farm_id, strategy, base):
-        s=_settled_learning_stats(c,farm_id,strategy)
-        if not s["samples"]: return round(base,3)
-        hit=s["directional_hit_rate"] or .5
-        mae=s["mae"] or 0
-        penalty=min(.35,mae*10)
-        return round(max(.50,min(.98,.45+.40*hit+.15*(1/(1+mae*10))-penalty*.15)),3)
+        remaining=max(0,len(decisions)-settled)
+        return {"settled_now":settled,"open_remaining":remaining}
 
     @app.get("/api/v1/farms/{farm_id}/ai-status")
     def ai_status(farm_id:str,authorization:str|None=Header(default=None)):
