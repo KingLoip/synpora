@@ -340,6 +340,7 @@ def install(app):
         scenarios: int=200
         seed: int=42
         shock_pct: float=0.20
+        risk_aversion: float=0.75
 
     def _risk_metrics(values, base):
         if not values:
@@ -390,10 +391,51 @@ def install(app):
             "base_case":{"best":best_base,"net_eur":round(base_net[best_base],4),"values_eur_kwh":{k:round(v,6) for k,v in base.items()}},
             "strategies":metrics,"robust_strategy":robust,"base_case_strategy":best_base,
             "regret_vs_base_best_eur":regret,
-            "risk_adjusted_score":{k:round(0.55*metrics[k]["p10"]+0.30*metrics[k]["mean"]+0.15*metrics[k]["probability_positive"]*abs(metrics[k]["mean"] or 1),4) for k in metrics},
+            "risk_aversion":round(max(0.0,min(1.0,float(x.risk_aversion))),3),
+            "risk_adjusted_score":{k:round((1-max(0.0,min(1.0,float(x.risk_aversion))))*metrics[k]["mean"]+max(0.0,min(1.0,float(x.risk_aversion)))*metrics[k]["p10"],4) for k in metrics},
             "method":"deterministic_seeded_monte_carlo_lognormal_shocks",
             "recommendation_only":True,"hardware_write":False
         }
+
+    @app.post("/api/v1/farms/{farm_id}/decision-engine")
+    def decision_engine(farm_id:str,x:RiskScenarioIn,authorization:str|None=Header(default=None)):
+        uid=user(authorization); c=init_db()
+        if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone():
+            raise HTTPException(404,"Farm not found")
+        # Unified decision layer: current economics + Monte-Carlo risk + regret proxy.
+        base=_economics(x)
+        base_net={k:(float(v)-x.energy_cost_eur_kwh)*x.energy_kwh for k,v in base.items()}
+        risk_seed=int(x.seed); n=max(100,min(5000,int(x.scenarios))); rng=__import__("random").Random(risk_seed)
+        samples=[]
+        for _ in range(n):
+            s=x.model_copy(update={
+                "btc_hashprice_usd_ph_day":x.btc_hashprice_usd_ph_day*rng.lognormvariate(0,float(x.shock_pct)),
+                "gpu_hourly_usd":x.gpu_hourly_usd*rng.lognormvariate(0,float(x.shock_pct)),
+                "energy_cost_eur_kwh":x.energy_cost_eur_kwh*rng.lognormvariate(0,float(x.shock_pct)*0.65)})
+            samples.append(_economics(s))
+        av=max(0.0,min(1.0,float(x.risk_aversion)))
+        ranked=[]
+        for k in base:
+            vals=sorted(float(v[k]) for v in samples); mean=sum(vals)/n; p05=vals[max(0,int(.05*n)-1)]
+            wins=sum(1 for row in samples if max(row,key=row.get)==k)/n
+            regret=sum(max(row.values())-row[k] for row in samples)/n
+            score=(1-av)*mean+av*p05
+            ranked.append({"strategy":k,"value_eur_kwh":round(base[k],6),"expected_eur_kwh":round(mean,6),"p05_eur_kwh":round(p05,6),"win_probability":round(wins,4),"expected_regret_eur_kwh":round(regret,6),"risk_score":round(score,6)})
+        ranked.sort(key=lambda z:z["risk_score"],reverse=True)
+        best=ranked[0]
+        # Confidence is deliberately conservative until empirical decision history exists.
+        empirical=0.55
+        try:
+            q=c.execute("SELECT confidence FROM decision_ledger WHERE farm_id=? AND status='settled' ORDER BY ts DESC LIMIT 24",(farm_id,)).fetchall()
+            if q: empirical=max(0.50,min(0.95,sum(float(r[0]) for r in q)/len(q)))
+        except Exception: pass
+        confidence=max(0.50,min(0.95,0.55*best["win_probability"]+0.25*empirical+0.20*max(0.0,min(1.0,1/(1+best["expected_regret_eur_kwh"]*20)))))
+        return {"farm_id":farm_id,"recommended":best["strategy"],"confidence":round(confidence,3),
+                "decision":{"expected_value_eur_kwh":best["expected_eur_kwh"],"p05_eur_kwh":best["p05_eur_kwh"],"win_probability":best["win_probability"],"expected_regret_eur_kwh":best["expected_regret_eur_kwh"],"risk_score":best["risk_score"]},
+                "ranking":ranked,"risk_aversion":round(av,3),"samples":n,"seed":risk_seed,
+                "fallback":ranked[1]["strategy"] if len(ranked)>1 else None,
+                "explanation":"Risk-adjusted choice from current economics plus seeded Monte-Carlo market shocks; no hardware action is executed.",
+                "method":"unified_forecast_risk_regret_v1","recommendation_only":True,"hardware_write":False}
 
     @app.post("/api/v1/farms/{farm_id}/decision")
     def record_decision(farm_id:str,x:ScenarioIn,authorization:str|None=Header(default=None)):
