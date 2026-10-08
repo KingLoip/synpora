@@ -487,6 +487,16 @@ def install(app):
         if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
         return {"farm_id":farm_id,"btc":_settled_learning_stats(c,farm_id,"BTC Mining"),"gpu":_settled_learning_stats(c,farm_id,"AI Compute"),"mode":"self_calibrating","recommendation_only":True}
     
+    @app.post("/api/v1/farms/{farm_id}/learning/update")
+    def learning_update(farm_id:str,authorization:str|None=Header(default=None)):
+        uid=user(authorization); c=init_db()
+        if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
+        settlement=_online_learning_update(c,farm_id)
+        stats={}
+        for strategy in ("AI Compute","BTC Mining","Battery","Grid"):
+            stats[strategy]=_settled_learning_stats(c,farm_id,strategy)
+        return {"farm_id":farm_id,"settlement":settlement,"calibration":stats,"mode":"self_learning","recommendation_only":True}
+
     @app.post("/api/v1/farms/{farm_id}/forecast-plan")
     def forecast_plan(farm_id:str,x:DispatchIn,authorization:str|None=Header(default=None)):
         uid=user(authorization); c=init_db()
