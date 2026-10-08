@@ -112,6 +112,50 @@ def install(app):
         cost=x.energy_cost_eur_kwh*x.energy_kwh
         spread=(best["value_eur_kwh"]-options[1]["value_eur_kwh"]) / max(best["value_eur_kwh"],0.0001)\n        confidence=max(0.55,min(0.97,0.72+0.22*spread))\n        risk={"AI Compute":"market_price_and_utilization","BTC Mining":"hashprice_and_difficulty","Battery":"cycle_and_tariff_assumptions","Grid":"spot_price_volatility"}[best["option"]]\n        return {"farm_id":farm_id,"energy_kwh":x.energy_kwh,"best":best,"alternatives":options[1:],\n                "gross_value_eur":round(gross,2),"energy_cost_eur":round(cost,2),\n                "net_value_eur":round(gross-cost,2),"confidence":round(confidence,2),"risk":risk,\n                "market":{"btc_hashprice_usd_ph_day":x.btc_hashprice_usd_ph_day,"eur_usd":x.eur_usd,"gpu_hourly_usd":x.gpu_hourly_usd,"gpu_power_kw":x.gpu_power_kw,"gpu_utilization":x.gpu_utilization,"gpu_platform_fee":x.gpu_platform_fee},\n                "mode":"recommendation_only","hardware_write":False}
 
+    class ScenarioIn(BaseModel):
+        energy_kwh: float=100
+        energy_cost_eur_kwh: float=0.05
+        btc_hashprice_usd_ph_day: float=39.64
+        eur_usd: float=1.1205
+        gpu_hourly_usd: float=1.09
+        gpu_power_kw: float=0.35
+        gpu_utilization: float=0.70
+        gpu_platform_fee: float=0.15
+        asic_efficiency_j_th: float=20.0
+        battery_value_eur_kwh: float=0.071
+        grid_value_eur_kwh: float=0.055
+
+    def _economics(x):
+        btc=((x.btc_hashprice_usd_ph_day/x.eur_usd)/(x.asic_efficiency_j_th*1000))*0.98*0.98
+        gpu=((x.gpu_hourly_usd/x.eur_usd)*x.gpu_utilization*(1-x.gpu_platform_fee))/max(x.gpu_power_kw,0.01)
+        return {"AI Compute":max(0,gpu),"BTC Mining":max(0,btc),"Battery":x.battery_value_eur_kwh,"Grid":x.grid_value_eur_kwh}
+
+    @app.post("/api/v1/farms/{farm_id}/scenario")
+    def scenario(farm_id:str,x:ScenarioIn,authorization:str|None=Header(default=None)):
+        uid=user(authorization); c=init_db()
+        if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
+        values=_economics(x)
+        rows=[{"option":k,"value_eur_kwh":round(v,5),"net_eur":round((v-x.energy_cost_eur_kwh)*x.energy_kwh,2)} for k,v in values.items()]
+        rows.sort(key=lambda r:r["value_eur_kwh"],reverse=True)
+        best=rows[0]
+        return {"farm_id":farm_id,"inputs":x.model_dump(),"ranking":rows,"best":best,
+                "spread_eur_kwh":round(best["value_eur_kwh"]-rows[1]["value_eur_kwh"],5),
+                "recommendation_only":True,"hardware_write":False}
+
+    @app.post("/api/v1/farms/{farm_id}/backtest")
+    def backtest(farm_id:str,authorization:str|None=Header(default=None)):
+        uid=user(authorization); c=init_db()
+        if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
+        base=ScenarioIn()
+        multipliers=[0.65,0.8,0.95,1.0,1.1,1.25,1.4]
+        samples=[]
+        for m in multipliers:
+            s=ScenarioIn(energy_kwh=100,energy_cost_eur_kwh=0.05,btc_hashprice_usd_ph_day=base.btc_hashprice_usd_ph_day*m,gpu_hourly_usd=base.gpu_hourly_usd*m)
+            vals=_economics(s); best=max(vals,key=vals.get)
+            samples.append({"market_multiplier":m,"best":best,"best_value_eur_kwh":round(vals[best],5)})
+        wins={k:sum(1 for s in samples if s["best"]==k) for k in ["AI Compute","BTC Mining","Battery","Grid"]}
+        return {"farm_id":farm_id,"samples":samples,"wins":wins,"method":"synthetic_market_sensitivity","recommendation_only":True}
+
     class AuthIn(BaseModel):
         email: str
         password: str
