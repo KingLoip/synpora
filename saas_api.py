@@ -3,7 +3,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 DB_URL = os.getenv("DATABASE_URL","").strip() or os.getenv("POSTGRES_URL","").strip()
-JWT_SECRET = os.getenv("SYNPORA_JWT_SECRET","change-me-in-production")
+JWT_SECRET = os.getenv("SYNPORA_JWT_SECRET","").strip()
 DB_PATH = os.getenv("SYNPORA_SQLITE_PATH","/tmp/synpora.db")
 
 def _conn():
