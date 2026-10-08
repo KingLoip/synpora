@@ -135,7 +135,7 @@ def install(app):
         uid=user(authorization); c=init_db()
         if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
         values=_economics(x)
-        rows=[{"option":k,"value_eur_kwh":round(v,5),"net_eur":round((v-x.energy_cost_eur_kwh)*x.energy_kwh,2)} for k,v in values.items()]
+        assets=[dict(r) for r in c.execute("SELECT id,name,kind,power_kw FROM assets WHERE farm_id=? ORDER BY created_at",(farm_id,)).fetchall()]\n        for a in assets:\n            if a["kind"].upper()=="GPU" and a["power_kw"]>0: values["AI Compute"]=(x.gpu_hourly_usd/x.eur_usd)*x.gpu_utilization*(1-x.gpu_platform_fee)/a["power_kw"]\n            if a["kind"].upper()=="BTC" and a["power_kw"]>0: values["BTC Mining"]=(x.btc_hashprice_usd_ph_day/x.eur_usd)/(x.asic_efficiency_j_th*1000)*0.98*0.98\n        rows=[{"option":k,"value_eur_kwh":round(v,5),"net_eur":round((v-x.energy_cost_eur_kwh)*x.energy_kwh,2)} for k,v in values.items()]
         rows.sort(key=lambda r:r["value_eur_kwh"],reverse=True)
         best=rows[0]
         return {"farm_id":farm_id,"inputs":x.model_dump(),"ranking":rows,"best":best,
