@@ -254,7 +254,7 @@ SCRIPT = r"""
     };
     document.getElementById("sp-sim").onclick=()=>runScenarioLab();
   }
-  if(document.readyState==="loading") document.addEventListener("DOMContentLoaded",mount); else mount();
+  if(document.readyState==="loading") document.addEventListener("\n<script>async function synporaForecast(farmId){try{const t=localStorage.getItem("synpora_token");if(!t)return;const r=await fetch("/api/v1/farms/"+farmId+"/forecast-plan",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+t},body:JSON.stringify({horizon_hours:48,interval_hours:1,pv_kwh:442,battery_soc_pct:74,battery_capacity_kwh:10,battery_reserve_pct:20,gpu_hourly_usd:1.09,gpu_utilization:.70,gpu_platform_fee:.15,btc_hashprice_usd_ph_day:.055,eur_usd:1.1205,asic_efficiency_j_th:25,energy_cost_eur_kwh:.2055})});if(!r.ok)return;const d=await r.json();const el=document.querySelector("#sp-forecast");if(el)el.innerHTML="<div class='sp-label'>PREDICTIVE 48H OUTLOOK</div><div class='sp-value'>"+d.forecast.slice(0,12).map(x=>String(x.hour).padStart(2,"0")+"h "+x.best_option).join(" · ")+"</div><div class='sp-mini'>Baseline confidence "+Math.round(d.confidence*100)+"% · Recommendation only</div>";}catch(e){}}</script>\nDOMContentLoaded",mount); else mount();
   setTimeout(mount,800);
   setTimeout(mount,2000);
 })();
