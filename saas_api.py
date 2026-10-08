@@ -461,6 +461,12 @@ def install(app):
         hit=sum(1 for a,b in pairs if (a>=0)==(b>=0))/len(pairs)
         return {"samples":len(pairs),"mae":round(mae,8),"directional_hit_rate":round(hit,3)}
 
+    @app.get("/api/v1/farms/{farm_id}/forecast-health")
+    def forecast_health(farm_id:str,authorization:str|None=Header(default=None)):
+        uid=user(authorization); c=init_db()
+        if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
+        return {"farm_id":farm_id,"btc":_settled_learning_stats(c,farm_id,"BTC Mining"),"gpu":_settled_learning_stats(c,farm_id,"AI Compute"),"mode":"self_calibrating","recommendation_only":True}
+    
     @app.post("/api/v1/farms/{farm_id}/forecast-plan")
     def forecast_plan(farm_id:str,x:DispatchIn,authorization:str|None=Header(default=None)):
         uid=user(authorization); c=init_db()
