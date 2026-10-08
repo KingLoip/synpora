@@ -482,6 +482,15 @@ def install(app):
         remaining=max(0,len(decisions)-settled)
         return {"settled_now":settled,"open_remaining":remaining}
 
+    @app.get("/api/v1/system/production-readiness")
+    def production_readiness():
+        db_configured=bool(os.getenv("DATABASE_URL") or os.getenv("POSTGRES_URL"))
+        jwt_configured=bool(os.getenv("SYNPORA_JWT_SECRET","").strip())
+        return {"database_configured":db_configured,"jwt_secret_configured":jwt_configured,
+                "hardware_write_enabled":False,"autonomous_control_enabled":False,
+                "recommendation_only":True,"external_market_layer":True,
+                "status":"ready_with_configuration" if (db_configured and jwt_configured) else "configuration_required"}
+
     @app.get("/api/v1/farms/{farm_id}/ai-status")
     def ai_status(farm_id:str,authorization:str|None=Header(default=None)):
         uid=user(authorization); c=init_db()
