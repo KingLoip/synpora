@@ -94,7 +94,7 @@ def install(app):
 
     @app.post("/api/v1/farms/{farm_id}/optimize")
     def optimize(farm_id:str,x:OptimizeIn,authorization:str|None=Header(default=None)):
-        forecast_confidence=0.55\n        uid=user(authorization); c=init_db()
+        uid=user(authorization); c=init_db()
         ok=c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone()
         if not ok: raise HTTPException(404,"Farm not found")
         # BTC gross revenue per kWh = hashprice / (J/TH) / 1000, adjusted for uptime/pool fee.
@@ -125,7 +125,7 @@ def install(app):
                 confidence=round((confidence+learned_confidence)/2,2)
         except Exception:
             pass
-        risk={"AI Compute":"market_price_and_utilization","BTC Mining":"hashprice_and_difficulty","Battery":"cycle_and_tariff_assumptions","Grid":"spot_price_volatility"}[best["option"]]\n        return {"farm_id":farm_id,"energy_kwh":x.energy_kwh,"best":best,"alternatives":options[1:],\n                "gross_value_eur":round(gross,2),"energy_cost_eur":round(cost,2),\n                "net_value_eur":round(gross-cost,2),"confidence":round(confidence,2),"risk":risk,"learned_confidence":learned_confidence,\n                "market":{"btc_hashprice_usd_ph_day":x.btc_hashprice_usd_ph_day,"eur_usd":x.eur_usd,"gpu_hourly_usd":x.gpu_hourly_usd,"gpu_power_kw":x.gpu_power_kw,"gpu_utilization":x.gpu_utilization,"gpu_platform_fee":x.gpu_platform_fee},\n                "mode":"recommendation_only","hardware_write":False}
+        risk={"AI Compute":"market_price_and_utilization","BTC Mining":"hashprice_and_difficulty","Battery":"cycle_and_tariff_assumptions","Grid":"spot_price_volatility"}[best["option"]]\n        try:\n            series_key="gpu" if best["option"]=="AI Compute" else ("btc" if best["option"]=="BTC Mining" else "energy")\n            forecast_confidence=_ensemble_confidence(c,series_key)\n            confidence=round(min(confidence,forecast_confidence) if forecast_confidence<0.65 else confidence,2)\n        except Exception:\n            forecast_confidence=0.55\n        return {"farm_id":farm_id,"energy_kwh":x.energy_kwh,"best":best,"alternatives":options[1:],\n                "gross_value_eur":round(gross,2),"energy_cost_eur":round(cost,2),\n                "net_value_eur":round(gross-cost,2),"confidence":round(confidence,2),"risk":risk,"learned_confidence":learned_confidence,\n                "market":{"btc_hashprice_usd_ph_day":x.btc_hashprice_usd_ph_day,"eur_usd":x.eur_usd,"gpu_hourly_usd":x.gpu_hourly_usd,"gpu_power_kw":x.gpu_power_kw,"gpu_utilization":x.gpu_utilization,"gpu_platform_fee":x.gpu_platform_fee},\n                "mode":"recommendation_only","hardware_write":False}
 
     class ScenarioIn(BaseModel):
         energy_kwh: float=100
@@ -143,7 +143,7 @@ def install(app):
     def _economics(x):
         btc=((x.btc_hashprice_usd_ph_day/x.eur_usd)/(x.asic_efficiency_j_th*1000))*0.98*0.98
         gpu=((x.gpu_hourly_usd/x.eur_usd)*x.gpu_utilization*(1-x.gpu_platform_fee))/max(x.gpu_power_kw,0.01)
-        if forecast_confidence < 0.65:\n            confidence = min(confidence, forecast_confidence)\n        return {"AI Compute":max(0,gpu),"BTC Mining":max(0,btc),"Battery":x.battery_value_eur_kwh,"Grid":x.grid_value_eur_kwh}
+        return {"AI Compute":max(0,gpu),"BTC Mining":max(0,btc),"Battery":x.battery_value_eur_kwh,"Grid":x.grid_value_eur_kwh}
 
     def _external_market():
         import urllib.request
