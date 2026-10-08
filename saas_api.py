@@ -481,6 +481,14 @@ def install(app):
         c.commit()
         return {"settled_now":settled,"open_remaining":len(decisions)-settled}
 
+    def _calibrated_confidence(c, farm_id, strategy, base):
+        s=_settled_learning_stats(c,farm_id,strategy)
+        if not s["samples"]: return round(base,3)
+        hit=s["directional_hit_rate"] or .5
+        mae=s["mae"] or 0
+        penalty=min(.35,mae*10)
+        return round(max(.50,min(.98,.45+.40*hit+.15*(1/(1+mae*10))-penalty*.15)),3)
+
     @app.get("/api/v1/farms/{farm_id}/forecast-health")
     def forecast_health(farm_id:str,authorization:str|None=Header(default=None)):
         uid=user(authorization); c=init_db()
