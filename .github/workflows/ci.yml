@@ -42,6 +42,9 @@ jobs:
           install(app)
           print("SYNPORA import smoke test: OK")
           PY
+      - name: Docker build smoke test
+        run: docker build --pull=false -t synpora-ci .
+
       - name: Verify release invariants
         run: |
           python - <<'PY'
