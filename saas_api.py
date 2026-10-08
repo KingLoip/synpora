@@ -453,6 +453,14 @@ def install(app):
         stability=max(0.0,min(1.0,1.0-volatility))
         return round(max(.55,min(.95,.55+.25*concentration+.20*stability)),3)
 
+    def _settled_learning_stats(c, farm_id, strategy):
+        rows=c.execute("SELECT predicted_value,actual_value FROM decision_ledger WHERE farm_id=? AND chosen=? AND status='settled' AND predicted_value IS NOT NULL AND actual_value IS NOT NULL ORDER BY ts DESC LIMIT 100",(farm_id,strategy)).fetchall()
+        if not rows: return {"samples":0,"mae":None,"directional_hit_rate":None}
+        pairs=[(float(r[0]),float(r[1])) for r in rows]
+        mae=sum(abs(a-b) for a,b in pairs)/len(pairs)
+        hit=sum(1 for a,b in pairs if (a>=0)==(b>=0))/len(pairs)
+        return {"samples":len(pairs),"mae":round(mae,8),"directional_hit_rate":round(hit,3)}
+
     @app.post("/api/v1/farms/{farm_id}/forecast-plan")
     def forecast_plan(farm_id:str,x:DispatchIn,authorization:str|None=Header(default=None)):
         uid=user(authorization); c=init_db()
