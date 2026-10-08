@@ -108,7 +108,7 @@ SCRIPT = r"""
     const farms=await fetch("/api/v1/farms",{headers:{Authorization:"Bearer "+acc.token}}).then(r=>r.json());
     if(!farms[0]){toast("Keine Farm vorhanden");return}
     const energy=Number(window.prompt("Verfügbare Energie in kWh","10")||10);
-    const r=await fetch("/api/v1/farms/"+farms[0].id+"/optimize",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+acc.token},body:JSON.stringify({energy_kwh:energy})});
+    const market=await fetch("/api/v1/market/live").then(r=>r.json()); const r=await fetch("/api/v1/farms/"+farms[0].id+"/optimize",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+acc.token},body:JSON.stringify({energy_kwh:energy,btc_hashprice_usd_ph_day:market.btc_hashprice_usd_ph_day,eur_usd:market.eur_usd})});
     const d=await r.json(); if(!r.ok){toast(d.detail||"Optimierung fehlgeschlagen");return}
     panel.querySelector(".sp-opt")?.remove();
     const box=document.createElement("div");box.className="sp-opt";box.style.marginTop="18px";
