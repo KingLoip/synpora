@@ -6,21 +6,39 @@ DB_URL = os.getenv("DATABASE_URL","").strip() or os.getenv("POSTGRES_URL","").st
 JWT_SECRET = os.getenv("SYNPORA_JWT_SECRET","").strip()
 DB_PATH = os.getenv("SYNPORA_SQLITE_PATH","/tmp/synpora.db")
 
+class _DBCompat:
+    def __init__(self, conn, postgres=False):
+        self._conn=conn
+        self.is_postgres=postgres
+    def execute(self, sql, params=None):
+        if self.is_postgres and "?" in sql:
+            sql=sql.replace("?", "%s")
+        return self._conn.execute(sql, params or ())
+    def executescript(self, sql):
+        if self.is_postgres:
+            for stmt in sql.split(";"):
+                stmt=stmt.strip()
+                if stmt: self._conn.execute(stmt)
+        else:
+            return self._conn.executescript(sql)
+    def commit(self):
+        return self._conn.commit()
+    def close(self):
+        return self._conn.close()
+
 def _conn():
     if DB_URL:
         try:
             import psycopg
-            return psycopg.connect(DB_URL, autocommit=True)
+            return _DBCompat(psycopg.connect(DB_URL, autocommit=True), postgres=True)
         except Exception as e:
             if os.getenv("SYNPORA_REQUIRE_DATABASE","0")=="1":
                 raise RuntimeError("PostgreSQL connection required but unavailable") from e
-    c=sqlite3.connect(DB_PATH, check_same_thread=False)
-    c.row_factory=sqlite3.Row
-    return c
+    return _DBCompat(sqlite3.connect(DB_PATH, check_same_thread=False), postgres=False)
 
 def init_db():
     c=_conn()
-    if DB_URL and c.__class__.__module__.startswith("psycopg"):
+    if c.is_postgres:
         c.execute("""CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,email TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL,created_at DOUBLE PRECISION NOT NULL)""")
         c.execute("""CREATE TABLE IF NOT EXISTS farms(id TEXT PRIMARY KEY,user_id TEXT NOT NULL,name TEXT NOT NULL,created_at DOUBLE PRECISION NOT NULL)""")
         c.execute("""CREATE TABLE IF NOT EXISTS assets(id TEXT PRIMARY KEY,farm_id TEXT NOT NULL,name TEXT NOT NULL,kind TEXT NOT NULL,power_kw DOUBLE PRECISION DEFAULT 0,created_at DOUBLE PRECISION NOT NULL)""")
@@ -173,7 +191,7 @@ def install(app):
               "gpu_platform_fee":0.15,
               "source":"Startmining API + RunPod reference" if ext else "fallback"}
         c=init_db()
-        if DB_URL and c.__class__.__module__.startswith("psycopg"):
+        if c.is_postgres:
             c.execute("CREATE TABLE IF NOT EXISTS market_snapshots(id TEXT PRIMARY KEY,ts DOUBLE PRECISION NOT NULL,payload TEXT NOT NULL)")
             c.execute("INSERT INTO market_snapshots VALUES(%s,%s,%s)",(secrets.token_hex(12),snap["timestamp"],json.dumps(snap)))
         else:
