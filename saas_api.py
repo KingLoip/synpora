@@ -298,13 +298,15 @@ def install(app):
         c=init_db()
         snap={"timestamp":time.time(),"btc_hashprice_usd_ph_day":39.6395,"eur_usd":1.1205,
               "gpu_l40s_usd_hour":1.09,"gpu_l40s_power_kw":0.35}
-        # SQLite/Postgres-compatible JSON snapshot store.
-        if c.is_postgres:
-            c.execute("CREATE TABLE IF NOT EXISTS market_snapshots(id TEXT PRIMARY KEY,ts DOUBLE PRECISION NOT NULL,payload TEXT NOT NULL)")
-            c.execute("INSERT INTO market_snapshots VALUES(%s,%s,%s)",(secrets.token_hex(12),snap["timestamp"],json.dumps(snap)))
-        else:
-            c.execute("CREATE TABLE IF NOT EXISTS market_snapshots(id TEXT PRIMARY KEY,ts REAL NOT NULL,payload TEXT NOT NULL)")
-            c.execute("INSERT INTO market_snapshots VALUES(?,?,?)",(secrets.token_hex(12),snap["timestamp"],json.dumps(snap))); c.commit()
+        _ensure_market_table(c)
+        vals=(secrets.token_hex(12),snap["timestamp"],json.dumps(snap),None,snap["btc_hashprice_usd_ph_day"],None,None,
+              snap["eur_usd"],snap["gpu_l40s_usd_hour"],snap["gpu_l40s_power_kw"],0.70,0.15,None)
+        c.execute("""INSERT INTO market_snapshots
+            (id,ts,payload,btc_price_usd,btc_hashprice_usd_ph_day,btc_difficulty,network_hashrate_eh,eur_usd,
+             gpu_l40s_usd_hour,gpu_l40s_power_kw,gpu_utilization,gpu_platform_fee,austria_spot_eur_kwh)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",vals)
+        try: c.commit()
+        except Exception: pass
         return snap
 
     @app.get("/api/v1/farms/{farm_id}/benchmark")
