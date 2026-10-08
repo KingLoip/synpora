@@ -605,9 +605,13 @@ def install(app):
                     gpu_utilization=float(payload.get("gpu_utilization") or 0.70),
                     gpu_platform_fee=float(payload.get("gpu_platform_fee") or 0.15)
                 )
-                actual=_economics(scenario).get(d[1])
+                economics=_economics(scenario)
+                actual=economics.get(d[1])
                 if actual is not None:
-                    c.execute("UPDATE decision_ledger SET actual_value=?,status='settled',settled_at=? WHERE id=?",(float(actual),time.time(),d[0]))
+                    actual_best=max(economics.values())
+                    regret=max(0.0,actual_best-float(actual))
+                    c.execute("UPDATE decision_ledger SET actual_value=?,actual_best_value=?,regret_eur_kwh=?,status='settled',settled_at=? WHERE id=?",
+                              (float(actual),float(actual_best),float(regret),time.time(),d[0]))
                     settled+=1
                 break
         try: c.commit()
