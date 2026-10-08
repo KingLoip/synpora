@@ -390,6 +390,37 @@ def install(app):
         gpu_platform_fee: float=0.15
         asic_efficiency_j_th: float=20.0
 
+    def _adaptive_model_weights(c, series_key):
+        rows=c.execute("SELECT ts,btc_hashprice_usd_ph_day,gpu_hourly_usd,austria_spot_eur_kwh FROM market_snapshots ORDER BY ts DESC LIMIT 168").fetchall()
+        idx={"btc":1,"gpu":2,"energy":3}[series_key]
+        y=[float(r[idx]) for r in rows if r[idx] is not None]
+        if len(y)<8:
+            return {"recent_mean":.34,"last_value":.33,"trend":.33}
+        cut=min(48,len(y)-4); test=y[:cut]; train=y[cut:]
+        mean=sum(train)/len(train); last=train[0]
+        slope=(train[0]-train[-1])/(len(train)-1) if len(train)>1 else 0
+        preds={"recent_mean":[mean]*len(test),"last_value":[last]*len(test),
+               "trend":[train[0]+slope*(i+1) for i in range(len(test))]}
+        errors={k:sum(abs(a-b) for a,b in zip(test,v))/len(test) for k,v in preds.items()}
+        inv={k:1.0/(v+1e-9) for k,v in errors.items()}
+        total=sum(inv.values())
+        return {k:round(v/total,4) for k,v in inv.items()}
+
+    def _ensemble_forecast(c, series_key, horizon, fallback):
+        weights=_adaptive_model_weights(c,series_key)
+        rows=c.execute("SELECT btc_hashprice_usd_ph_day,gpu_hourly_usd,austria_spot_eur_kwh FROM market_snapshots ORDER BY ts DESC LIMIT 48").fetchall()
+        idx={"btc":0,"gpu":1,"energy":2}[series_key]
+        y=[float(r[idx]) for r in rows if r[idx] is not None]
+        if not y: return [fallback]*horizon,weights
+        mean=sum(y)/len(y); last=y[0]
+        slope=(y[0]-y[-1])/(len(y)-1) if len(y)>1 else 0
+        out=[]
+        for h in range(1,horizon+1):
+            pred=(weights["recent_mean"]*mean + weights["last_value"]*last +
+                  weights["trend"]*(last+slope*h))
+            out.append(pred)
+        return out,weights
+
     def _model_select(c):
         rows=c.execute("SELECT ts,btc_hashprice_usd_ph_day,gpu_hourly_usd,austria_spot_eur_kwh FROM market_snapshots WHERE btc_hashprice_usd_ph_day IS NOT NULL ORDER BY ts DESC LIMIT 168").fetchall()
         result={}
@@ -415,6 +446,9 @@ def install(app):
         learn=_forecast_learning(c)
         models=_model_select(c)
         hours=max(1,min(72,x.horizon_hours))
+        btc_fc,btc_w=_ensemble_forecast(c,"btc",hours,x.btc_hashprice_usd_ph_day)
+        gpu_fc,gpu_w=_ensemble_forecast(c,"gpu",hours,x.gpu_hourly_usd)
+        energy_fc,energy_w=_ensemble_forecast(c,"energy",hours,x.energy_cost_eur_kwh)
         import math
         rows=[]
         for h in range(hours):
@@ -425,15 +459,15 @@ def install(app):
                 return sum(a)/len(a) if a else default
             btc0=avg(0,x.btc_hashprice_usd_ph_day); gpu0=avg(1,x.gpu_hourly_usd)
             pv_shape=max(0.0,math.sin((h+1)/hours*math.pi))
-            btc=btc0*(1-0.06*math.sin(h/8.0)); gpu=gpu0*(1+0.10*math.sin(h/6.0))
+            btc=btc_fc[h]; gpu=gpu_fc[h]; energy=energy_fc[h]
             pv=x.pv_kwh/hours*(0.35+1.3*pv_shape)
             gpu_v=(gpu/x.eur_usd)*x.gpu_utilization*(1-x.gpu_platform_fee)/0.35
             btc_v=(btc/x.eur_usd)/(x.asic_efficiency_j_th*1000)*0.98*0.98
             rows.append({"hour":h,"pv_kwh":round(pv,3),"gpu_hourly_usd":round(gpu,4),
-                         "btc_hashprice_usd_ph_day":round(btc,4),"gpu_value_eur_kwh":round(gpu_v,5),
+                         "btc_hashprice_usd_ph_day":round(btc,4),"gpu_value_eur_kwh":round(gpu_v,5),"forecast_energy_cost_eur_kwh":round(energy,5),
                          "btc_value_eur_kwh":round(btc_v,5),"best_option":"AI Compute" if gpu_v>=btc_v else "BTC Mining"})
         return {"farm_id":farm_id,"horizon_hours":hours,"forecast":rows,
-                "method":"historical_adaptive_model_selection","learning":learn,"models":models,
+                "method":"historical_adaptive_model_selection","learning":learn,"models":models,"ensemble_weights":{"btc":btc_w,"gpu":gpu_w,"energy":energy_w},
                 "recommendation_only":True,"hardware_write":False}
 
     @app.post("/api/v1/farms/{farm_id}/dispatch-plan")
