@@ -91,6 +91,7 @@ SCRIPT = r"""
       if(name==="Overview"){panel.classList.remove("show");window.scrollTo({top:0,behavior:"smooth"});return}
       panel.classList.add("show");
       if(name==="Assets") setTimeout(loadAssets,50);
+      if(name==="Economics" || name==="AI Decision" || name==="Simulation") setTimeout(runOptimizer,80);
       const titles={Assets:"Asset Registry",Economics:"Economics & Value per kWh","AI Decision":"AI Decision Center",Simulation:"What-if Simulation Lab",Reports:"Reports & Audit Trail"};
       panel.querySelector("h2").textContent=titles[name]||"SYNPORA Workspace";
       toast(name+" workspace geöffnet");
@@ -99,6 +100,21 @@ SCRIPT = r"""
     nav.appendChild(b);
   });
 
+
+
+  async function runOptimizer(){
+    const acc=JSON.parse(localStorage.getItem("synpora_account")||"null");
+    if(!acc?.token){toast("Bitte zuerst Workspace verbinden");return}
+    const farms=await fetch("/api/v1/farms",{headers:{Authorization:"Bearer "+acc.token}}).then(r=>r.json());
+    if(!farms[0]){toast("Keine Farm vorhanden");return}
+    const energy=Number(window.prompt("Verfügbare Energie in kWh","10")||10);
+    const r=await fetch("/api/v1/farms/"+farms[0].id+"/optimize",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+acc.token},body:JSON.stringify({energy_kwh:energy})});
+    const d=await r.json(); if(!r.ok){toast(d.detail||"Optimierung fehlgeschlagen");return}
+    panel.querySelector(".sp-opt")?.remove();
+    const box=document.createElement("div");box.className="sp-opt";box.style.marginTop="18px";
+    box.innerHTML="<div class='sp-label'>AI VALUE OPTIMIZER</div><div class='sp-card'><div class='sp-label'>BEST OPTION</div><div class='sp-value sp-good'>"+d.best.option+"</div><div>"+d.best.value_eur_kwh.toFixed(3)+" €/kWh · Netto €"+d.net_value_eur.toFixed(2)+" · Confidence "+Math.round(d.confidence*100)+"%</div></div><div class='sp-row'><span>BTC Mining</span><strong>"+d.alternatives.find(x=>x.option==="BTC Mining").value_eur_kwh.toFixed(3)+" €/kWh</strong></div><div class='sp-row'><span>Battery</span><strong>"+d.alternatives.find(x=>x.option==="Battery").value_eur_kwh.toFixed(3)+" €/kWh</strong></div>";
+    panel.appendChild(box);
+  }
 
   async function loadAssets(){
     const acc=JSON.parse(localStorage.getItem("synpora_account")||"null");
