@@ -111,7 +111,8 @@ def install(app):
             "eur_usd":1.1205,
             "austria_spot_eur_kwh":0.2055,
             "gpu":{"model":"L40S","hourly_usd":1.09,"power_kw":0.35,"utilization":0.70,"platform_fee":0.15,"source":"RunPod Secure Cloud"},
-            "sources":["Startmining API","EUR/USD reference","EPEX Spot AT reference","RunPod pricing"],\n            "data_quality":{"btc":"live_external" if ext.get("btcPrice") is not None else "fallback","hashprice":"live_external" if ext.get("hashpriceUsd") is not None else "fallback","gpu":"reference","energy":"reference","overall":"mixed"},
+            "sources":["Startmining API","EUR/USD reference","EPEX Spot AT reference","RunPod pricing"],
+            "data_quality":{"btc":"live_external" if ext.get("btcPrice") is not None else "fallback","hashprice":"live_external" if ext.get("hashpriceUsd") is not None else "fallback","gpu":"reference","energy":"reference","overall":"mixed"},
             "timestamp":time.time()
         }
 
@@ -137,7 +138,10 @@ def install(app):
         best=options[0]
         gross=best["value_eur_kwh"]*x.energy_kwh
         cost=x.energy_cost_eur_kwh*x.energy_kwh
-        spread=(best["value_eur_kwh"]-options[1]["value_eur_kwh"]) / max(best["value_eur_kwh"],0.0001)\n        confidence=max(0.55,min(0.97,0.72+0.22*spread))\n        learned_confidence=None\n        calibrated_confidence=None
+        spread=(best["value_eur_kwh"]-options[1]["value_eur_kwh"]) / max(best["value_eur_kwh"],0.0001)
+        confidence=max(0.55,min(0.97,0.72+0.22*spread))
+        learned_confidence=None
+        calibrated_confidence=None
         try:
             _ensure_learning_tables(c)
             lr=c.execute("SELECT actual_value,predicted_value FROM decision_ledger WHERE farm_id=? AND chosen=? AND status='settled' AND actual_value IS NOT NULL ORDER BY ts DESC LIMIT 50",(farm_id,best["option"])).fetchall()
@@ -148,7 +152,32 @@ def install(app):
                 confidence=round((confidence+learned_confidence)/2,2)
         except Exception:
             pass
-        risk={"AI Compute":"market_price_and_utilization","BTC Mining":"hashprice_and_difficulty","Battery":"cycle_and_tariff_assumptions","Grid":"spot_price_volatility"}[best["option"]]\n        try:\n            calibrated_confidence=_calibrated_confidence(c,farm_id,best["option"],confidence)\n            confidence=round((confidence+calibrated_confidence)/2,2)\n        except Exception:\n            pass\n        try:\n            series_key="gpu" if best["option"]=="AI Compute" else ("btc" if best["option"]=="BTC Mining" else "energy")\n            forecast_confidence=_ensemble_confidence(c,series_key)\n            confidence=round(min(confidence,forecast_confidence) if forecast_confidence<0.65 else confidence,2)\n        except Exception:\n            forecast_confidence=0.55\n        score_factors={"economics":round(min(1,best["value_eur_kwh"]/max(best["value_eur_kwh"]+x.energy_cost_eur_kwh,0.0001)),3),"margin":round(min(1,max(0,spread*2)),3),"forecast":round(forecast_confidence,3),"learning":round(learned_confidence if learned_confidence is not None else 0.55,3)}\n        decision_score=round(100*(0.45*score_factors["economics"]+0.20*score_factors["margin"]+0.20*score_factors["forecast"]+0.15*score_factors["learning"]),1)\n        margin=round(best["value_eur_kwh"]-options[1]["value_eur_kwh"],5) if len(options)>1 else 0\n        explanation={"primary_reason":"highest modeled net value per kWh","value_margin_eur_kwh":margin,"confidence_driver":"forecast_and_historical_learning","risk_driver":risk,"fallback_option":options[1]["option"] if len(options)>1 else None}\n        try:\n            c.execute("INSERT INTO decision_ledger (id,farm_id,ts,chosen,predicted_value,confidence,status) VALUES (?,?,?,?,?,?,?)",(str(__import__("uuid").uuid4()),farm_id,time.time(),best["option"],best["value_eur_kwh"],confidence,"open"))\n            c.commit()\n        except Exception:\n            pass\n        return {"farm_id":farm_id,"energy_kwh":x.energy_kwh,"best":best,"alternatives":options[1:],"explanation":explanation,"decision_score":decision_score,"score_factors":score_factors,\n                "gross_value_eur":round(gross,2),"energy_cost_eur":round(cost,2),\n                "net_value_eur":round(gross-cost,2),"confidence":round(confidence,2),"risk":risk,"learned_confidence":learned_confidence,"calibrated_confidence":calibrated_confidence,\n                "market":{"btc_hashprice_usd_ph_day":x.btc_hashprice_usd_ph_day,"eur_usd":x.eur_usd,"gpu_hourly_usd":x.gpu_hourly_usd,"gpu_power_kw":x.gpu_power_kw,"gpu_utilization":x.gpu_utilization,"gpu_platform_fee":x.gpu_platform_fee},\n                "mode":"recommendation_only","hardware_write":False}
+        risk={"AI Compute":"market_price_and_utilization","BTC Mining":"hashprice_and_difficulty","Battery":"cycle_and_tariff_assumptions","Grid":"spot_price_volatility"}[best["option"]]
+        try:
+            calibrated_confidence=_calibrated_confidence(c,farm_id,best["option"],confidence)
+            confidence=round((confidence+calibrated_confidence)/2,2)
+        except Exception:
+            pass
+        try:
+            series_key="gpu" if best["option"]=="AI Compute" else ("btc" if best["option"]=="BTC Mining" else "energy")
+            forecast_confidence=_ensemble_confidence(c,series_key)
+            confidence=round(min(confidence,forecast_confidence) if forecast_confidence<0.65 else confidence,2)
+        except Exception:
+            forecast_confidence=0.55
+        score_factors={"economics":round(min(1,best["value_eur_kwh"]/max(best["value_eur_kwh"]+x.energy_cost_eur_kwh,0.0001)),3),"margin":round(min(1,max(0,spread*2)),3),"forecast":round(forecast_confidence,3),"learning":round(learned_confidence if learned_confidence is not None else 0.55,3)}
+        decision_score=round(100*(0.45*score_factors["economics"]+0.20*score_factors["margin"]+0.20*score_factors["forecast"]+0.15*score_factors["learning"]),1)
+        margin=round(best["value_eur_kwh"]-options[1]["value_eur_kwh"],5) if len(options)>1 else 0
+        explanation={"primary_reason":"highest modeled net value per kWh","value_margin_eur_kwh":margin,"confidence_driver":"forecast_and_historical_learning","risk_driver":risk,"fallback_option":options[1]["option"] if len(options)>1 else None}
+        try:
+            c.execute("INSERT INTO decision_ledger (id,farm_id,ts,chosen,predicted_value,confidence,status) VALUES (?,?,?,?,?,?,?)",(str(__import__("uuid").uuid4()),farm_id,time.time(),best["option"],best["value_eur_kwh"],confidence,"open"))
+            c.commit()
+        except Exception:
+            pass
+        return {"farm_id":farm_id,"energy_kwh":x.energy_kwh,"best":best,"alternatives":options[1:],"explanation":explanation,"decision_score":decision_score,"score_factors":score_factors,
+                "gross_value_eur":round(gross,2),"energy_cost_eur":round(cost,2),
+                "net_value_eur":round(gross-cost,2),"confidence":round(confidence,2),"risk":risk,"learned_confidence":learned_confidence,"calibrated_confidence":calibrated_confidence,
+                "market":{"btc_hashprice_usd_ph_day":x.btc_hashprice_usd_ph_day,"eur_usd":x.eur_usd,"gpu_hourly_usd":x.gpu_hourly_usd,"gpu_power_kw":x.gpu_power_kw,"gpu_utilization":x.gpu_utilization,"gpu_platform_fee":x.gpu_platform_fee},
+                "mode":"recommendation_only","hardware_write":False}
 
     class ScenarioIn(BaseModel):
         energy_kwh: float=100
@@ -640,7 +669,8 @@ def install(app):
         uid=user(authorization); c=init_db()
         if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
         learn=_forecast_learning(c)
-        models=_model_select(c)\n        conf={"btc":_ensemble_confidence(c,"btc"),"gpu":_ensemble_confidence(c,"gpu"),"energy":_ensemble_confidence(c,"energy")}
+        models=_model_select(c)
+        conf={"btc":_ensemble_confidence(c,"btc"),"gpu":_ensemble_confidence(c,"gpu"),"energy":_ensemble_confidence(c,"energy")}
         hours=max(1,min(72,x.horizon_hours))
         btc_fc,btc_w=_ensemble_forecast(c,"btc",hours,x.btc_hashprice_usd_ph_day)
         gpu_fc,gpu_w=_ensemble_forecast(c,"gpu",hours,x.gpu_hourly_usd)
@@ -716,7 +746,11 @@ def install(app):
         uid=user(authorization); c=init_db()
         if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
         values=_economics(x)
-        assets=[dict(r) for r in c.execute("SELECT id,name,kind,power_kw FROM assets WHERE farm_id=? ORDER BY created_at",(farm_id,)).fetchall()]\n        for a in assets:\n            if a["kind"].upper()=="GPU" and a["power_kw"]>0: values["AI Compute"]=(x.gpu_hourly_usd/x.eur_usd)*x.gpu_utilization*(1-x.gpu_platform_fee)/a["power_kw"]\n            if a["kind"].upper()=="BTC" and a["power_kw"]>0: values["BTC Mining"]=(x.btc_hashprice_usd_ph_day/x.eur_usd)/(x.asic_efficiency_j_th*1000)*0.98*0.98\n        rows=[{"option":k,"value_eur_kwh":round(v,5),"net_eur":round((v-x.energy_cost_eur_kwh)*x.energy_kwh,2)} for k,v in values.items()]
+        assets=[dict(r) for r in c.execute("SELECT id,name,kind,power_kw FROM assets WHERE farm_id=? ORDER BY created_at",(farm_id,)).fetchall()]
+        for a in assets:
+            if a["kind"].upper()=="GPU" and a["power_kw"]>0: values["AI Compute"]=(x.gpu_hourly_usd/x.eur_usd)*x.gpu_utilization*(1-x.gpu_platform_fee)/a["power_kw"]
+            if a["kind"].upper()=="BTC" and a["power_kw"]>0: values["BTC Mining"]=(x.btc_hashprice_usd_ph_day/x.eur_usd)/(x.asic_efficiency_j_th*1000)*0.98*0.98
+        rows=[{"option":k,"value_eur_kwh":round(v,5),"net_eur":round((v-x.energy_cost_eur_kwh)*x.energy_kwh,2)} for k,v in values.items()]
         rows.sort(key=lambda r:r["value_eur_kwh"],reverse=True)
         best=rows[0]
         return {"farm_id":farm_id,"inputs":x.model_dump(),"ranking":rows,"best":best,
