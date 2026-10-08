@@ -110,11 +110,7 @@ def install(app):
         best=options[0]
         gross=best["value_eur_kwh"]*x.energy_kwh
         cost=x.energy_cost_eur_kwh*x.energy_kwh
-        return {"farm_id":farm_id,"energy_kwh":x.energy_kwh,"best":best,"alternatives":options[1:],
-                "gross_value_eur":round(gross,2),"energy_cost_eur":round(cost,2),
-                "net_value_eur":round(gross-cost,2),"confidence":0.89,
-                "market":{"btc_hashprice_usd_ph_day":x.btc_hashprice_usd_ph_day,"eur_usd":x.eur_usd,"gpu_hourly_usd":x.gpu_hourly_usd,"gpu_power_kw":x.gpu_power_kw,"gpu_utilization":x.gpu_utilization,"gpu_platform_fee":x.gpu_platform_fee},
-                "mode":"recommendation_only","hardware_write":False}
+        spread=(best["value_eur_kwh"]-options[1]["value_eur_kwh"]) / max(best["value_eur_kwh"],0.0001)\n        confidence=max(0.55,min(0.97,0.72+0.22*spread))\n        risk={"AI Compute":"market_price_and_utilization","BTC Mining":"hashprice_and_difficulty","Battery":"cycle_and_tariff_assumptions","Grid":"spot_price_volatility"}[best["option"]]\n        return {"farm_id":farm_id,"energy_kwh":x.energy_kwh,"best":best,"alternatives":options[1:],\n                "gross_value_eur":round(gross,2),"energy_cost_eur":round(cost,2),\n                "net_value_eur":round(gross-cost,2),"confidence":round(confidence,2),"risk":risk,\n                "market":{"btc_hashprice_usd_ph_day":x.btc_hashprice_usd_ph_day,"eur_usd":x.eur_usd,"gpu_hourly_usd":x.gpu_hourly_usd,"gpu_power_kw":x.gpu_power_kw,"gpu_utilization":x.gpu_utilization,"gpu_platform_fee":x.gpu_platform_fee},\n                "mode":"recommendation_only","hardware_write":False}
 
     class AuthIn(BaseModel):
         email: str
