@@ -126,7 +126,8 @@ SCRIPT = r"""
   async function loadDecisionQuality(){
     const acc=JSON.parse(localStorage.getItem("synpora_account")||"null"); if(!acc?.token)return;
     const farms=await fetch("/api/v1/farms",{headers:{Authorization:"Bearer "+acc.token}}).then(r=>r.json()); if(!farms[0])return;
-    const d=await fetch("/api/v1/farms/"+farms[0].id+"/learning",{headers:{Authorization:"Bearer "+acc.token}}).then(r=>r.json()).catch(()=>({}));
+    const id=farms[0].id;
+    const d=await fetch("/api/v1/farms/"+id+"/decision-quality",{headers:{Authorization:"Bearer "+acc.token}}).then(r=>r.json()).catch(()=>({}));
     const old=panel.querySelector(".sp-quality"); if(old)old.remove();
     const box=document.createElement("div");box.className="sp-quality sp-card";box.style.marginTop="18px";
     const hit=d.winner_accuracy==null?"–":Math.round(Number(d.winner_accuracy)*100)+"%";
