@@ -462,6 +462,7 @@ def install(app):
         return {"samples":len(pairs),"mae":round(mae,8),"forecast_hit_rate":round(hits,3)}
 
     def _online_learning_update(c, farm_id):
+        from datetime import datetime
         # Settle against the first market snapshot strictly newer than the decision.
         # IMPORTANT: actual_value is normalized to the same €/kWh economics used by the optimizer.
         snaps=c.execute("SELECT ts,payload FROM market_snapshots ORDER BY ts ASC").fetchall()
