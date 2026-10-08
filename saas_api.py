@@ -309,7 +309,12 @@ def install(app):
         return {"inserted":inserted,"requested":limit,"source":"Startmining price history"}
 
     def _ensure_learning_tables(c):
-        c.execute("CREATE TABLE IF NOT EXISTS decision_ledger(id TEXT PRIMARY KEY,farm_id TEXT NOT NULL,ts REAL NOT NULL,chosen TEXT NOT NULL,predicted_value REAL NOT NULL,confidence REAL NOT NULL,status TEXT NOT NULL,actual_value REAL,settled_at REAL)")
+        c.execute("CREATE TABLE IF NOT EXISTS decision_ledger(id TEXT PRIMARY KEY,farm_id TEXT NOT NULL,ts REAL NOT NULL,chosen TEXT NOT NULL,predicted_value REAL NOT NULL,confidence REAL NOT NULL,status TEXT NOT NULL,actual_value REAL,settled_at REAL,actual_best_value REAL,regret_eur_kwh REAL)")
+        for col in ("actual_best_value","regret_eur_kwh"):
+            try:
+                c.execute(f"ALTER TABLE decision_ledger ADD COLUMN {col} REAL")
+            except Exception:
+                pass
         try: c.commit()
         except Exception: pass
 
@@ -558,12 +563,16 @@ def install(app):
         return round(max(.55,min(.95,.55+.25*concentration+.20*stability)),3)
 
     def _settled_learning_stats(c, farm_id, strategy):
-        rows=c.execute("SELECT predicted_value,actual_value FROM decision_ledger WHERE farm_id=? AND chosen=? AND status='settled' AND predicted_value IS NOT NULL AND actual_value IS NOT NULL ORDER BY ts DESC LIMIT 100",(farm_id,strategy)).fetchall()
-        if not rows: return {"samples":0,"mae":None,"forecast_hit_rate":None}
+        rows=c.execute("SELECT predicted_value,actual_value,actual_best_value,regret_eur_kwh FROM decision_ledger WHERE farm_id=? AND chosen=? AND status='settled' AND predicted_value IS NOT NULL AND actual_value IS NOT NULL ORDER BY ts DESC LIMIT 100",(farm_id,strategy)).fetchall()
+        if not rows: return {"samples":0,"mae":None,"forecast_hit_rate":None,"winner_accuracy":None,"avg_regret_eur_kwh":None}
         pairs=[(float(r[0]),float(r[1])) for r in rows]
         mae=sum(abs(a-b) for a,b in pairs)/len(pairs)
         hits=sum(1 for a,b in pairs if abs(a-b)<=max(0.01,abs(a)*0.10))/len(pairs)
-        return {"samples":len(pairs),"mae":round(mae,8),"forecast_hit_rate":round(hits,3)}
+        winner=sum(1 for r in rows if r[2] is not None and abs(float(r[1])-float(r[2]))<1e-9)/len(rows)
+        regrets=[float(r[3]) for r in rows if r[3] is not None]
+        return {"samples":len(pairs),"mae":round(mae,8),"forecast_hit_rate":round(hits,3),
+                "winner_accuracy":round(winner,3) if rows else None,
+                "avg_regret_eur_kwh":round(sum(regrets)/len(regrets),8) if regrets else None}
 
     def _online_learning_update(c, farm_id):
         from datetime import datetime
