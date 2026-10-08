@@ -249,7 +249,7 @@ def install(app):
         snap={"timestamp":time.time(),"btc_hashprice_usd_ph_day":39.6395,"eur_usd":1.1205,
               "gpu_l40s_usd_hour":1.09,"gpu_l40s_power_kw":0.35}
         # SQLite/Postgres-compatible JSON snapshot store.
-        if DB_URL and c.__class__.__module__.startswith("psycopg"):
+        if c.is_postgres:
             c.execute("CREATE TABLE IF NOT EXISTS market_snapshots(id TEXT PRIMARY KEY,ts DOUBLE PRECISION NOT NULL,payload TEXT NOT NULL)")
             c.execute("INSERT INTO market_snapshots VALUES(%s,%s,%s)",(secrets.token_hex(12),snap["timestamp"],json.dumps(snap)))
         else:
@@ -540,7 +540,7 @@ def install(app):
         try:
             c=init_db()
             c.execute("SELECT 1").fetchone()
-            db_reachable=bool(DB_URL and c.__class__.__module__.startswith("psycopg"))
+            db_reachable=bool(DB_URL and c.is_postgres)
             db_backend="postgresql" if db_reachable else "sqlite_fallback"
             try: c.close()
             except Exception: pass
