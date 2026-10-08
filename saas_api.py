@@ -209,6 +209,31 @@ def install(app):
             c.execute("INSERT INTO market_snapshots VALUES(?,?,?)",(secrets.token_hex(12),snap["timestamp"],json.dumps(snap))); c.commit()
         return snap
 
+    @app.get("/api/v1/farms/{farm_id}/benchmark")
+    def benchmark(farm_id:str,limit:int=500,authorization:str|None=Header(default=None)):
+        uid=user(authorization); c=init_db()
+        if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
+        try:
+            rows=c.execute("SELECT ts,payload FROM market_snapshots ORDER BY ts ASC LIMIT ?",(min(limit,1000),)).fetchall()
+        except Exception:
+            rows=[]
+        ai_total=btc_total=0.0; points=[]
+        for r in rows:
+            d=json.loads(r[1]); h=d.get("btc_hashprice_usd_ph_day")
+            g=d.get("gpu_l40s_usd_hour")
+            if not h or not g: continue
+            s=ScenarioIn(energy_kwh=100,energy_cost_eur_kwh=0.05,btc_hashprice_usd_ph_day=float(h),gpu_hourly_usd=float(g))
+            vals=_economics(s)
+            ai=(vals["AI Compute"]-s.energy_cost_eur_kwh)*100
+            btc=(vals["BTC Mining"]-s.energy_cost_eur_kwh)*100
+            ai_total+=ai; btc_total+=btc
+            points.append({"timestamp":r[0],"ai_net_eur":round(ai,2),"btc_net_eur":round(btc,2),"winner":"AI Compute" if ai>btc else "BTC Mining"})
+        return {"farm_id":farm_id,"points":points,"samples":len(points),
+                "ai_total_net_eur":round(ai_total,2),"btc_total_net_eur":round(btc_total,2),
+                "ai_delta_vs_btc_eur":round(ai_total-btc_total,2),
+                "winner_share":round(sum(p["winner"]=="AI Compute" for p in points)/len(points),3) if points else None,
+                "method":"stored_market_snapshots","recommendation_only":True}
+
     @app.get("/api/v1/market/history")
     def market_history(limit:int=100):
         c=init_db()
