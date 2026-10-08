@@ -123,19 +123,29 @@ SCRIPT = r"""
     document.getElementById("sp-close").onclick=()=>panel.classList.remove("show");
     document.getElementById("sp-account-btn").onclick=()=>modal.classList.add("show");
     document.getElementById("sp-cancel").onclick=()=>modal.classList.remove("show");
-    document.getElementById("sp-enter").onclick=()=>{
+    document.getElementById("sp-enter").onclick=async()=>{
       const email=document.getElementById("sp-email").value.trim();
       const farm=document.getElementById("sp-farm").value.trim()||"Demo Farm";
-      if(!email){toast("Bitte E-Mail eingeben");return}
-      localStorage.setItem("synpora_account",JSON.stringify({email,farm,createdAt:new Date().toISOString()}));
-      modal.classList.remove("show");
-      toast("Workspace "+farm+" erstellt");
-      const label=account.querySelector(".sp-mini");
-      if(label) label.textContent=farm;
-      else account.insertAdjacentHTML("afterbegin",'<span class="sp-mini">'+farm+'</span>');
-      document.getElementById("sp-account-btn").textContent="Workspace";
-      panel.classList.add("show");
-      panel.scrollIntoView({behavior:"smooth",block:"start"});
+      const password=window.prompt("Passwort für den Pilot-Account (mind. 8 Zeichen):")||"";
+      if(!email||password.length<8){toast("E-Mail und Passwort (mind. 8 Zeichen) erforderlich");return}
+      try{
+        let res=await fetch("/api/v1/auth/register",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email,password})});
+        let data=await res.json();
+        if(!res.ok && res.status===409){
+          res=await fetch("/api/v1/auth/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email,password})});
+          data=await res.json();
+        }
+        if(!res.ok) throw new Error(data.detail||"Account konnte nicht erstellt werden");
+        localStorage.setItem("synpora_account",JSON.stringify({email,farm,token:data.token,user:data.user}));
+        modal.classList.remove("show");
+        toast("Workspace "+farm+" ist verbunden");
+        const label=account.querySelector(".sp-mini");
+        if(label) label.textContent=farm;
+        else account.insertAdjacentHTML("afterbegin",'<span class="sp-mini">'+farm+'</span>');
+        document.getElementById("sp-account-btn").textContent="Workspace";
+        panel.classList.add("show");
+        panel.scrollIntoView({behavior:"smooth",block:"start"});
+      }catch(e){toast(e.message)}
     };
     document.getElementById("sp-sim").onclick=()=>toast("Simulation vorbereitet · nächste Stufe: echte Tarif- und Asset-Daten");
   }
