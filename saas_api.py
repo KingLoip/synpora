@@ -64,7 +64,11 @@ def install(app):
     class OptimizeIn(BaseModel):
         energy_kwh: float=10
         energy_cost_eur_kwh: float=0.05
-        ai_value_eur_kwh: float=0.135
+        ai_value_eur_kwh: float=0.0
+        gpu_hourly_usd: float=1.09
+        gpu_power_kw: float=0.35
+        gpu_utilization: float=0.70
+        gpu_platform_fee: float=0.15
         battery_value_eur_kwh: float=0.071
         grid_value_eur_kwh: float=0.055
         btc_hashprice_usd_ph_day: float=39.64
@@ -79,7 +83,8 @@ def install(app):
             "btc_hashprice_usd_ph_day":39.64,
             "eur_usd":1.1205,
             "austria_spot_eur_kwh":0.2055,
-            "sources":["Bitcoin Hashprice Index","EUR/USD","EPEX Spot AT"],
+            "gpu":{"model":"L40S","hourly_usd":1.09,"power_kw":0.35,"utilization":0.70,"platform_fee":0.15,"source":"RunPod Community Cloud"},
+            "sources":["Bitcoin Hashprice Index","EUR/USD","EPEX Spot AT","RunPod GPU pricing"],
             "timestamp":time.time()
         }
 
@@ -91,8 +96,12 @@ def install(app):
         # BTC gross revenue per kWh = hashprice / (J/TH) / 1000, adjusted for uptime/pool fee.
         btc_gross=(x.btc_hashprice_usd_ph_day/x.eur_usd)/(x.asic_efficiency_j_th*1000)
         btc_value=max(0,btc_gross*x.uptime*(1-x.pool_fee))
+        # GPU revenue/kWh converts a market GPU-hour into energy economics.
+        # Revenue is haircut by utilization and platform fee; power includes only the GPU load.
+        gpu_revenue_per_kwh=((x.gpu_hourly_usd/x.eur_usd)*x.gpu_utilization*(1-x.gpu_platform_fee))/max(x.gpu_power_kw,0.01)
+        ai_value=max(0,gpu_revenue_per_kwh)
         options=[
-          {"option":"AI Compute","value_eur_kwh":x.ai_value_eur_kwh,"source":"compute_market_model"},
+          {"option":"AI Compute","value_eur_kwh":ai_value,"source":"live_gpu_market"},
           {"option":"BTC Mining","value_eur_kwh":btc_value,"source":"live_hashprice"},
           {"option":"Battery","value_eur_kwh":x.battery_value_eur_kwh,"source":"farm_model"},
           {"option":"Grid","value_eur_kwh":x.grid_value_eur_kwh,"source":"energy_model"}
@@ -104,7 +113,7 @@ def install(app):
         return {"farm_id":farm_id,"energy_kwh":x.energy_kwh,"best":best,"alternatives":options[1:],
                 "gross_value_eur":round(gross,2),"energy_cost_eur":round(cost,2),
                 "net_value_eur":round(gross-cost,2),"confidence":0.89,
-                "market":{"btc_hashprice_usd_ph_day":x.btc_hashprice_usd_ph_day,"eur_usd":x.eur_usd},
+                "market":{"btc_hashprice_usd_ph_day":x.btc_hashprice_usd_ph_day,"eur_usd":x.eur_usd,"gpu_hourly_usd":x.gpu_hourly_usd,"gpu_power_kw":x.gpu_power_kw,"gpu_utilization":x.gpu_utilization,"gpu_platform_fee":x.gpu_platform_fee},
                 "mode":"recommendation_only","hardware_write":False}
 
     class AuthIn(BaseModel):
