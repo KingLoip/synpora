@@ -390,30 +390,45 @@ def install(app):
         gpu_platform_fee: float=0.15
         asic_efficiency_j_th: float=20.0
 
+    def _forecast_learning(c):
+        rows=c.execute("SELECT btc_hashprice_usd_ph_day, gpu_hourly_usd, austria_spot_eur_kwh FROM market_snapshots WHERE btc_hashprice_usd_ph_day IS NOT NULL ORDER BY ts DESC LIMIT 168").fetchall()
+        if len(rows)<8:
+            return {"samples":len(rows),"ready":False,"confidence":0.55}
+        vals=[]
+        for col in range(3):
+            arr=[float(r[col]) for r in rows if r[col] is not None]
+            if len(arr)>1:
+                mean=sum(arr)/len(arr)
+                mad=sum(abs(v-mean) for v in arr)/len(arr)
+                vals.append(max(0.0,1.0-(mad/(abs(mean)+1e-9))))
+        conf=sum(vals)/len(vals) if vals else 0.55
+        return {"samples":len(rows),"ready":len(rows)>=24,"confidence":round(min(.92,max(.55,conf)),3)}
+
     @app.post("/api/v1/farms/{farm_id}/forecast-plan")
     def forecast_plan(farm_id:str,x:DispatchIn,authorization:str|None=Header(default=None)):
         uid=user(authorization); c=init_db()
         if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
+        learn=_forecast_learning(c)
         hours=max(1,min(72,x.horizon_hours))
-        # Deterministic baseline forecast: preserve current market inputs while applying
-        # transparent time-shape assumptions. This is intentionally recommendation-only.
+        import math
         rows=[]
         for h in range(hours):
-            pv_shape=max(0.0, __import__("math").sin((h+1)/hours*__import__("math").pi))
-            gpu_factor=1.0 + 0.12*__import__("math").sin(h/6.0)
-            btc_factor=1.0 - 0.08*__import__("math").sin(h/8.0)
+            # learned baseline: recent observed level + transparent cyclical prior
+            recent=c.execute("SELECT btc_hashprice_usd_ph_day,gpu_hourly_usd,austria_spot_eur_kwh FROM market_snapshots ORDER BY ts DESC LIMIT 24").fetchall()
+            def avg(idx,default):
+                a=[float(r[idx]) for r in recent if r[idx] is not None]
+                return sum(a)/len(a) if a else default
+            btc0=avg(0,x.btc_hashprice_usd_ph_day); gpu0=avg(1,x.gpu_hourly_usd)
+            pv_shape=max(0.0,math.sin((h+1)/hours*math.pi))
+            btc=btc0*(1-0.06*math.sin(h/8.0)); gpu=gpu0*(1+0.10*math.sin(h/6.0))
             pv=x.pv_kwh/hours*(0.35+1.3*pv_shape)
-            gpu=x.gpu_hourly_usd*gpu_factor
-            btc=x.btc_hashprice_usd_ph_day*btc_factor
-            gpu_v=(gpu/x.eur_usd)*x.gpu_utilization*(1-x.gpu_platform_fee)/(0.35 or 1)
+            gpu_v=(gpu/x.eur_usd)*x.gpu_utilization*(1-x.gpu_platform_fee)/0.35
             btc_v=(btc/x.eur_usd)/(x.asic_efficiency_j_th*1000)*0.98*0.98
-            best="AI Compute" if gpu_v>=btc_v else "BTC Mining"
             rows.append({"hour":h,"pv_kwh":round(pv,3),"gpu_hourly_usd":round(gpu,4),
                          "btc_hashprice_usd_ph_day":round(btc,4),"gpu_value_eur_kwh":round(gpu_v,5),
-                         "btc_value_eur_kwh":round(btc_v,5),"best_option":best})
+                         "btc_value_eur_kwh":round(btc_v,5),"best_option":"AI Compute" if gpu_v>=btc_v else "BTC Mining"})
         return {"farm_id":farm_id,"horizon_hours":hours,"forecast":rows,
-                "method":"transparent_baseline_forecast","confidence":0.55,
-                "note":"Forecast becomes data-trained as historical observations accumulate.",
+                "method":"historical_adaptive_baseline","learning":learn,
                 "recommendation_only":True,"hardware_write":False}
 
     @app.post("/api/v1/farms/{farm_id}/dispatch-plan")
