@@ -321,6 +321,77 @@ def install(app):
         try: c.commit()
         except Exception: pass
 
+
+    class RiskScenarioIn(BaseModel):
+        energy_kwh: float=100
+        energy_cost_eur_kwh: float=0.05
+        btc_hashprice_usd_ph_day: float=39.64
+        eur_usd: float=1.1205
+        gpu_hourly_usd: float=1.09
+        gpu_power_kw: float=0.35
+        gpu_utilization: float=0.70
+        gpu_platform_fee: float=0.15
+        asic_efficiency_j_th: float=20.0
+        battery_value_eur_kwh: float=0.071
+        grid_value_eur_kwh: float=0.055
+        scenarios: int=200
+        seed: int=42
+        shock_pct: float=0.20
+
+    def _risk_metrics(values, base):
+        if not values:
+            return {"mean":0.0,"p10":0.0,"p50":0.0,"p90":0.0,"downside":0.0,"volatility":0.0,"probability_positive":0.0}
+        vals=sorted(float(v) for v in values)
+        n=len(vals)
+        mean=sum(vals)/n
+        p=lambda q: vals[min(n-1,max(0,int((n-1)*q)))]
+        variance=sum((v-mean)**2 for v in vals)/n
+        return {
+            "mean":round(mean,6),"p10":round(p(.10),6),"p50":round(p(.50),6),"p90":round(p(.90),6),
+            "downside":round(max(0.0,base-p(.10)),6),
+            "volatility":round(variance**0.5,6),
+            "probability_positive":round(sum(v>0 for v in vals)/n,3)
+        }
+
+    @app.post("/api/v1/farms/{farm_id}/risk-analysis")
+    def risk_analysis(farm_id:str,x:RiskScenarioIn,authorization:str|None=Header(default=None)):
+        uid=user(authorization); c=init_db()
+        if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone():
+            raise HTTPException(404,"Farm not found")
+        import random
+        rng=random.Random(int(x.seed))
+        n=max(20,min(2000,int(x.scenarios)))
+        shock=max(0.0,min(0.80,float(x.shock_pct)))
+        base=_economics(x)
+        strategy_values={k:[] for k in base}
+        for _ in range(n):
+            btc=max(0.01,float(x.btc_hashprice_usd_ph_day)*rng.lognormvariate(0,shock))
+            gpu=max(0.01,float(x.gpu_hourly_usd)*rng.lognormvariate(0,shock))
+            energy=max(0.001,float(x.energy_cost_eur_kwh)*rng.lognormvariate(0,shock*0.65))
+            s=ScenarioIn(energy_kwh=x.energy_kwh,energy_cost_eur_kwh=energy,btc_hashprice_usd_ph_day=btc,
+                         eur_usd=x.eur_usd,gpu_hourly_usd=gpu,gpu_power_kw=x.gpu_power_kw,
+                         gpu_utilization=x.gpu_utilization,gpu_platform_fee=x.gpu_platform_fee,
+                         asic_efficiency_j_th=x.asic_efficiency_j_th,battery_value_eur_kwh=x.battery_value_eur_kwh,
+                         grid_value_eur_kwh=x.grid_value_eur_kwh)
+            econ=_economics(s)
+            for k,v in econ.items():
+                strategy_values[k].append((float(v)-energy)*float(x.energy_kwh))
+        base_net={k:(float(v)-x.energy_cost_eur_kwh)*x.energy_kwh for k,v in base.items()}
+        metrics={k:_risk_metrics(v,base_net[k]) for k,v in strategy_values.items()}
+        ranked=sorted(metrics,key=lambda k:(metrics[k]["p10"],metrics[k]["mean"]),reverse=True)
+        robust=ranked[0] if ranked else None
+        best_base=max(base,key=base.get)
+        regret={k:round(max(0.0,base_net[best_base]-base_net[k]),4) for k in base}
+        return {
+            "farm_id":farm_id,"samples":n,"seed":x.seed,"shock_pct":shock,
+            "base_case":{"best":best_base,"net_eur":round(base_net[best_base],4),"values_eur_kwh":{k:round(v,6) for k,v in base.items()}},
+            "strategies":metrics,"robust_strategy":robust,"base_case_strategy":best_base,
+            "regret_vs_base_best_eur":regret,
+            "risk_adjusted_score":{k:round(0.55*metrics[k]["p10"]+0.30*metrics[k]["mean"]+0.15*metrics[k]["probability_positive"]*abs(metrics[k]["mean"] or 1),4) for k in metrics},
+            "method":"deterministic_seeded_monte_carlo_lognormal_shocks",
+            "recommendation_only":True,"hardware_write":False
+        }
+
     @app.post("/api/v1/farms/{farm_id}/decision")
     def record_decision(farm_id:str,x:ScenarioIn,authorization:str|None=Header(default=None)):
         uid=user(authorization); c=init_db()
