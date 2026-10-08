@@ -176,6 +176,38 @@ def install(app):
             pass
         return out
 
+    def _ensure_market_table(c):
+        if c.is_postgres:
+            c.execute("""CREATE TABLE IF NOT EXISTS market_snapshots(
+                id TEXT PRIMARY KEY, ts DOUBLE PRECISION NOT NULL, payload TEXT NOT NULL,
+                btc_price_usd DOUBLE PRECISION, btc_hashprice_usd_ph_day DOUBLE PRECISION,
+                btc_difficulty DOUBLE PRECISION, network_hashrate_eh DOUBLE PRECISION,
+                eur_usd DOUBLE PRECISION, gpu_l40s_usd_hour DOUBLE PRECISION,
+                gpu_l40s_power_kw DOUBLE PRECISION, gpu_utilization DOUBLE PRECISION,
+                gpu_platform_fee DOUBLE PRECISION, austria_spot_eur_kwh DOUBLE PRECISION
+            )""")
+            cols=["btc_price_usd","btc_hashprice_usd_ph_day","btc_difficulty","network_hashrate_eh","eur_usd","gpu_l40s_usd_hour","gpu_l40s_power_kw","gpu_utilization","gpu_platform_fee","austria_spot_eur_kwh"]
+            for col in cols:
+                try: c.execute(f"ALTER TABLE market_snapshots ADD COLUMN {col} DOUBLE PRECISION")
+                except Exception: pass
+        else:
+            c.execute("""CREATE TABLE IF NOT EXISTS market_snapshots(
+                id TEXT PRIMARY KEY, ts REAL NOT NULL, payload TEXT NOT NULL,
+                btc_price_usd REAL, btc_hashprice_usd_ph_day REAL,
+                btc_difficulty REAL, network_hashrate_eh REAL,
+                eur_usd REAL, gpu_l40s_usd_hour REAL,
+                gpu_l40s_power_kw REAL, gpu_utilization REAL,
+                gpu_platform_fee REAL, austria_spot_eur_kwh REAL
+            )""")
+            existing={row[1] for row in c.execute("PRAGMA table_info(market_snapshots)").fetchall()}
+            cols=["btc_price_usd","btc_hashprice_usd_ph_day","btc_difficulty","network_hashrate_eh","eur_usd","gpu_l40s_usd_hour","gpu_l40s_power_kw","gpu_utilization","gpu_platform_fee","austria_spot_eur_kwh"]
+            for col in cols:
+                if col not in existing:
+                    try: c.execute(f"ALTER TABLE market_snapshots ADD COLUMN {col} REAL")
+                    except Exception: pass
+            try: c.commit()
+            except Exception: pass
+
     @app.post("/api/v1/market/collect")
     def collect_market():
         ext=_external_market()
@@ -191,12 +223,17 @@ def install(app):
               "gpu_platform_fee":0.15,
               "source":"Startmining API + RunPod reference" if ext else "fallback"}
         c=init_db()
-        if c.is_postgres:
-            c.execute("CREATE TABLE IF NOT EXISTS market_snapshots(id TEXT PRIMARY KEY,ts DOUBLE PRECISION NOT NULL,payload TEXT NOT NULL)")
-            c.execute("INSERT INTO market_snapshots VALUES(%s,%s,%s)",(secrets.token_hex(12),snap["timestamp"],json.dumps(snap)))
-        else:
-            c.execute("CREATE TABLE IF NOT EXISTS market_snapshots(id TEXT PRIMARY KEY,ts REAL NOT NULL,payload TEXT NOT NULL)")
-            c.execute("INSERT INTO market_snapshots VALUES(?,?,?)",(secrets.token_hex(12),snap["timestamp"],json.dumps(snap))); c.commit()
+        _ensure_market_table(c)
+        values=(secrets.token_hex(12),snap["timestamp"],json.dumps(snap),
+                snap["btc_price_usd"],snap["btc_hashprice_usd_ph_day"],snap["btc_difficulty"],snap["network_hashrate_eh"],
+                snap["eur_usd"],snap["gpu_l40s_usd_hour"],snap["gpu_l40s_power_kw"],snap["gpu_utilization"],
+                snap["gpu_platform_fee"],snap.get("austria_spot_eur_kwh"))
+        c.execute("""INSERT INTO market_snapshots
+            (id,ts,payload,btc_price_usd,btc_hashprice_usd_ph_day,btc_difficulty,network_hashrate_eh,eur_usd,
+             gpu_l40s_usd_hour,gpu_l40s_power_kw,gpu_utilization,gpu_platform_fee,austria_spot_eur_kwh)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",values)
+        try: c.commit()
+        except Exception: pass
         return snap
 
     @app.post("/api/v1/market/backfill")
