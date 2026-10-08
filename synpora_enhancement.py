@@ -121,7 +121,7 @@ SCRIPT = r"""
     const d=await fetch("/api/v1/farms/"+farms[0].id+"/backtest",{method:"POST",headers:{Authorization:"Bearer "+acc.token}}).then(r=>r.json());
     const box=document.querySelector(".sp-scenario"); if(!box)return;
     const wins=Object.entries(d.wins).map(([k,v])=>"<div class='sp-row'><span>"+k+"</span><strong>"+v+"/7 Szenarien</strong></div>").join("");
-    box.insertAdjacentHTML("beforeend","<div style='margin-top:16px'><div class='sp-label'>MARKET SENSITIVITY</div>"+wins+"</div>");
+    box.insertAdjacentHTML("beforeend","<div style='margin-top:16px'><div class='sp-label'>MARKET SENSITIVITY</div>"+wins+"<div class='sp-card' style='margin-top:10px'>AI cumulative: €"+d.cumulative_net_eur.ai.toFixed(2)+" · BTC cumulative: €"+d.cumulative_net_eur.btc.toFixed(2)+" · AI delta: €"+d.cumulative_net_eur.delta_ai_vs_btc.toFixed(2)+"</div></div>");
     toast("Sensitivitäts-Backtest abgeschlossen");
   }
 
