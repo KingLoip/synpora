@@ -373,6 +373,62 @@ def install(app):
                 "unallocated_kwh":round(max(0,remaining),3),"total_net_eur":round(total,2),
                 "objective":"maximize_net_value","recommendation_only":True,"hardware_write":False}
 
+    class DispatchIn(BaseModel):
+        horizon_hours: int=24
+        interval_hours: float=1
+        energy_cost_eur_kwh: float=0.05
+        pv_kwh: float=0
+        battery_soc_pct: float=50
+        battery_capacity_kwh: float=100
+        battery_reserve_pct: float=20
+        battery_value_eur_kwh: float=0.071
+        grid_value_eur_kwh: float=0.055
+        btc_hashprice_usd_ph_day: float=38.75
+        eur_usd: float=1.1205
+        gpu_hourly_usd: float=1.09
+        gpu_utilization: float=0.70
+        gpu_platform_fee: float=0.15
+        asic_efficiency_j_th: float=20.0
+
+    @app.post("/api/v1/farms/{farm_id}/dispatch-plan")
+    def dispatch_plan(farm_id:str,x:DispatchIn,authorization:str|None=Header(default=None)):
+        uid=user(authorization); c=init_db()
+        if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
+        assets=[dict(r) for r in c.execute("SELECT id,name,kind,power_kw FROM assets WHERE farm_id=? ORDER BY created_at",(farm_id,)).fetchall()]
+        gpu_value=(x.gpu_hourly_usd/x.eur_usd)*x.gpu_utilization*(1-x.gpu_platform_fee)
+        btc_value=(x.btc_hashprice_usd_ph_day/x.eur_usd)/(x.asic_efficiency_j_th*1000)*0.98*0.98
+        gpu_assets=[a for a in assets if a["kind"].upper()=="GPU" and a["power_kw"]>0]
+        btc_assets=[a for a in assets if a["kind"].upper()=="BTC" and a["power_kw"]>0]
+        total_load=sum(float(a["power_kw"]) for a in assets if a["kind"].upper() in ("GPU","BTC"))
+        pv_remaining=max(0,x.pv_kwh)
+        reserve=max(0,min(100,x.battery_reserve_pct))
+        battery_available=max(0,(x.battery_soc_pct-reserve)/100*x.battery_capacity_kwh)
+        hourly=[]
+        for h in range(max(1,min(168,x.horizon_hours))):
+            available_pv=pv_remaining/(max(1,x.horizon_hours-h)) if pv_remaining else 0
+            candidates=[]
+            if gpu_assets: candidates.append(("AI Compute",gpu_value,max(float(a["power_kw"]) for a in gpu_assets),gpu_assets[0]["name"]))
+            if btc_assets: candidates.append(("BTC Mining",btc_value,max(float(a["power_kw"]) for a in btc_assets),btc_assets[0]["name"]))
+            candidates.append(("Battery",x.battery_value_eur_kwh,0,"Battery"))
+            candidates.append(("Grid",x.grid_value_eur_kwh,0,"Grid"))
+            candidates.sort(key=lambda z:z[1],reverse=True)
+            chosen=candidates[0]
+            supply=min(max(available_pv,0),chosen[2] if chosen[2] else available_pv)
+            if supply<=0 and chosen[0] in ("AI Compute","BTC Mining"):
+                supply=min(chosen[2]*x.interval_hours, max(0,battery_available))
+                source="Battery" if supply>0 else "Grid"
+                if source=="Battery": battery_available-=supply
+            else:
+                source="PV" if supply>0 else "Grid"
+            if chosen[0] in ("AI Compute","BTC Mining") and supply<=0: chosen=("Grid",x.grid_value_eur_kwh,0,"Grid")
+            hourly.append({"hour":h,"source":source,"action":chosen[0],"asset":chosen[3],"energy_kwh":round(supply,3),"value_eur_kwh":round(chosen[1],5),"net_eur":round((chosen[1]-x.energy_cost_eur_kwh)*supply,2)})
+            pv_remaining=max(0,pv_remaining-supply)
+        total=sum(r["net_eur"] for r in hourly)
+        return {"farm_id":farm_id,"horizon_hours":x.horizon_hours,"plan":hourly,"total_net_eur":round(total,2),
+                "battery_remaining_kwh":round(battery_available,2),"pv_remaining_kwh":round(pv_remaining,2),
+                "constraints":{"battery_reserve_pct":reserve,"battery_capacity_kwh":x.battery_capacity_kwh,"total_asset_load_kw":total_load},
+                "mode":"recommendation_only","hardware_write":False}
+
     @app.post("/api/v1/farms/{farm_id}/scenario")
     def scenario(farm_id:str,x:ScenarioIn,authorization:str|None=Header(default=None)):
         uid=user(authorization); c=init_db()
