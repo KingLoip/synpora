@@ -82,7 +82,8 @@ def install(app):
     init_db()
     @app.get("/api/v1/system/status")
     def status():
-        return {"service":"synpora","version":"1.1.0","database":{"type":"postgresql" if DB_URL else "sqlite_fallback","configured":bool(DB_URL)},"hardware_write":False,"mode":"recommendation_only"}
+        configured=bool(DB_URL)
+        return {"service":"synpora","version":"1.1.1","database":{"type":"postgresql" if configured else "sqlite_fallback","configured":configured},"security":{"jwt_configured":bool(JWT_SECRET)},"hardware_write":False,"autonomous_control":False,"mode":"recommendation_only"}
 
     class OptimizeIn(BaseModel):
         energy_kwh: float=10
