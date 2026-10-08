@@ -94,7 +94,7 @@ def install(app):
 
     @app.post("/api/v1/farms/{farm_id}/optimize")
     def optimize(farm_id:str,x:OptimizeIn,authorization:str|None=Header(default=None)):
-        uid=user(authorization); c=init_db()
+        forecast_confidence=0.55\n        uid=user(authorization); c=init_db()
         ok=c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone()
         if not ok: raise HTTPException(404,"Farm not found")
         # BTC gross revenue per kWh = hashprice / (J/TH) / 1000, adjusted for uptime/pool fee.
@@ -143,7 +143,7 @@ def install(app):
     def _economics(x):
         btc=((x.btc_hashprice_usd_ph_day/x.eur_usd)/(x.asic_efficiency_j_th*1000))*0.98*0.98
         gpu=((x.gpu_hourly_usd/x.eur_usd)*x.gpu_utilization*(1-x.gpu_platform_fee))/max(x.gpu_power_kw,0.01)
-        return {"AI Compute":max(0,gpu),"BTC Mining":max(0,btc),"Battery":x.battery_value_eur_kwh,"Grid":x.grid_value_eur_kwh}
+        if forecast_confidence < 0.65:\n            confidence = min(confidence, forecast_confidence)\n        return {"AI Compute":max(0,gpu),"BTC Mining":max(0,btc),"Battery":x.battery_value_eur_kwh,"Grid":x.grid_value_eur_kwh}
 
     def _external_market():
         import urllib.request
