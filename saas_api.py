@@ -39,12 +39,15 @@ def _verify(pw,stored):
         salt,_=stored.split("$",1); return hmac.compare_digest(_hash(pw,salt),stored)
     except Exception: return False
 def _token(uid):
+    if not JWT_SECRET:
+        raise RuntimeError("SYNPORA_JWT_SECRET is required")
     import base64
     body=json.dumps({"uid":uid,"exp":int(time.time())+86400},separators=(",",":")).encode()
     b=base64.urlsafe_b64encode(body).decode().rstrip("=")
     sig=hmac.new(JWT_SECRET.encode(),b.encode(),hashlib.sha256).hexdigest()
     return b+"."+sig
 def _uid(token):
+    if not JWT_SECRET: return None
     import base64
     try:
         b,sig=token.split(".",1)
