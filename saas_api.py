@@ -79,12 +79,16 @@ def install(app):
 
     @app.get("/api/v1/market/live")
     def live_market():
+        ext=_external_market()
         return {
-            "btc_hashprice_usd_ph_day":39.64,
+            "btc_price_usd":ext.get("btcPrice"),
+            "btc_hashprice_usd_ph_day":ext.get("hashpriceUsd") or 38.75,
+            "btc_difficulty":ext.get("difficulty"),
+            "network_hashrate_eh":ext.get("networkHashrate"),
             "eur_usd":1.1205,
             "austria_spot_eur_kwh":0.2055,
-            "gpu":{"model":"L40S","hourly_usd":1.09,"power_kw":0.35,"utilization":0.70,"platform_fee":0.15,"source":"RunPod Community Cloud"},
-            "sources":["Bitcoin Hashprice Index","EUR/USD","EPEX Spot AT","RunPod GPU pricing"],
+            "gpu":{"model":"L40S","hourly_usd":1.09,"power_kw":0.35,"utilization":0.70,"platform_fee":0.15,"source":"RunPod Secure Cloud"},
+            "sources":["Startmining API","EUR/USD reference","EPEX Spot AT reference","RunPod pricing"],
             "timestamp":time.time()
         }
 
@@ -145,10 +149,15 @@ def install(app):
         ext=_external_market()
         snap={"timestamp":time.time(),
               "btc_price_usd":ext.get("btcPrice"),
-              "btc_hashprice_usd_ph_day":ext.get("hashpriceUsd") or 39.6395,
+              "btc_hashprice_usd_ph_day":ext.get("hashpriceUsd"),
               "btc_difficulty":ext.get("difficulty"),
               "network_hashrate_eh":ext.get("networkHashrate"),
-              "source":"Startmining API" if ext else "fallback"}
+              "eur_usd":1.1205,
+              "gpu_l40s_usd_hour":1.09,
+              "gpu_l40s_power_kw":0.35,
+              "gpu_utilization":0.70,
+              "gpu_platform_fee":0.15,
+              "source":"Startmining API + RunPod reference" if ext else "fallback"}
         c=init_db()
         if DB_URL and c.__class__.__module__.startswith("psycopg"):
             c.execute("CREATE TABLE IF NOT EXISTS market_snapshots(id TEXT PRIMARY KEY,ts DOUBLE PRECISION NOT NULL,payload TEXT NOT NULL)")
