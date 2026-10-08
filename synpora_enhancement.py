@@ -91,7 +91,7 @@ SCRIPT = r"""
       if(name==="Overview"){panel.classList.remove("show");window.scrollTo({top:0,behavior:"smooth"});return}
       panel.classList.add("show");
       if(name==="Assets") setTimeout(loadAssets,50);
-      if(name==="Economics" || name==="AI Decision" || name==="Simulation") setTimeout(runOptimizer,80);
+      if(name==="Economics" || name==="AI Decision") setTimeout(runOptimizer,80);\n      if(name==="Simulation") setTimeout(runScenarioLab,80);
       const titles={Assets:"Asset Registry",Economics:"Economics & Value per kWh","AI Decision":"AI Decision Center",Simulation:"What-if Simulation Lab",Reports:"Reports & Audit Trail"};
       panel.querySelector("h2").textContent=titles[name]||"SYNPORA Workspace";
       toast(name+" workspace geöffnet");
@@ -101,6 +101,29 @@ SCRIPT = r"""
   });
 
 
+
+  async function runScenarioLab(){
+    const acc=JSON.parse(localStorage.getItem("synpora_account")||"null");
+    if(!acc?.token){toast("Bitte zuerst Workspace verbinden");return}
+    const farms=await fetch("/api/v1/farms",{headers:{Authorization:"Bearer "+acc.token}}).then(r=>r.json());
+    if(!farms[0]) return;
+    const energy=Number(window.prompt("Szenario-Energie in kWh","100")||100);
+    const base={energy_kwh:energy,energy_cost_eur_kwh:0.05};
+    const res=await fetch("/api/v1/farms/"+farms[0].id+"/scenario",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+acc.token},body:JSON.stringify(base)});
+    const d=await res.json(); if(!res.ok){toast(d.detail||"Szenario fehlgeschlagen");return}
+    const old=panel.querySelector(".sp-scenario"); if(old) old.remove();
+    const box=document.createElement("div"); box.className="sp-scenario"; box.style.marginTop="18px";
+    box.innerHTML="<div class='sp-label'>WHAT-IF SCENARIO · "+energy+" kWh</div>"+d.ranking.map((r,i)=>"<div class='sp-row'><span>"+(i===0?"🏆 ":"")+r.option+"</span><strong>"+r.value_eur_kwh.toFixed(3)+" €/kWh · €"+r.net_eur.toFixed(2)+" net</strong></div>").join("")+"<button class='sp-action' id='sp-backtest'>Run Market Sensitivity</button>";
+    panel.appendChild(box); document.getElementById("sp-backtest").onclick=runBacktest;
+  }
+  async function runBacktest(){
+    const acc=JSON.parse(localStorage.getItem("synpora_account")||"null"); const farms=await fetch("/api/v1/farms",{headers:{Authorization:"Bearer "+acc.token}}).then(r=>r.json());
+    const d=await fetch("/api/v1/farms/"+farms[0].id+"/backtest",{method:"POST",headers:{Authorization:"Bearer "+acc.token}}).then(r=>r.json());
+    const box=document.querySelector(".sp-scenario"); if(!box)return;
+    const wins=Object.entries(d.wins).map(([k,v])=>"<div class='sp-row'><span>"+k+"</span><strong>"+v+"/7 Szenarien</strong></div>").join("");
+    box.insertAdjacentHTML("beforeend","<div style='margin-top:16px'><div class='sp-label'>MARKET SENSITIVITY</div>"+wins+"</div>");
+    toast("Sensitivitäts-Backtest abgeschlossen");
+  }
 
   async function runOptimizer(){
     const acc=JSON.parse(localStorage.getItem("synpora_account")||"null");
