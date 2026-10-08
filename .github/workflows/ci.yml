@@ -25,10 +25,23 @@ jobs:
               import shutil
               shutil.copytree(root/name,name)
           PY
+      - name: Overlay production backend
+        run: |
+          cp "$GITHUB_WORKSPACE/saas_api.py" backend/app/saas_api.py
+          cp "$GITHUB_WORKSPACE/server.py" server.py
       - name: Syntax check
         run: |
           python -m py_compile backend/app/*.py
           python -m py_compile server.py saas_api.py synpora_enhancement.py
+      - name: Import smoke test
+        run: |
+          pip install -q -r backend/requirements.txt
+          SYNPORA_JWT_SECRET=ci-test-secret python - <<'PY'
+          from backend.app.main import app
+          from backend.app.saas_api import install
+          install(app)
+          print("SYNPORA import smoke test: OK")
+          PY
       - name: Verify release invariants
         run: |
           python - <<'PY'
