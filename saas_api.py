@@ -130,6 +130,62 @@ def install(app):
         gpu=((x.gpu_hourly_usd/x.eur_usd)*x.gpu_utilization*(1-x.gpu_platform_fee))/max(x.gpu_power_kw,0.01)
         return {"AI Compute":max(0,gpu),"BTC Mining":max(0,btc),"Battery":x.battery_value_eur_kwh,"Grid":x.grid_value_eur_kwh}
 
+    def _external_market():
+        import urllib.request
+        out={}
+        try:
+            req=urllib.request.Request("https://pro.startmining.io/api/market-summary",headers={"User-Agent":"SYNPORA/1.0"})
+            with urllib.request.urlopen(req,timeout=5) as r: out.update(json.loads(r.read().decode()))
+        except Exception:
+            pass
+        return out
+
+    @app.post("/api/v1/market/collect")
+    def collect_market():
+        ext=_external_market()
+        snap={"timestamp":time.time(),
+              "btc_price_usd":ext.get("btcPrice"),
+              "btc_hashprice_usd_ph_day":ext.get("hashpriceUsd") or 39.6395,
+              "btc_difficulty":ext.get("difficulty"),
+              "network_hashrate_eh":ext.get("networkHashrate"),
+              "source":"Startmining API" if ext else "fallback"}
+        c=init_db()
+        if DB_URL and c.__class__.__module__.startswith("psycopg"):
+            c.execute("CREATE TABLE IF NOT EXISTS market_snapshots(id TEXT PRIMARY KEY,ts DOUBLE PRECISION NOT NULL,payload TEXT NOT NULL)")
+            c.execute("INSERT INTO market_snapshots VALUES(%s,%s,%s)",(secrets.token_hex(12),snap["timestamp"],json.dumps(snap)))
+        else:
+            c.execute("CREATE TABLE IF NOT EXISTS market_snapshots(id TEXT PRIMARY KEY,ts REAL NOT NULL,payload TEXT NOT NULL)")
+            c.execute("INSERT INTO market_snapshots VALUES(?,?,?)",(secrets.token_hex(12),snap["timestamp"],json.dumps(snap))); c.commit()
+        return snap
+
+    @app.post("/api/v1/market/backfill")
+    def backfill_market(limit:int=365):
+        import urllib.request
+        url="https://pro.startmining.io/api/price-history"
+        try:
+            req=urllib.request.Request(url,headers={"User-Agent":"SYNPORA/1.0"})
+            with urllib.request.urlopen(req,timeout=8) as r: data=json.loads(r.read().decode())
+        except Exception as e:
+            raise HTTPException(502,"Historical market source unavailable")
+        rows=data if isinstance(data,list) else data.get("data",[])
+        rows=rows[-min(limit,365):]
+        c=init_db()
+        c.execute("CREATE TABLE IF NOT EXISTS market_snapshots(id TEXT PRIMARY KEY,ts REAL NOT NULL,payload TEXT NOT NULL)")
+        inserted=0
+        for row in rows:
+            if isinstance(row,dict):
+                ts=row.get("timestamp") or row.get("time") or row.get("ts")
+            else:
+                ts=row[0] if len(row)>1 else None
+            if ts:
+                payload=json.dumps(row)
+                try:
+                    c.execute("INSERT INTO market_snapshots VALUES(?,?,?)",(secrets.token_hex(12),float(ts)/1000 if float(ts)>1e11 else float(ts),payload)); inserted+=1
+                except Exception: pass
+        try: c.commit()
+        except Exception: pass
+        return {"inserted":inserted,"requested":limit,"source":"Startmining price history"}
+
     @app.post("/api/v1/market/snapshot")
     def market_snapshot():
         c=init_db()
