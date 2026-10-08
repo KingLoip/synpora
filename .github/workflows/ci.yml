@@ -37,5 +37,8 @@ jobs:
           assert 'hardware_write":False' in s
           assert 'recommendation_only":True' in s
           assert 'SYNPORA_JWT_SECRET' in s
+          assert 'SYNPORA_JWT_SECRET is required' in s
+          assert 'SELECT ts,payload FROM market_snapshots' in s
+          assert 'forecast_hit_rate' in s
           print("SYNPORA release invariants: OK")
           PY
