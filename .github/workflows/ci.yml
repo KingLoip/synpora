@@ -1,0 +1,41 @@
+name: SYNPORA CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Extract application package
+        run: |
+          python - <<'PY'
+          import zipfile
+          from pathlib import Path
+          z=zipfile.ZipFile("SYNPORA_1_0_1_DEPLOY_READY.zip")
+          z.extractall("/tmp/pkg")
+          root=Path("/tmp/pkg/synpora_deploy/synpora_v71_90_work")
+          for name in ("backend","frontend"):
+              import shutil
+              shutil.copytree(root/name,name)
+          PY
+      - name: Syntax check
+        run: |
+          python -m py_compile backend/app/*.py
+          python -m py_compile server.py saas_api.py synpora_enhancement.py
+      - name: Verify release invariants
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          s=Path("saas_api.py").read_text()
+          assert 'hardware_write":False' in s
+          assert 'recommendation_only":True' in s
+          assert 'SYNPORA_JWT_SECRET' in s
+          print("SYNPORA release invariants: OK")
+          PY
