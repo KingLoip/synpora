@@ -12,7 +12,7 @@ def _market_loop():
             urllib.request.urlopen(req,timeout=8).read()
         except Exception:
             pass
-        time.sleep(900)
+        try:\n            import urllib.request, os\n            # Self-learning settlement runs alongside market collection.\n            urllib.request.urlopen("http://127.0.0.1:"+os.getenv("PORT","8000")+"/api/v1/market/collect",timeout=8).read()\n        except Exception:\n            pass\n        time.sleep(900)
 
 threading.Thread(target=_market_loop,daemon=True).start()
 
