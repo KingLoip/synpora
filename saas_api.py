@@ -982,17 +982,22 @@ def install(app):
 
     @app.post("/api/v1/auth/register")
     def register(x:AuthIn):
+        email=x.email.strip().lower()
+        if len(email)<3 or "@" not in email or len(email)>254: raise HTTPException(400,"Valid email required")
         if len(x.password)<8: raise HTTPException(400,"Password must be at least 8 characters")
         c=init_db(); uid=secrets.token_hex(12)
         try:
-            c.execute("INSERT INTO users VALUES(?,?,?,?)",(uid,x.email.lower(),_hash(x.password),time.time()))
+            c.execute("INSERT INTO users VALUES(?,?,?,?)",(uid,email,_hash(x.password),time.time()))
         except Exception: raise HTTPException(409,"Email already registered")
         farm_id=secrets.token_hex(12); c.execute("INSERT INTO farms VALUES(?,?,?,?)",(farm_id,uid,"My first farm",time.time()))
-        return {"token":_token(uid),"user":{"id":uid,"email":x.email.lower()},"farm":{"id":farm_id,"name":"My first farm"}}
+        try: c.commit()
+        except Exception: pass
+        return {"token":_token(uid),"user":{"id":uid,"email":email},"farm":{"id":farm_id,"name":"My first farm"}}
 
     @app.post("/api/v1/auth/login")
     def login(x:AuthIn):
-        c=init_db(); row=c.execute("SELECT * FROM users WHERE email=?",(x.email.lower(),)).fetchone()
+        email=x.email.strip().lower()
+        c=init_db(); row=c.execute("SELECT * FROM users WHERE email=?",(email,)).fetchone()
         if not row or not _verify(x.password,row["password_hash"]): raise HTTPException(401,"Invalid credentials")
         return {"token":_token(row["id"]),"user":{"id":row["id"],"email":row["email"]}}
 
