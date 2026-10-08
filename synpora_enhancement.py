@@ -160,8 +160,10 @@ SCRIPT = r"""
   async function runDecisionRisk(){
     const acc=JSON.parse(localStorage.getItem("synpora_account")||"null"); if(!acc?.token){toast("Bitte zuerst Workspace verbinden");return}
     const farms=await fetch("/api/v1/farms",{headers:{Authorization:"Bearer "+acc.token}}).then(r=>r.json()); if(!farms[0])return;
-    const riskAversion=Number(window.prompt("Risk Aversion 0–1","0.75")||0.75);
-    const d=await fetch("/api/v1/farms/"+farms[0].id+"/decision-engine",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+acc.token},body:JSON.stringify({energy_kwh:100,energy_cost_eur_kwh:0.05,risk_aversion:Math.max(0,Math.min(1,riskAversion)),scenarios:500,seed:42})}).then(r=>r.json());
+    const riskInput=window.prompt("Risk Aversion 0–1","0.75");
+    if(riskInput===null)return;
+    const parsedRisk=Number(riskInput); const riskAversion=Number.isFinite(parsedRisk)?Math.max(0,Math.min(1,parsedRisk)):0.75;
+    const d=await fetch("/api/v1/farms/"+farms[0].id+"/decision-engine",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+acc.token},body:JSON.stringify({energy_kwh:100,energy_cost_eur_kwh:0.05,risk_aversion:riskAversion,scenarios:500,seed:42})}).then(r=>r.json());
     const old=panel.querySelector(".sp-risk");if(old)old.remove();
     if(d.detail){toast(d.detail);return}
     const box=document.createElement("div");box.className="sp-risk sp-card";box.style.marginTop="18px";
