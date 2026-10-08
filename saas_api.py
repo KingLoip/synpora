@@ -439,12 +439,26 @@ def install(app):
             result[name]={"model":best,"mae":round(scores[best],8),"scores":{k:round(v,8) for k,v in scores.items()},"samples":len(y),"ready":len(y)>=24}
         return result
 
+    def _ensemble_confidence(c, series_key):
+        w=_adaptive_model_weights(c,series_key)
+        vals=list(w.values())
+        concentration=max(vals) if vals else 0.33
+        rows=c.execute("SELECT btc_hashprice_usd_ph_day,gpu_hourly_usd,austria_spot_eur_kwh FROM market_snapshots ORDER BY ts DESC LIMIT 48").fetchall()
+        idx={"btc":0,"gpu":1,"energy":2}[series_key]
+        y=[float(r[idx]) for r in rows if r[idx] is not None]
+        if len(y)<8:
+            return 0.55
+        mean=sum(y)/len(y)
+        volatility=(sum(abs(v-mean) for v in y)/len(y))/(abs(mean)+1e-9)
+        stability=max(0.0,min(1.0,1.0-volatility))
+        return round(max(.55,min(.95,.55+.25*concentration+.20*stability)),3)
+
     @app.post("/api/v1/farms/{farm_id}/forecast-plan")
     def forecast_plan(farm_id:str,x:DispatchIn,authorization:str|None=Header(default=None)):
         uid=user(authorization); c=init_db()
         if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
         learn=_forecast_learning(c)
-        models=_model_select(c)
+        models=_model_select(c)\n        conf={"btc":_ensemble_confidence(c,"btc"),"gpu":_ensemble_confidence(c,"gpu"),"energy":_ensemble_confidence(c,"energy")}
         hours=max(1,min(72,x.horizon_hours))
         btc_fc,btc_w=_ensemble_forecast(c,"btc",hours,x.btc_hashprice_usd_ph_day)
         gpu_fc,gpu_w=_ensemble_forecast(c,"gpu",hours,x.gpu_hourly_usd)
@@ -467,7 +481,7 @@ def install(app):
                          "btc_hashprice_usd_ph_day":round(btc,4),"gpu_value_eur_kwh":round(gpu_v,5),"forecast_energy_cost_eur_kwh":round(energy,5),
                          "btc_value_eur_kwh":round(btc_v,5),"best_option":"AI Compute" if gpu_v>=btc_v else "BTC Mining"})
         return {"farm_id":farm_id,"horizon_hours":hours,"forecast":rows,
-                "method":"historical_adaptive_model_selection","learning":learn,"models":models,"ensemble_weights":{"btc":btc_w,"gpu":gpu_w,"energy":energy_w},
+                "method":"historical_adaptive_model_selection","learning":learn,"models":models,"ensemble_weights":{"btc":btc_w,"gpu":gpu_w,"energy":energy_w},"ensemble_confidence":conf,
                 "recommendation_only":True,"hardware_write":False}
 
     @app.post("/api/v1/farms/{farm_id}/dispatch-plan")
