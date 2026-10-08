@@ -293,10 +293,10 @@ def install(app):
         result={}
         for name,items in by.items():
             errors=[abs(float(r[2])-float(r[1])) for r in items]
-            hits=[1 if float(r[2])>=float(r[1]) else 0 for r in items]
+            hits=[1 if abs(float(r[2])-float(r[1]))<=max(0.01,abs(float(r[1]))*0.10) else 0 for r in items]
             mae=sum(errors)/len(errors)
             hit=sum(hits)/len(hits)
-            # Confidence combines directional hit-rate and normalized error.
+            # Confidence combines forecast hit-rate and normalized error.
             calibrated=max(0.50,min(0.98,0.45+0.40*hit+0.15*(1/(1+mae*10))))
             result[name]={"samples":len(items),"hit_rate":round(hit,3),"mae_eur_kwh":round(mae,6),"calibrated_confidence":round(calibrated,3)}
         overall=max(result.values(),key=lambda x:x["calibrated_confidence"])["calibrated_confidence"] if result else 0.70
@@ -310,9 +310,9 @@ def install(app):
         rows=c.execute("SELECT chosen,predicted_value,actual_value FROM decision_ledger WHERE farm_id=? AND status='settled' AND actual_value IS NOT NULL",(farm_id,)).fetchall()
         if not rows: return {"samples":0,"score":0.0,"status":"cold_start"}
         mae=sum(abs(float(r[2])-float(r[1])) for r in rows)/len(rows)
-        directional=sum(1 for r in rows if float(r[2])>=float(r[1]))/len(rows)
+        directional=sum(1 for r in rows if abs(float(r[2])-float(r[1]))<=max(0.01,abs(float(r[1]))*0.10))/len(rows)
         score=max(0,min(100,50*directional+50*(1/(1+mae*10))))
-        return {"samples":len(rows),"mae_eur_kwh":round(mae,6),"directional_accuracy":round(directional,3),"score":round(score,1),"status":"learning"}
+        return {"samples":len(rows),"mae_eur_kwh":round(mae,6),"forecast_hit_rate":round(directional,3),"score":round(score,1),"status":"learning"}
 
     @app.get("/api/v1/farms/{farm_id}/learning")
     def learning_status(farm_id:str,authorization:str|None=Header(default=None)):
