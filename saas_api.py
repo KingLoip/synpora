@@ -390,25 +390,30 @@ def install(app):
         gpu_platform_fee: float=0.15
         asic_efficiency_j_th: float=20.0
 
-    def _forecast_learning(c):
-        rows=c.execute("SELECT btc_hashprice_usd_ph_day, gpu_hourly_usd, austria_spot_eur_kwh FROM market_snapshots WHERE btc_hashprice_usd_ph_day IS NOT NULL ORDER BY ts DESC LIMIT 168").fetchall()
-        if len(rows)<8:
-            return {"samples":len(rows),"ready":False,"confidence":0.55}
-        vals=[]
-        for col in range(3):
-            arr=[float(r[col]) for r in rows if r[col] is not None]
-            if len(arr)>1:
-                mean=sum(arr)/len(arr)
-                mad=sum(abs(v-mean) for v in arr)/len(arr)
-                vals.append(max(0.0,1.0-(mad/(abs(mean)+1e-9))))
-        conf=sum(vals)/len(vals) if vals else 0.55
-        return {"samples":len(rows),"ready":len(rows)>=24,"confidence":round(min(.92,max(.55,conf)),3)}
+    def _model_select(c):
+        rows=c.execute("SELECT ts,btc_hashprice_usd_ph_day,gpu_hourly_usd,austria_spot_eur_kwh FROM market_snapshots WHERE btc_hashprice_usd_ph_day IS NOT NULL ORDER BY ts DESC LIMIT 168").fetchall()
+        result={}
+        for name,idx in (("btc",1),("gpu",2),("energy",3)):
+            y=[float(r[idx]) for r in rows if r[idx] is not None]
+            if len(y)<8:
+                result[name]={"model":"recent_mean","mae":None,"samples":len(y),"ready":False}
+                continue
+            cut=min(48,len(y)-4); test=y[:cut]; train=y[cut:]
+            mean=sum(train)/len(train); last=train[0]
+            preds={"recent_mean":[mean]*len(test),"last_value":[last]*len(test)}
+            slope=(train[0]-train[-1])/(len(train)-1) if len(train)>1 else 0
+            preds["trend"]=[train[0]+slope*(i+1) for i in range(len(test))]
+            scores={k:sum(abs(a-b) for a,b in zip(test,v))/len(test) for k,v in preds.items()}
+            best=min(scores,key=scores.get)
+            result[name]={"model":best,"mae":round(scores[best],8),"scores":{k:round(v,8) for k,v in scores.items()},"samples":len(y),"ready":len(y)>=24}
+        return result
 
     @app.post("/api/v1/farms/{farm_id}/forecast-plan")
     def forecast_plan(farm_id:str,x:DispatchIn,authorization:str|None=Header(default=None)):
         uid=user(authorization); c=init_db()
         if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
         learn=_forecast_learning(c)
+        models=_model_select(c)
         hours=max(1,min(72,x.horizon_hours))
         import math
         rows=[]
@@ -428,7 +433,7 @@ def install(app):
                          "btc_hashprice_usd_ph_day":round(btc,4),"gpu_value_eur_kwh":round(gpu_v,5),
                          "btc_value_eur_kwh":round(btc_v,5),"best_option":"AI Compute" if gpu_v>=btc_v else "BTC Mining"})
         return {"farm_id":farm_id,"horizon_hours":hours,"forecast":rows,
-                "method":"historical_adaptive_baseline","learning":learn,
+                "method":"historical_adaptive_model_selection","learning":learn,"models":models,
                 "recommendation_only":True,"hardware_write":False}
 
     @app.post("/api/v1/farms/{farm_id}/dispatch-plan")
