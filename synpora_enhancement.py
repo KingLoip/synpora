@@ -178,6 +178,7 @@ SCRIPT = r"""
     const box=document.createElement("div");box.className="sp-opt";box.style.marginTop="18px";
     box.innerHTML="<div class='sp-label'>AI VALUE OPTIMIZER</div><div class='sp-card'><div class='sp-label'>BEST OPTION</div><div class='sp-value sp-good'>"+d.best.option+"</div><div>"+d.best.value_eur_kwh.toFixed(3)+" €/kWh · Netto €"+d.net_value_eur.toFixed(2)+" · Confidence "+Math.round(d.confidence*100)+"%</div></div><div class='sp-row'><span>BTC Mining</span><strong>"+d.alternatives.find(x=>x.option==="BTC Mining").value_eur_kwh.toFixed(3)+" €/kWh</strong></div><div class='sp-row'><span>Battery</span><strong>"+d.alternatives.find(x=>x.option==="Battery").value_eur_kwh.toFixed(3)+" €/kWh</strong></div>";
     panel.appendChild(box);
+    const intel=document.createElement("div");intel.className="sp-card";intel.style.marginTop="12px";intel.innerHTML="<div class='sp-label'>DECISION INTELLIGENCE</div><div class='sp-value'>"+(d.decision_score??"—")+"/100</div><div class='sp-mini'>"+(d.explanation?.primary_reason||"Model-driven recommendation")+" · margin "+(d.explanation?.value_margin_eur_kwh??0)+" €/kWh · confidence "+Math.round((d.confidence||0)*100)+"%</div>";panel.appendChild(intel);
   }
 
   async function loadAssets(){
