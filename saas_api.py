@@ -489,6 +489,16 @@ def install(app):
         penalty=min(.35,mae*10)
         return round(max(.50,min(.98,.45+.40*hit+.15*(1/(1+mae*10))-penalty*.15)),3)
 
+    @app.get("/api/v1/farms/{farm_id}/ai-status")
+    def ai_status(farm_id:str,authorization:str|None=Header(default=None)):
+        uid=user(authorization); c=init_db()
+        if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
+        stats={s:_settled_learning_stats(c,farm_id,s) for s in ("AI Compute","BTC Mining","Battery","Grid")}
+        total=sum(v["samples"] for v in stats.values())
+        readiness="cold_start" if total<8 else ("learning" if total<24 else "calibrated")
+        return {"farm_id":farm_id,"status":readiness,"total_settled_samples":total,"strategies":stats,
+                "self_learning":True,"recommendation_only":True,"hardware_write":False}
+
     @app.get("/api/v1/farms/{farm_id}/forecast-health")
     def forecast_health(farm_id:str,authorization:str|None=Header(default=None)):
         uid=user(authorization); c=init_db()
