@@ -837,8 +837,23 @@ def install(app):
         gpu_facility_overhead_kw: float=0.0
         facility_overhead_kw: float=0.0
 
+    def _eligible_market_rows(c, limit=168, include_ts=False):
+        # Forecast fitting and weights must use the same provenance gate as learning labels.
+        raw=c.execute("SELECT ts,payload,btc_hashprice_usd_ph_day,gpu_l40s_usd_hour,austria_spot_eur_kwh FROM market_snapshots ORDER BY ts DESC LIMIT ?",(int(limit),)).fetchall()
+        rows=[]
+        for row in raw:
+            try:
+                payload=json.loads(row[1])
+            except Exception:
+                continue
+            if not _snapshot_is_learning_eligible(payload):
+                continue
+            values=(row[0],row[2],row[3],row[4])
+            rows.append(values if include_ts else values[1:])
+        return rows
+
     def _adaptive_model_weights(c, series_key):
-        rows=c.execute("SELECT ts,btc_hashprice_usd_ph_day,gpu_l40s_usd_hour,austria_spot_eur_kwh FROM market_snapshots ORDER BY ts DESC LIMIT 168").fetchall()
+        rows=_eligible_market_rows(c,168,include_ts=True)
         idx={"btc":1,"gpu":2,"energy":3}[series_key]
         y=[float(r[idx]) for r in rows if r[idx] is not None]
         if len(y)<8:
@@ -855,7 +870,7 @@ def install(app):
 
     def _ensemble_forecast(c, series_key, horizon, fallback):
         weights=_adaptive_model_weights(c,series_key)
-        rows=c.execute("SELECT btc_hashprice_usd_ph_day,gpu_l40s_usd_hour,austria_spot_eur_kwh FROM market_snapshots ORDER BY ts DESC LIMIT 48").fetchall()
+        rows=_eligible_market_rows(c,48)
         idx={"btc":0,"gpu":1,"energy":2}[series_key]
         y=[float(r[idx]) for r in rows if r[idx] is not None]
         if not y: return [fallback]*horizon,weights
@@ -869,7 +884,7 @@ def install(app):
         return out,weights
 
     def _model_select(c):
-        rows=c.execute("SELECT ts,btc_hashprice_usd_ph_day,gpu_l40s_usd_hour,austria_spot_eur_kwh FROM market_snapshots ORDER BY ts DESC LIMIT 168").fetchall()
+        rows=_eligible_market_rows(c,168,include_ts=True)
         result={}
         for name,idx in (("btc",1),("gpu",2),("energy",3)):
             y=[float(r[idx]) for r in rows if r[idx] is not None]
@@ -890,7 +905,7 @@ def install(app):
         w=_adaptive_model_weights(c,series_key)
         vals=list(w.values())
         concentration=max(vals) if vals else 0.33
-        rows=c.execute("SELECT btc_hashprice_usd_ph_day,gpu_l40s_usd_hour,austria_spot_eur_kwh FROM market_snapshots ORDER BY ts DESC LIMIT 48").fetchall()
+        rows=_eligible_market_rows(c,48)
         idx={"btc":0,"gpu":1,"energy":2}[series_key]
         y=[float(r[idx]) for r in rows if r[idx] is not None]
         if len(y)<8:
