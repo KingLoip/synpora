@@ -200,6 +200,7 @@ def install(app):
     class ScenarioIn(BaseModel):
         energy_kwh: float=100
         energy_cost_eur_kwh: float=0.05
+        facility_overhead_kw: float=0.0
         btc_hashprice_usd_ph_day: float=39.64
         eur_usd: float=1.1205
         gpu_hourly_usd: float=1.09
@@ -417,7 +418,8 @@ def install(app):
             s=RiskScenarioIn(energy_kwh=x.energy_kwh,energy_cost_eur_kwh=energy,btc_hashprice_usd_ph_day=btc,
                          eur_usd=x.eur_usd,gpu_hourly_usd=gpu,gpu_power_kw=x.gpu_power_kw,
                          gpu_utilization=x.gpu_utilization,gpu_platform_fee=x.gpu_platform_fee,
-                         asic_efficiency_j_th=x.asic_efficiency_j_th,btc_facility_overhead_kw=x.btc_facility_overhead_kw,
+                         asic_efficiency_j_th=x.asic_efficiency_j_th,facility_overhead_kw=x.facility_overhead_kw,
+                         btc_facility_overhead_kw=x.btc_facility_overhead_kw,
                          gpu_facility_overhead_kw=x.gpu_facility_overhead_kw,battery_round_trip_efficiency=x.battery_round_trip_efficiency,
                          battery_degradation_eur_kwh=x.battery_degradation_eur_kwh,grid_export_fee_eur_kwh=x.grid_export_fee_eur_kwh,
                          battery_value_eur_kwh=x.battery_value_eur_kwh,grid_value_eur_kwh=x.grid_value_eur_kwh)
