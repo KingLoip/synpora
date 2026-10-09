@@ -140,9 +140,12 @@ def install(app):
             "gpu":{"model":"L40S","hourly_usd":fields["gpu_l40s_usd_hour"]["value"],
                    "power_kw":ext.get("gpuPowerKw",0.35),"utilization":ext.get("gpuUtilization",0.70),
                    "platform_fee":ext.get("gpuPlatformFee",0.15),
-                   "source":"configured external feed" if fields["gpu_l40s_usd_hour"]["source"]=="external" else "pricing reference"},
-            "sources":["Startmining API (best effort)",
-                "Configured external market feed" if ext.get("_configuredFeedAccepted") else "Reference FX, Austrian energy and GPU pricing where no verified feed value is available"],
+                   "source":fields["gpu_l40s_usd_hour"].get("provider","pricing reference"),
+                   "age_seconds":fields["gpu_l40s_usd_hour"].get("age_seconds")},
+            "sources":sorted(set(["Startmining API (best effort)"]+
+                [fields[k].get("provider") for k in ("gpu_l40s_usd_hour","eur_usd","austria_spot_eur_kwh")
+                 if fields[k]["source"]=="external" and fields[k].get("provider")]+
+                (["Configured external market feed"] if ext.get("_configuredFeedAccepted") else []))),
             "data_quality":{"btc":"live_external" if fields["btc_price_usd"]["available"] else "missing",
                 "hashprice":"live_external" if fields["btc_hashprice_usd_ph_day"]["source"]=="external" else "fallback",
                 "gpu":fields["gpu_l40s_usd_hour"]["source"],"energy":fields["austria_spot_eur_kwh"]["source"],
@@ -171,7 +174,10 @@ def install(app):
               "gpu_l40s_power_kw":ext.get("gpuPowerKw",0.35),
               "gpu_utilization":ext.get("gpuUtilization",0.70),
               "gpu_platform_fee":ext.get("gpuPlatformFee",0.15),
-              "source":"configured_external_market_feed" if all_critical_external else "startmining_external_plus_reference_prices",
+              "source":"multi_provider_market_collection" if all_critical_external else "mixed_provider_market_collection",
+              "providers":sorted(set([fields[k].get("provider") for k in
+                  ("btc_hashprice_usd_ph_day","gpu_l40s_usd_hour","eur_usd","austria_spot_eur_kwh")
+                  if fields[k]["source"]=="external" and fields[k].get("provider")])),
               "data_quality":ext_quality}
         c=init_db()
         _ensure_market_table(c)
@@ -522,7 +528,7 @@ def install(app):
                     if not isinstance(offer,dict):
                         continue
                     gpu_name=str(offer.get("gpu_name",offer.get("gpu_name_display",""))).upper()
-                    if gpu_name and "L40S" not in gpu_name:
+                    if "L40S" not in gpu_name:
                         continue
                     try:
                         hourly=float(offer.get("dph_total",offer.get("dph")))
@@ -623,7 +629,8 @@ def install(app):
             value=ext.get(key)
             try: ok=value is not None and __import__("math").isfinite(float(value)) and float(value)>0
             except (TypeError,ValueError): ok=False
-            observed[name]={"available":bool(ok),"source":"external" if ok else "missing","value":float(value) if ok else None}
+            observed[name]={"available":bool(ok),"source":"external" if ok else "missing","value":float(value) if ok else None,
+                **({"provider":"Startmining API"} if ok else {})}
         configured=bool(ext.get("_configuredFeedConfigured") or ext.get("_configuredFeedAccepted"))
         accepted=bool(ext.get("_configuredFeedAccepted"))
         feed_age=(now-float(ext.get("_configuredFeedObservedAt",0))) if accepted else None
@@ -1552,7 +1559,9 @@ def install(app):
                 "market_data_feed_host_allowlisted":_market_feed_host_allowed(os.getenv("SYNPORA_MARKET_DATA_URL","").strip()) if os.getenv("SYNPORA_MARKET_DATA_URL","").strip() else False,
                 "market_data_feed_api_key_configured":bool(os.getenv("SYNPORA_MARKET_DATA_API_KEY","").strip()),
                 "market_data_allowed_hosts_configured":bool(os.getenv("SYNPORA_MARKET_DATA_ALLOWED_HOSTS","").strip()),
-                "market_data_mode":"configured_feed" if os.getenv("SYNPORA_MARKET_DATA_URL","").strip() else "reference_fallback_possible",
+                "vast_api_key_configured":bool(os.getenv("SYNPORA_VAST_API_KEY","").strip()),
+                "builtin_market_sources_enabled":os.getenv("SYNPORA_DISABLE_BUILTIN_MARKET_SOURCES","").strip().lower() not in ("1","true","yes"),
+                "market_data_mode":"configured_feed_plus_builtin_sources" if os.getenv("SYNPORA_MARKET_DATA_URL","").strip() else "builtin_sources_with_reference_fallback",
                 "hardware_write_enabled":False,"autonomous_control_enabled":False,
                 "recommendation_only":True,"external_market_layer":True,
                 "status":"ready" if ready else "configuration_required"}
