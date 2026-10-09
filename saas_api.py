@@ -423,6 +423,122 @@ def install(app):
         request=urllib.request.Request(feed_url,headers=headers or {"Accept":"application/json"})
         return opener.open(request,timeout=timeout)
 
+    _provider_json_cache={}
+    _provider_json_cache_at={}
+
+    def _provider_json(url, headers=None, ttl_seconds=300):
+        import urllib.request
+        now=time.time()
+        if url in _provider_json_cache and now-_provider_json_cache_at.get(url,0)<ttl_seconds:
+            return _provider_json_cache[url]
+        req=urllib.request.Request(url,headers=headers or {"User-Agent":"SYNPORA/1.2.0","Accept":"application/json"})
+        with urllib.request.urlopen(req,timeout=5) as response:
+            raw=json.loads(response.read(262145).decode())
+        if len(json.dumps(raw))>262144:
+            raise ValueError("Provider response is too large")
+        _provider_json_cache[url]=raw
+        _provider_json_cache_at[url]=now
+        return raw
+
+    def _parse_provider_timestamp(value):
+        from datetime import datetime, timezone
+        if isinstance(value,(int,float)):
+            number=float(value)
+            return number/1000.0 if number>1e11 else number
+        if isinstance(value,str):
+            parsed=datetime.fromisoformat(value.replace("Z","+00:00"))
+            if parsed.tzinfo is None:
+                parsed=parsed.replace(tzinfo=timezone.utc)
+            return parsed.timestamp()
+        raise ValueError("Unsupported provider timestamp")
+
+    def _fetch_builtin_market_sources(out):
+        # Source adapters use public APIs with bounded caching and explicit provenance.
+        import math, urllib.parse
+        now=time.time()
+        meta=out.setdefault("_fieldMeta",{})
+        if os.getenv("SYNPORA_DISABLE_BUILTIN_MARKET_SOURCES","").strip().lower() in ("1","true","yes"):
+            return out
+        # Frankfurter's daily EUR/USD rate; the rate's own date, not fetch time, controls freshness.
+        try:
+            raw=_provider_json("https://api.frankfurter.dev/v2/providers/ecb/rate/eur/usd",ttl_seconds=3600)
+            rate=float(raw.get("rate"))
+            rate_ts=_parse_provider_timestamp(raw.get("date"))
+            age=now-rate_ts
+            if math.isfinite(rate) and rate>0 and -86400<=age<=96*3600:
+                out["eurUsd"]=rate
+                meta["eurUsd"]={"source":"external","provider":"Frankfurter ECB daily EUR/USD",
+                    "observed_at":rate_ts,"age_seconds":round(age,1),"valid":True}
+        except Exception:
+            pass
+        # Fraunhofer ISE Energy-Charts: current Austrian day-ahead spot interval.
+        try:
+            raw=_provider_json("https://api.energy-charts.info/v2/price_current?bzn=AT",ttl_seconds=300)
+            series=raw.get("series",[]) if isinstance(raw,dict) else []
+            data=raw.get("data",[]) if isinstance(raw,dict) else []
+            price_series=next((s for s in series if "price" in str(s.get("id","")).lower() or "price" in str(s.get("name","")).lower()),None)
+            price_value=None; interval_ts=None
+            for point in data:
+                values=point.get("values",{}) if isinstance(point,dict) else {}
+                key=price_series.get("id") if price_series else None
+                candidate=values.get(key) if key else None
+                if candidate is None and len(values)==1:
+                    candidate=next(iter(values.values()))
+                if candidate is not None:
+                    try:
+                        number=float(candidate)
+                        if math.isfinite(number):
+                            price_value=number
+                            interval_ts=_parse_provider_timestamp(point.get("timestamp"))
+                    except Exception:
+                        continue
+            attrs=raw.get("attributes",{}) if isinstance(raw,dict) else {}
+            valid_until_value=attrs.get("valid_until") or raw.get("valid_until") or raw.get("available_until")
+            valid_until=_parse_provider_timestamp(valid_until_value) if valid_until_value else None
+            unit=str((price_series or {}).get("unit") or raw.get("unit") or "EUR/MWh").lower()
+            if price_value is not None and interval_ts is not None and valid_until is not None and interval_ts<=now+60 and now-interval_ts<=7200 and valid_until>now:
+                if "mwh" in unit:
+                    price_value/=1000.0
+                elif "kwh" not in unit:
+                    raise ValueError("Unknown electricity price unit")
+                if -1.0<=price_value<=10.0:
+                    out["austriaSpotEurKwh"]=price_value
+                    meta["austriaSpotEurKwh"]={"source":"external","provider":"Fraunhofer ISE Energy-Charts AT day-ahead",
+                        "observed_at":interval_ts,"valid_until":valid_until,"age_seconds":round(now-interval_ts,1),"valid":True}
+        except Exception:
+            pass
+        # Vast.ai offer sampling is optional and requires the operator's own API key.
+        vast_key=os.getenv("SYNPORA_VAST_API_KEY","").strip()
+        if vast_key:
+            try:
+                query=urllib.parse.urlencode({"q":json.dumps({"gpu_name":"L40S"})})
+                url="https://cloud.vast.ai/api/v0/bundles/?"+query
+                raw=_provider_json(url,headers={"User-Agent":"SYNPORA/1.2.0","Accept":"application/json","Authorization":"Bearer "+vast_key},ttl_seconds=300)
+                offers=raw if isinstance(raw,list) else raw.get("offers",raw.get("bundles",raw.get("results",[])))
+                prices=[]
+                for offer in offers if isinstance(offers,list) else []:
+                    if not isinstance(offer,dict):
+                        continue
+                    gpu_name=str(offer.get("gpu_name",offer.get("gpu_name_display",""))).upper()
+                    if gpu_name and "L40S" not in gpu_name:
+                        continue
+                    try:
+                        hourly=float(offer.get("dph_total",offer.get("dph")))
+                        count=max(1,int(offer.get("num_gpus",offer.get("gpu_count",1)) or 1))
+                        if math.isfinite(hourly) and hourly>0:
+                            prices.append(hourly/count)
+                    except (TypeError,ValueError):
+                        continue
+                if prices:
+                    prices.sort()
+                    median=prices[len(prices)//2] if len(prices)%2 else (prices[len(prices)//2-1]+prices[len(prices)//2])/2
+                    out["gpuHourlyUsd"]=median
+                    meta["gpuHourlyUsd"]={"source":"external","provider":"Vast.ai L40S marketplace median",
+                        "observed_at":now,"age_seconds":0.0,"offer_count":len(prices),"valid":True}
+            except Exception:
+                pass
+        return out
+
     def _external_market():
         import urllib.request
         out={}
@@ -433,6 +549,7 @@ def install(app):
                 if isinstance(raw,dict): out.update(raw)
         except Exception:
             pass
+        out=_fetch_builtin_market_sources(out)
         # Optional operator-configured provider for the four fields needed by learning.
         # It must be HTTPS and include a recent Unix timestamp (seconds or milliseconds).
         feed_url=os.getenv("SYNPORA_MARKET_DATA_URL","").strip()
@@ -466,6 +583,8 @@ def install(app):
                                 "gpu_platform_fee":("gpuPlatformFee",("gpu_platform_fee","gpuPlatformFee")),
                             }
                             accepted=0
+                            feed_meta=out.setdefault("_fieldMeta",{})
+                            feed_source=str(feed.get("source","configured_external_feed"))[:80]
                             for _field,(target,aliases) in mapping.items():
                                 value=next((feed[k] for k in aliases if k in feed),None)
                                 try:
@@ -474,14 +593,18 @@ def install(app):
                                     if _field in ("gpu_utilization","gpu_platform_fee"):
                                         if not 0<=number<=1: continue
                                     elif number<=0: continue
+                                    if _field=="austria_spot_eur_kwh" and not -1.0<=number<=10.0:
+                                        continue
                                     out[target]=number
+                                    feed_meta[target]={"source":"external","provider":feed_source,
+                                        "observed_at":observed,"age_seconds":round(age,1),"valid":True}
                                     accepted+=1
                                 except (TypeError,ValueError):
                                     continue
                             if accepted:
                                 out["_configuredFeedAccepted"]=True
                                 out["_configuredFeedObservedAt"]=observed
-                                out["_configuredFeedSource"]=str(feed.get("source","configured_external_feed"))[:80]
+                                out["_configuredFeedSource"]=feed_source
                 except Exception:
                     # Fail closed: unavailable, malformed, oversized, unsafe or stale provider data is ignored.
                     pass
