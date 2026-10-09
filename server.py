@@ -30,5 +30,16 @@ threading.Thread(target=_market_loop,daemon=True).start()
 @app.get("/health")
 def health():
     return {"status":"ok","service":"synpora"}
+
+# The health endpoint is registered after install(); keep the frontend mount
+# last so it cannot shadow /health or API requests.
+try:
+    from starlette.routing import Mount
+    root_mounts=[r for r in app.router.routes if isinstance(r,Mount) and r.path in ("", "/")]
+    if root_mounts:
+        app.router.routes=[r for r in app.router.routes if r not in root_mounts]+root_mounts
+except Exception:
+    pass
+
 if __name__ == "__main__":
     uvicorn.run(app,host="0.0.0.0",port=int(__import__("os").getenv("PORT","8000")))
