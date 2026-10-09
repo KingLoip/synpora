@@ -794,7 +794,7 @@ def install(app):
         facility_overhead_kw: float=0.0
 
     def _adaptive_model_weights(c, series_key):
-        rows=c.execute("SELECT ts,btc_hashprice_usd_ph_day,gpu_hourly_usd,austria_spot_eur_kwh FROM market_snapshots ORDER BY ts DESC LIMIT 168").fetchall()
+        rows=c.execute("SELECT ts,btc_hashprice_usd_ph_day,gpu_l40s_usd_hour,austria_spot_eur_kwh FROM market_snapshots ORDER BY ts DESC LIMIT 168").fetchall()
         idx={"btc":1,"gpu":2,"energy":3}[series_key]
         y=[float(r[idx]) for r in rows if r[idx] is not None]
         if len(y)<8:
@@ -811,7 +811,7 @@ def install(app):
 
     def _ensemble_forecast(c, series_key, horizon, fallback):
         weights=_adaptive_model_weights(c,series_key)
-        rows=c.execute("SELECT btc_hashprice_usd_ph_day,gpu_hourly_usd,austria_spot_eur_kwh FROM market_snapshots ORDER BY ts DESC LIMIT 48").fetchall()
+        rows=c.execute("SELECT btc_hashprice_usd_ph_day,gpu_l40s_usd_hour,austria_spot_eur_kwh FROM market_snapshots ORDER BY ts DESC LIMIT 48").fetchall()
         idx={"btc":0,"gpu":1,"energy":2}[series_key]
         y=[float(r[idx]) for r in rows if r[idx] is not None]
         if not y: return [fallback]*horizon,weights
@@ -825,7 +825,7 @@ def install(app):
         return out,weights
 
     def _model_select(c):
-        rows=c.execute("SELECT ts,btc_hashprice_usd_ph_day,gpu_hourly_usd,austria_spot_eur_kwh FROM market_snapshots ORDER BY ts DESC LIMIT 168").fetchall()
+        rows=c.execute("SELECT ts,btc_hashprice_usd_ph_day,gpu_l40s_usd_hour,austria_spot_eur_kwh FROM market_snapshots ORDER BY ts DESC LIMIT 168").fetchall()
         result={}
         for name,idx in (("btc",1),("gpu",2),("energy",3)):
             y=[float(r[idx]) for r in rows if r[idx] is not None]
@@ -846,7 +846,7 @@ def install(app):
         w=_adaptive_model_weights(c,series_key)
         vals=list(w.values())
         concentration=max(vals) if vals else 0.33
-        rows=c.execute("SELECT btc_hashprice_usd_ph_day,gpu_hourly_usd,austria_spot_eur_kwh FROM market_snapshots ORDER BY ts DESC LIMIT 48").fetchall()
+        rows=c.execute("SELECT btc_hashprice_usd_ph_day,gpu_l40s_usd_hour,austria_spot_eur_kwh FROM market_snapshots ORDER BY ts DESC LIMIT 48").fetchall()
         idx={"btc":0,"gpu":1,"energy":2}[series_key]
         y=[float(r[idx]) for r in rows if r[idx] is not None]
         if len(y)<8:
@@ -1023,7 +1023,7 @@ def install(app):
         rows=[]
         for h in range(hours):
             # learned baseline: recent observed level + transparent cyclical prior
-            recent=c.execute("SELECT btc_hashprice_usd_ph_day,gpu_hourly_usd,austria_spot_eur_kwh FROM market_snapshots ORDER BY ts DESC LIMIT 24").fetchall()
+            recent=c.execute("SELECT btc_hashprice_usd_ph_day,gpu_l40s_usd_hour,austria_spot_eur_kwh FROM market_snapshots ORDER BY ts DESC LIMIT 24").fetchall()
             def avg(idx,default):
                 a=[float(r[idx]) for r in recent if r[idx] is not None]
                 return sum(a)/len(a) if a else default
