@@ -340,6 +340,41 @@ def install(app):
         # Battery/grid remain floored at zero because the model can simply decline dispatch/export.
         return {"AI Compute":gpu_value-energy_cost,"BTC Mining":btc_value-energy_cost,"Battery":max(0.0,battery_net),"Grid":max(0.0,grid_net)}
 
+    def _market_feed_host_allowed(feed_url):
+        # Require an exact operator-supplied hostname allowlist; HTTPS alone is not enough.
+        try:
+            parsed=urlparse(feed_url)
+            if parsed.scheme!="https" or not parsed.hostname or parsed.username or parsed.password:
+                return False
+            if parsed.port not in (None,443):
+                return False
+            host=parsed.hostname.rstrip(".").lower()
+            allowed={h.strip().rstrip(".").lower() for h in os.getenv("SYNPORA_MARKET_DATA_ALLOWED_HOSTS","").split(",") if h.strip()}
+            if not allowed or host not in allowed:
+                return False
+            import ipaddress
+            try:
+                return ipaddress.ip_address(host).is_global
+            except ValueError:
+                return not (host=="localhost" or host.endswith(".localhost") or host.endswith(".local") or host.endswith(".internal"))
+        except Exception:
+            return False
+
+    def _open_market_feed(feed_url, timeout=5):
+        # Reject private DNS targets and redirects to prevent internal-service SSRF.
+        import socket, ipaddress, urllib.request
+        host=urlparse(feed_url).hostname
+        if not host:
+            raise ValueError("Market feed host is missing")
+        addresses=socket.getaddrinfo(host,443,type=socket.SOCK_STREAM)
+        if not addresses or any(not ipaddress.ip_address(item[4][0]).is_global for item in addresses):
+            raise ValueError("Market feed host resolves to a non-public address")
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+                return None
+        opener=urllib.request.build_opener(NoRedirect)
+        return opener.open(feed_url,timeout=timeout)
+
     def _external_market():
         import urllib.request
         out={}
@@ -356,11 +391,17 @@ def install(app):
         if feed_url:
             out["_configuredFeedConfigured"]=True
             parsed=urlparse(feed_url)
-            if parsed.scheme=="https" and parsed.hostname:
+            if _market_feed_host_allowed(feed_url):
                 try:
-                    req=urllib.request.Request(feed_url,headers={"User-Agent":"SYNPORA/1.0"})
-                    with urllib.request.urlopen(req,timeout=5) as r:
-                        feed=json.loads(r.read().decode())
+                    headers={"User-Agent":"SYNPORA/1.0","Accept":"application/json"}
+                    api_key=os.getenv("SYNPORA_MARKET_DATA_API_KEY","").strip()
+                    if api_key:
+                        headers["Authorization"]="Bearer "+api_key
+                    req=urllib.request.Request(feed_url,headers=headers)
+                    with _open_market_feed(feed_url,timeout=5) as r:
+                        feed=json.loads(r.read(262145).decode())
+                    if len(json.dumps(feed))>262144:
+                        raise ValueError("Market feed response is too large")
                     if isinstance(feed,dict):
                         observed=feed.get("timestamp",feed.get("observed_at"))
                         observed=float(observed)
@@ -394,8 +435,10 @@ def install(app):
                                 out["_configuredFeedObservedAt"]=observed
                                 out["_configuredFeedSource"]=str(feed.get("source","configured_external_feed"))[:80]
                 except Exception:
-                    # Fail closed: unavailable, malformed or stale provider data is ignored.
+                    # Fail closed: unavailable, malformed, oversized, unsafe or stale provider data is ignored.
                     pass
+            else:
+                out["_configuredFeedRejected"]=True
         return out
 
     def _market_quality(ext, now=None):
@@ -430,7 +473,10 @@ def install(app):
         warnings=[]
         if missing: warnings.append("External Bitcoin market feed is incomplete; missing values are not represented as live.")
         if reference: warnings.append("EUR/USD, Austrian spot energy and GPU pricing contain reference values, not verified live quotes.")
-        if configured and not feed_fresh: warnings.append("Configured market feed is stale, invalid, or not HTTPS; its values were not accepted.")
+        if configured and not feed_fresh:
+            warnings.append("Configured market feed is stale, invalid, or not HTTPS/allowlisted; its values were not accepted.")
+        if ext.get("_configuredFeedRejected"):
+            warnings.append("Configured market feed host is not in SYNPORA_MARKET_DATA_ALLOWED_HOSTS or its URL is unsafe.")
         return {"fields":observed,"external_fields":live,"reference_fields":reference,"missing_fields":missing,
                 "status":"live" if all_critical_external else ("partial" if live else "fallback"),
                 "generated_at":now,"configured_feed_accepted":bool(feed_fresh),
@@ -1295,6 +1341,9 @@ def install(app):
                 "market_admin_token_configured":market_token_configured,"market_admin_token_strong":market_token_strong,
                 "market_data_feed_configured":bool(os.getenv("SYNPORA_MARKET_DATA_URL","").strip()),
                 "market_data_feed_https":bool(urlparse(os.getenv("SYNPORA_MARKET_DATA_URL","").strip()).scheme=="https" and urlparse(os.getenv("SYNPORA_MARKET_DATA_URL","").strip()).hostname) if os.getenv("SYNPORA_MARKET_DATA_URL","").strip() else False,
+                "market_data_feed_host_allowlisted":_market_feed_host_allowed(os.getenv("SYNPORA_MARKET_DATA_URL","").strip()) if os.getenv("SYNPORA_MARKET_DATA_URL","").strip() else False,
+                "market_data_feed_api_key_configured":bool(os.getenv("SYNPORA_MARKET_DATA_API_KEY","").strip()),
+                "market_data_allowed_hosts_configured":bool(os.getenv("SYNPORA_MARKET_DATA_ALLOWED_HOSTS","").strip()),
                 "market_data_mode":"configured_feed" if os.getenv("SYNPORA_MARKET_DATA_URL","").strip() else "reference_fallback_possible",
                 "hardware_write_enabled":False,"autonomous_control_enabled":False,
                 "recommendation_only":True,"external_market_layer":True,
