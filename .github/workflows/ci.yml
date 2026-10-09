@@ -93,6 +93,14 @@ jobs:
           assert scenario.status_code==200, scenario.text
           btc_value=next(row["value_eur_kwh"] for row in scenario.json()["ranking"] if row["option"]=="BTC Mining")
           assert 0.01 < btc_value < 0.10, btc_value
+          # Loss-making compute/mining must stay negative rather than being hidden as break-even.
+          loss=c.post(f"/api/v1/farms/{farm}/scenario",headers=h,json={
+              "energy_kwh":100,"energy_cost_eur_kwh":10.0,
+              "btc_hashprice_usd_ph_day":39.64,"asic_efficiency_j_th":20})
+          assert loss.status_code==200, loss.text
+          loss_values={row["option"]:row["value_eur_kwh"] for row in loss.json()["ranking"]}
+          assert loss_values["BTC Mining"] < 0, loss_values
+          assert loss_values["AI Compute"] < 0, loss_values
           # Dispatch energy accounting: PV must be allocated exactly once and battery reserve preserved.
           for kind,power in (("GPU",0.5),("BTC",0.5)):
               asset=c.post(f"/api/v1/farms/{farm}/assets",headers=h,json={"name":kind+" test asset","kind":kind,"power_kw":power})
