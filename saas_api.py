@@ -137,7 +137,7 @@ def install(app):
         uid=user(authorization); c=init_db()
         ok=c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone()
         if not ok: raise HTTPException(404,"Farm not found")
-        # BTC gross revenue per kWh = hashprice / (J/TH) / 1000, adjusted for uptime/pool fee.
+        # BTC gross revenue per kWh = hashprice / (J/TH × 24), adjusted for uptime/pool fee.
         energy_cost=max(0.0,x.energy_cost_eur_kwh)
         btc_gross=(x.btc_hashprice_usd_ph_day/max(x.eur_usd,0.01))/(max(x.asic_efficiency_j_th,0.01)*24)
         btc_gross*=max(0.0,min(1.0,x.uptime))*(1-max(0.0,min(0.99,x.pool_fee)))
@@ -912,7 +912,7 @@ def install(app):
             btc=btc_fc[h]; gpu=gpu_fc[h]; energy=energy_fc[h]
             pv=x.pv_kwh/hours*(0.35+1.3*pv_shape)
             gpu_v=(gpu/x.eur_usd)*x.gpu_utilization*(1-x.gpu_platform_fee)/0.35
-            btc_v=(btc/x.eur_usd)/(x.asic_efficiency_j_th*1000)*0.98*0.98
+            btc_v=(btc/x.eur_usd)/(x.asic_efficiency_j_th*24)*0.98*0.98
             rows.append({"hour":h,"pv_kwh":round(pv,3),"gpu_hourly_usd":round(gpu,4),
                          "btc_hashprice_usd_ph_day":round(btc,4),"gpu_value_eur_kwh":round(gpu_v,5),"forecast_energy_cost_eur_kwh":round(energy,5),
                          "btc_value_eur_kwh":round(btc_v,5),"best_option":"AI Compute" if gpu_v>=btc_v else "BTC Mining"})
