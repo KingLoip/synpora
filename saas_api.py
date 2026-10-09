@@ -93,7 +93,7 @@ def install(app):
     @app.get("/api/v1/system/status")
     def status():
         configured=bool(DB_URL)
-        return {"service":"synpora","version":"1.1.1","database":{"type":"postgresql" if configured else "sqlite_fallback","configured":configured},"security":{"jwt_configured":bool(JWT_SECRET)},"hardware_write":False,"autonomous_control":False,"mode":"recommendation_only"}
+        return {"service":"synpora","version":"1.2.0","database":{"type":"postgresql" if configured else "sqlite_fallback","configured":configured},"security":{"jwt_configured":bool(JWT_SECRET)},"hardware_write":False,"autonomous_control":False,"mode":"recommendation_only"}
 
     class OptimizeIn(BaseModel):
         energy_kwh: float=10
@@ -1368,9 +1368,9 @@ def install(app):
 
     @app.get("/api/v1/system/release")
     def release_status():
-        return {"product":"SYNPORA","release":"1.1.2","ai_core":"risk_aware_walk_forward_v2",
+        return {"product":"SYNPORA","release":"1.2.0","ai_core":"risk_aware_walk_forward_v3_economic_costs",
                 "mode":"recommendation_only","hardware_write":False,"autonomous_control":False,
-                "features":["market_intelligence","adaptive_forecast","model_selection","decision_ledger","self_learning","calibrated_confidence","provenance_gated_walk_forward_backtest","paper_trading_observability","tail_risk_metrics","deterministic_stress_tests"],
+                "features":["market_intelligence","adaptive_forecast","model_selection","decision_ledger","self_learning","calibrated_confidence","provenance_gated_walk_forward_backtest","paper_trading_observability","tail_risk_metrics","deterministic_stress_tests","secure_allowlisted_market_feed","operations_dashboard","equipment_depreciation_uptime_maintenance_tax"],
                 "status":"production_candidate"}
 
     @app.get("/api/v1/system/production-readiness")
