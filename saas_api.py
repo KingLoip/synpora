@@ -131,6 +131,7 @@ def install(app):
             "gpu":{"model":"L40S","hourly_usd":1.09,"power_kw":0.35,"utilization":0.70,"platform_fee":0.15,"source":"RunPod pricing reference"},
             "sources":["Startmining API (best effort)","EUR/USD reference","Austrian spot energy reference","GPU pricing reference"],
             "data_quality":{"btc":"live_external" if quality["fields"]["btc_price_usd"]["available"] else "missing","hashprice":"live_external" if quality["fields"]["btc_hashprice_usd_ph_day"]["available"] else "fallback","gpu":"reference","energy":"reference","overall":quality["status"],"details":quality},
+            "snapshot_freshness":_market_snapshot_freshness(init_db(),now),
             "timestamp":now
         }
 
@@ -328,6 +329,36 @@ def install(app):
                     *(["External market feed is incomplete; missing values are not represented as live."] if missing else []),
                     "EUR/USD, Austrian spot energy and GPU pricing are reference values, not verified live quotes."
                 ]}
+
+    def _market_snapshot_freshness(c, now=None):
+        # Reference snapshots must not be mistaken for live observations.
+        now=time.time() if now is None else float(now)
+        try:
+            row=c.execute("SELECT ts,payload FROM market_snapshots ORDER BY ts DESC LIMIT 1").fetchone()
+        except Exception:
+            row=None
+        if not row:
+            return {"available":False,"age_seconds":None,"status":"missing","source":None,
+                    "warnings":["No stored market snapshot is available."]}
+        try:
+            ts=float(row[0])
+            payload=json.loads(row[1] or "{}")
+            age=max(0.0,now-ts)
+        except Exception:
+            return {"available":False,"age_seconds":None,"status":"invalid","source":None,
+                    "warnings":["Latest market snapshot timestamp or payload is invalid."]}
+        source=payload.get("source","unknown") if isinstance(payload,dict) else "unknown"
+        quality=payload.get("data_quality",{}) if isinstance(payload,dict) else {}
+        overall=quality.get("status") if isinstance(quality,dict) else None
+        stale=age>900
+        warnings=[]
+        if stale:
+            warnings.append("Latest stored market snapshot is older than 15 minutes.")
+        if source in ("manual_reference_snapshot","startmining_external_plus_reference_prices") or overall in ("reference","fallback","partial"):
+            warnings.append("Stored snapshot includes reference values or incomplete external market data.")
+        return {"available":True,"timestamp":ts,"age_seconds":round(age,1),
+                "status":"stale" if stale else ("reference_or_partial" if warnings else "fresh"),
+                "source":source,"source_quality":overall,"warnings":warnings}
 
     def _forecast_quality(rows, models, confidence, hours):
         values=[float(row[k]) for row in rows for k in ("btc_hashprice_usd_ph_day","gpu_hourly_usd","forecast_energy_cost_eur_kwh")]
@@ -1047,6 +1078,11 @@ def install(app):
                          "btc_hashprice_usd_ph_day":round(btc,4),"gpu_value_eur_kwh":round(gpu_v,5),"forecast_energy_cost_eur_kwh":round(energy,5),
                          "btc_value_eur_kwh":round(btc_v,5),"best_option":"AI Compute" if gpu_v>=btc_v else "BTC Mining"})
         forecast_quality=_forecast_quality(rows,models,conf,hours)
+        snapshot_freshness=_market_snapshot_freshness(c)
+        forecast_quality["market_snapshot_freshness"]=snapshot_freshness
+        forecast_quality["warnings"] += snapshot_freshness["warnings"]
+        if snapshot_freshness["status"] in ("missing","invalid","stale","reference_or_partial"):
+            forecast_quality["status"]="degraded" if forecast_quality["valid"] else "invalid"
         return {"farm_id":farm_id,"horizon_hours":hours,"forecast":rows,
                 "method":"historical_adaptive_model_selection","learning":learn,"models":models,"ensemble_weights":{"btc":btc_w,"gpu":gpu_w,"energy":energy_w},"ensemble_confidence":conf,
                 "forecast_quality":forecast_quality,
