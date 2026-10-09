@@ -187,6 +187,9 @@ jobs:
           fq=forecast.json()["forecast_quality"]
           assert fq["status"] in {"validated","degraded","invalid"}, fq
           assert fq["horizon_hours"]==3 and "model_readiness" in fq, fq
+          assert "market_snapshot_freshness" in fq, fq
+          assert fq["market_snapshot_freshness"]["source"] == "manual_reference_snapshot", fq
+          assert any("reference values" in warning for warning in fq["warnings"]), fq
           assert forecast.json()["hardware_write"] is False
           bad=c.post("/api/v1/auth/register",json={"email":"not-an-email","password":"ci-password-123"})
           assert bad.status_code==400, bad.text
