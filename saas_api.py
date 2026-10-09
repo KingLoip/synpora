@@ -588,6 +588,7 @@ def install(app):
 
     @app.post("/api/v1/farms/{farm_id}/decision")
     def record_decision(farm_id:str,x:ScenarioIn,authorization:str|None=Header(default=None)):
+        _validate_numeric_inputs(x)
         uid=user(authorization); c=init_db()
         if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
         _ensure_learning_tables(c)
@@ -870,6 +871,7 @@ def install(app):
     def _online_learning_update(c, farm_id):
         from datetime import datetime
         import math
+        _ensure_market_table(c)
         # Settle decisions only against the first later snapshot with usable observed/reference values.
         # Missing fields are not silently replaced with defaults: otherwise the learner trains on invented data.
         snaps=c.execute("SELECT ts,payload FROM market_snapshots ORDER BY ts ASC").fetchall()
