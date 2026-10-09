@@ -217,44 +217,57 @@ jobs:
           assert mq["details"]["fields"]["austria_spot_eur_kwh"]["source"]=="reference", mq
           assert mq["details"]["fields"]["gpu_l40s_usd_hour"]["source"]=="reference", mq
           # Configured feed must be HTTPS, timestamp-fresh and field-validated before provenance is external.
-          import urllib.request
-          original_feed_open=saas._open_market_feed
+          import urllib.request, socket
+          original_urlopen=urllib.request.urlopen
+          original_build_opener=urllib.request.build_opener
+          original_getaddrinfo=socket.getaddrinfo
           class FakeFeedResponse:
               def __init__(self,payload): self.payload=payload
               def __enter__(self): return self
               def __exit__(self,*args): return False
               def read(self,size=-1): return json.dumps(self.payload).encode()
           feed_headers_seen={}
-          def fake_feed_open(url,timeout=5,headers=None):
-              if "feed.example.test" in url:
-                  feed_headers_seen.update(headers or {})
-                  return FakeFeedResponse({"timestamp":time.time(),"source":"ci-test-feed",
-                      "btc_hashprice_usd_ph_day":41.0,"gpu_l40s_usd_hour":1.30,
-                      "eur_usd":1.09,"austria_spot_eur_kwh":0.075,
-                      "gpu_l40s_power_kw":0.35,"gpu_utilization":0.70,"gpu_platform_fee":0.15})
-              raise OSError("Unexpected feed host in CI")
+          class FakeFeedOpener:
+              def open(self,request,timeout=5):
+                  url=request.full_url
+                  feed_headers_seen.update(dict(request.header_items()))
+                  if "feed.example.test" in url:
+                      return FakeFeedResponse({"timestamp":time.time(),"source":"ci-test-feed",
+                          "btc_hashprice_usd_ph_day":41.0,"gpu_l40s_usd_hour":1.30,
+                          "eur_usd":1.09,"austria_spot_eur_kwh":0.075,
+                          "gpu_l40s_power_kw":0.35,"gpu_utilization":0.70,"gpu_platform_fee":0.15})
+                  raise OSError("Unexpected feed host in CI")
+          def fake_urlopen(request,timeout=5):
+              raise OSError("External network intentionally disabled in CI")
           old_feed_url=os.environ.get("SYNPORA_MARKET_DATA_URL")
           old_feed_hosts=os.environ.get("SYNPORA_MARKET_DATA_ALLOWED_HOSTS")
           old_feed_key=os.environ.get("SYNPORA_MARKET_DATA_API_KEY")
           os.environ["SYNPORA_MARKET_DATA_URL"]="https://feed.example.test/market"
           os.environ["SYNPORA_MARKET_DATA_ALLOWED_HOSTS"]="feed.example.test"
           os.environ["SYNPORA_MARKET_DATA_API_KEY"]="ci-feed-secret"
-          saas._open_market_feed=fake_feed_open
+          urllib.request.urlopen=fake_urlopen
+          urllib.request.build_opener=lambda *handlers: FakeFeedOpener()
+          socket.getaddrinfo=lambda host,port,type: [(socket.AF_INET,socket.SOCK_STREAM,6,"",("93.184.216.34",port))]
           try:
-              assert saas._market_feed_host_allowed("https://feed.example.test/market") is True
-              assert saas._market_feed_host_allowed("https://evil.example/market") is False
-              assert saas._market_feed_host_allowed("https://localhost/market") is False
-              assert saas._market_feed_host_allowed("http://feed.example.test/market") is False
               feed_market=c.get("/api/v1/market/live")
               assert feed_market.status_code==200, feed_market.text
               fm=feed_market.json()
               assert fm["data_quality"]["overall"]=="live", fm["data_quality"]
               assert fm["data_quality"]["details"]["configured_feed_accepted"] is True, fm["data_quality"]
+              readiness_feed=c.get("/api/v1/system/production-readiness").json()
+              assert readiness_feed["market_data_feed_host_allowlisted"] is True, readiness_feed
               assert feed_headers_seen.get("Authorization")=="Bearer ci-feed-secret", feed_headers_seen
               for field in ("btc_hashprice_usd_ph_day","gpu_l40s_usd_hour","eur_usd","austria_spot_eur_kwh"):
                   assert fm["data_quality"]["details"]["fields"][field]["source"]=="external", fm["data_quality"]
+              os.environ["SYNPORA_MARKET_DATA_URL"]="https://evil.example/market"
+              rejected=c.get("/api/v1/market/live")
+              assert rejected.status_code==200, rejected.text
+              assert rejected.json()["data_quality"]["details"]["configured_feed_accepted"] is False, rejected.json()
+              assert c.get("/api/v1/system/production-readiness").json()["market_data_feed_host_allowlisted"] is False
           finally:
-              saas._open_market_feed=original_feed_open
+              urllib.request.urlopen=original_urlopen
+              urllib.request.build_opener=original_build_opener
+              socket.getaddrinfo=original_getaddrinfo
               for name,old in (("SYNPORA_MARKET_DATA_URL",old_feed_url),
                                ("SYNPORA_MARKET_DATA_ALLOWED_HOSTS",old_feed_hosts),
                                ("SYNPORA_MARKET_DATA_API_KEY",old_feed_key)):
