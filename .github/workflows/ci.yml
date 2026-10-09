@@ -74,6 +74,28 @@ jobs:
           assert "strategies" in risk.json()
           assert all("mean" in v for v in risk.json()["strategies"].values())
           assert risk.json()["base_case"]["net_eur"] == risk.json()["base_case"]["net_eur"]
+          # Dispatch energy accounting: PV must be allocated exactly once and battery reserve preserved.
+          for kind,power in (("GPU",0.5),("BTC",0.5)):
+              asset=c.post(f"/api/v1/farms/{farm}/assets",headers=h,json={"name":kind+" test asset","kind":kind,"power_kw":power})
+              assert asset.status_code==200, asset.text
+          charging=c.post(f"/api/v1/farms/{farm}/dispatch-plan",headers=h,json={
+              "horizon_hours":24,"pv_kwh":20,"battery_capacity_kwh":100,
+              "battery_soc_pct":20,"battery_reserve_pct":20,"battery_power_kw":10,
+              "battery_charge_efficiency":0.95,"battery_discharge_efficiency":0.95})
+          assert charging.status_code==200, charging.text
+          cs=charging.json()["summary"]
+          assert abs(cs["pv_balance_error_kwh"]) < 0.01, cs
+          assert cs["battery_charge_kwh"] >= 0, cs
+          assert cs["battery_losses_kwh"] >= 0, cs
+          assert cs["battery_soc_final_kwh"] >= cs["battery_soc_reserve_kwh"]-0.01, cs
+          exporting=c.post(f"/api/v1/farms/{farm}/dispatch-plan",headers=h,json={
+              "horizon_hours":24,"pv_kwh":50,"battery_capacity_kwh":10,
+              "battery_soc_pct":100,"battery_reserve_pct":20,"battery_power_kw":5})
+          assert exporting.status_code==200, exporting.text
+          es=exporting.json()["summary"]
+          assert abs(es["pv_balance_error_kwh"]) < 0.01, es
+          assert es["grid_export_kwh"] > 0, es
+          assert es["battery_soc_final_kwh"] >= es["battery_soc_reserve_kwh"]-0.01, es
           quality=c.get(f"/api/v1/farms/{farm}/decision-quality",headers=h)
           assert quality.status_code==200, quality.text
           bad=c.post("/api/v1/auth/register",json={"email":"not-an-email","password":"ci-password-123"})
