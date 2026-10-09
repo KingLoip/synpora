@@ -1004,7 +1004,7 @@ def install(app):
         stats={}
         for strategy in ("AI Compute","BTC Mining","Battery","Grid"):
             stats[strategy]=_settled_learning_stats(c,farm_id,strategy)
-        return {"farm_id":farm_id,"settlement":settlement,"calibration":stats,"mode":"self_learning","recommendation_only":True}
+        return {"farm_id":farm_id,**settlement,"calibration":stats,"mode":"self_learning","recommendation_only":True,"hardware_write":False}
 
     @app.post("/api/v1/farms/{farm_id}/forecast-plan")
     def forecast_plan(farm_id:str,x:DispatchIn,authorization:str|None=Header(default=None)):
