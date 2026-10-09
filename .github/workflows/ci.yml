@@ -148,6 +148,17 @@ jobs:
           assert es["battery_soc_final_kwh"] >= es["battery_soc_reserve_kwh"]-0.01, es
           quality=c.get(f"/api/v1/farms/{farm}/decision-quality",headers=h)
           assert quality.status_code==200, quality.text
+          # Learning ledger must work on a fresh schema and must not settle without later valid observations.
+          recorded=c.post(f"/api/v1/farms/{farm}/decision",headers=h,json={"energy_kwh":100,"energy_cost_eur_kwh":0.05})
+          assert recorded.status_code==200, recorded.text
+          learning=c.post(f"/api/v1/farms/{farm}/learning/update",headers=h)
+          assert learning.status_code==200, learning.text
+          lb=learning.json()
+          assert lb["settled_now"]==0 and lb["open_remaining"]>=1, lb
+          assert lb["hardware_write"] is False and lb["recommendation_only"] is True, lb
+          learning_status=c.get(f"/api/v1/farms/{farm}/learning",headers=h)
+          assert learning_status.status_code==200, learning_status.text
+          assert learning_status.json()["open"]>=1, learning_status.json()
           # Market API must disclose provenance instead of presenting reference prices as live.
           market=c.get("/api/v1/market/live")
           assert market.status_code==200, market.text
