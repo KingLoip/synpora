@@ -21,5 +21,10 @@ Use distinct values for the JWT secret and market admin token. Do not paste eith
 4. Register a test account, log in, create/read a farm, and verify data persists after a service restart.
 5. Confirm protected market maintenance endpoints reject requests without the admin token.
 6. Confirm decision, forecast, and dispatch responses remain recommendation-only and report hardware writes disabled.
+7. Check `/api/v1/market/data-health`; confirm the latest eligible snapshot is fresh before trusting model learning.
+8. After sufficient verified external observations have accumulated, run `POST /api/v1/farms/{farm_id}/backtest` with `{"min_samples":24,"max_snapshots":1000}` and inspect regret, prediction error, and strategy-selection accuracy.
+9. Review `GET /api/v1/farms/{farm_id}/paper-trading`; keep the system in observation mode until enough settled decisions exist and results have been reviewed.
+
+See `SYNPORA_VALIDATION.md` for the provenance rules, endpoint semantics, and limitations. Do not treat an `insufficient_data` backtest as a failure of the service; it means there are not yet enough eligible external observations to make a meaningful evaluation.
 
 A successful GitHub Actions run validates code and image build, but does not prove the Railway service has the required variables or that its PostgreSQL database is reachable. Do not describe the deployment as production-ready until the live readiness and persistence checks pass.
