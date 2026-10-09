@@ -1227,9 +1227,9 @@ def install(app):
 
     @app.get("/api/v1/system/release")
     def release_status():
-        return {"product":"SYNPORA","release":"1.0.1","ai_core":"self_learning_v1",
-                "mode":"recommendation_only","hardware_write":False,
-                "features":["market_intelligence","adaptive_forecast","model_selection","decision_ledger","self_learning","calibrated_confidence"],
+        return {"product":"SYNPORA","release":"1.1.2","ai_core":"risk_aware_walk_forward_v2",
+                "mode":"recommendation_only","hardware_write":False,"autonomous_control":False,
+                "features":["market_intelligence","adaptive_forecast","model_selection","decision_ledger","self_learning","calibrated_confidence","provenance_gated_walk_forward_backtest","paper_trading_observability","tail_risk_metrics","deterministic_stress_tests"],
                 "status":"production_candidate"}
 
     @app.get("/api/v1/system/production-readiness")
@@ -1258,6 +1258,9 @@ def install(app):
                 "database_backend":db_backend,"database_error":db_error,
                 "jwt_secret_configured":jwt_configured,"jwt_secret_strong":jwt_secret_strong,
                 "market_admin_token_configured":market_token_configured,"market_admin_token_strong":market_token_strong,
+                "market_data_feed_configured":bool(os.getenv("SYNPORA_MARKET_DATA_URL","").strip()),
+                "market_data_feed_https":urlparse(os.getenv("SYNPORA_MARKET_DATA_URL","").strip()).scheme=="https" if os.getenv("SYNPORA_MARKET_DATA_URL","").strip() else False,
+                "market_data_mode":"configured_feed" if os.getenv("SYNPORA_MARKET_DATA_URL","").strip() else "reference_fallback_possible",
                 "hardware_write_enabled":False,"autonomous_control_enabled":False,
                 "recommendation_only":True,"external_market_layer":True,
                 "status":"ready" if ready else "configuration_required"}
