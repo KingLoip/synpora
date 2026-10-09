@@ -9,10 +9,16 @@ Configure these in the Railway service's Variables tab. Never commit the secret 
 - `DATABASE_URL`: reference the Railway PostgreSQL service's connection URL. Railway deployments disable the SQLite fallback; a missing or unreachable PostgreSQL database must fail closed.
 - `SYNPORA_JWT_SECRET`: a randomly generated secret with at least 32 characters. Changing it invalidates existing login tokens.
 - `SYNPORA_MARKET_ADMIN_TOKEN`: a separate, randomly generated secret with at least 32 characters. It protects market collection, backfill, and manual snapshot endpoints.
-- `SYNPORA_MARKET_DATA_URL` (optional): HTTPS endpoint for a verified external market feed. It must return JSON with a recent Unix `timestamp` (seconds or milliseconds) and any available fields among `btc_hashprice_usd_ph_day`, `gpu_l40s_usd_hour`, `eur_usd`, `austria_spot_eur_kwh`, `gpu_l40s_power_kw`, `gpu_utilization`, and `gpu_platform_fee`. Field aliases in camelCase are also accepted. Values older than 15 minutes, invalid values, and non-HTTPS URLs are rejected. Only the four critical values with accepted external provenance can qualify a snapshot for learning.
+- `SYNPORA_MARKET_DATA_URL` (optional): HTTPS endpoint for a verified external market feed. It must return JSON with a recent Unix `timestamp` (seconds or milliseconds) and fields `btc_hashprice_usd_ph_day`, `gpu_l40s_usd_hour`, `eur_usd`, and `austria_spot_eur_kwh`, plus optional `gpu_l40s_power_kw`, `gpu_utilization`, and `gpu_platform_fee`. Field aliases in camelCase are also accepted. Values older than 15 minutes, invalid values, and non-HTTPS URLs are rejected. Only the four critical values with accepted external provenance can qualify a snapshot for learning.
+- `SYNPORA_MARKET_DATA_ALLOWED_HOSTS` (required when a custom feed URL is configured): comma-separated exact hostnames allowed to serve the feed, e.g. `market-provider.example`. Do not include schemes, paths, credentials, or wildcards. The host must be public; unsafe/private DNS targets and HTTP redirects are rejected. A URL not on this list is ignored.
+- `SYNPORA_MARKET_DATA_API_KEY` (optional): API key sent as `Authorization: Bearer …` to the configured feed. Store the key only in Railway Variables, never in the URL or repository.
 - `PORT`: provided by Railway; do not hard-code it.
 
 Use distinct values for the JWT secret and market admin token. Do not paste either secret into issues, logs, or chat.
+
+## Operations dashboard
+
+Open `/ops` on the deployed service for a live operational overview of production readiness, data freshness/eligibility, warnings, and release safety flags. It refreshes every 30 seconds and never displays secret values. The dashboard is diagnostic, not proof of profitability; the raw JSON is available at `/api/v1/system/production-readiness` and `/api/v1/market/data-health`.
 
 ## Market collection
 
@@ -22,7 +28,7 @@ Use distinct values for the JWT secret and market admin token. Do not paste eith
 
 1. Confirm the service uses the repository's root `Dockerfile` and `railway.toml`.
 2. Wait for the deployment to complete and verify `/health` returns HTTP 200. This is a liveness check only.
-3. Verify `/api/v1/system/production-readiness` reports `status: "ready"`, `database_backend: "postgresql"`, `database_reachable: true`, `jwt_secret_strong: true`, and `market_admin_token_strong: true`.
+3. Open `/ops` and verify `/api/v1/system/production-readiness` reports `status: "ready"`, `database_backend: "postgresql"`, `database_reachable: true`, `jwt_secret_strong: true`, and `market_admin_token_strong: true`. A configured feed must also report `market_data_feed_host_allowlisted: true`; if the provider needs authentication, confirm `market_data_feed_api_key_configured: true`.
 4. Register a test account, log in, create/read a farm, and verify data persists after a service restart.
 5. Confirm protected market maintenance endpoints reject requests without the admin token.
 6. Confirm decision, forecast, and dispatch responses remain recommendation-only and report hardware writes disabled.
