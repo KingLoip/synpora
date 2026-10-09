@@ -628,14 +628,35 @@ def install(app):
         feed_fresh=accepted and feed_age is not None and -60<=feed_age<=900
         refs={
             "eur_usd":("eurUsd",1.1205,lambda v:float(v)>0),
-            "austria_spot_eur_kwh":("austriaSpotEurKwh",0.2055,lambda v:float(v)>0),
+            "austria_spot_eur_kwh":("austriaSpotEurKwh",0.2055,lambda v:-1.0<=float(v)<=10.0),
             "gpu_l40s_usd_hour":("gpuHourlyUsd",1.09,lambda v:float(v)>0),
         }
+        field_meta=ext.get("_fieldMeta",{}) if isinstance(ext.get("_fieldMeta",{}),dict) else {}
         for name,(key,fallback,valid) in refs.items():
             value=ext.get(key)
-            try: ok=feed_fresh and value is not None and valid(value)
-            except (TypeError,ValueError): ok=False
-            observed[name]={"available":True,"source":"external","value":float(value)} if ok else {"available":True,"source":"reference","value":fallback}
+            meta=field_meta.get(key,{})
+            try:
+                age=now-float(meta.get("observed_at")) if meta.get("observed_at") is not None else None
+                provider=str(meta.get("provider","unknown"))
+                max_age=(96*3600 if key=="eurUsd" and provider.startswith("Frankfurter") else
+                         7200 if key=="austriaSpotEurKwh" and "Energy-Charts" in provider else 900)
+                fresh=(meta.get("source")=="external" and meta.get("valid",False) and age is not None
+                       and -60<=age<=max_age and valid(value))
+                if key=="austriaSpotEurKwh" and meta.get("valid_until") is not None:
+                    fresh=fresh and float(meta["valid_until"])>now
+                if ext.get("_configuredFeedAccepted") and provider==str(ext.get("_configuredFeedSource","")):
+                    fresh=fresh and feed_fresh
+            except (TypeError,ValueError):
+                fresh=False
+                age=None
+                provider="unknown"
+            if fresh:
+                observed[name]={"available":True,"source":"external","value":float(value),
+                    "provider":provider,"age_seconds":round(max(0.0,age),1) if age is not None else None}
+                if meta.get("valid_until") is not None:
+                    observed[name]["valid_until"]=meta.get("valid_until")
+            else:
+                observed[name]={"available":True,"source":"reference","value":fallback}
         live=sum(1 for v in observed.values() if v["source"]=="external")
         reference=sum(1 for v in observed.values() if v["source"]=="reference")
         missing=sum(1 for v in observed.values() if v["source"]=="missing")
@@ -643,7 +664,9 @@ def install(app):
         all_critical_external=all(observed[k]["source"]=="external" for k in critical)
         warnings=[]
         if missing: warnings.append("External Bitcoin market feed is incomplete; missing values are not represented as live.")
-        if reference: warnings.append("EUR/USD, Austrian spot energy and GPU pricing contain reference values, not verified live quotes.")
+        if reference: warnings.append("Some EUR/USD, Austrian spot energy or GPU pricing fields still contain reference values, not verified live quotes.")
+        if observed["gpu_l40s_usd_hour"]["source"]!="external" and not os.getenv("SYNPORA_VAST_API_KEY","").strip():
+            warnings.append("Set SYNPORA_VAST_API_KEY to sample live L40S rental offers from Vast.ai; otherwise GPU pricing remains a reference value unless supplied by the configured feed.")
         if configured and not feed_fresh:
             warnings.append("Configured market feed is stale, invalid, or not HTTPS/allowlisted; its values were not accepted.")
         if ext.get("_configuredFeedRejected"):
