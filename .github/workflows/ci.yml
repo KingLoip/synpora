@@ -72,7 +72,7 @@ jobs:
           assert risk.status_code==200, risk.text
           rb=risk.json()
           assert rb["samples"] == 50 and rb["seed"] == 42, rb
-          assert rb["method"] == "deterministic_seeded_monte_carlo_lognormal_shocks", rb
+          assert rb["method"] == "deterministic_seeded_monte_carlo_lognormal_shocks_with_stress_tests", rb
           assert rb["recommendation_only"] is True and rb["hardware_write"] is False, rb
           assert set(rb["strategies"]) == {"AI Compute","BTC Mining","Battery","Grid"}, rb["strategies"]
           for name,metrics in rb["strategies"].items():
