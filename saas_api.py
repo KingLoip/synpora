@@ -246,8 +246,14 @@ def install(app):
             try: c.commit()
             except Exception: pass
 
+    def require_market_admin(token):
+        expected=os.getenv("SYNPORA_MARKET_ADMIN_TOKEN","").strip()
+        if not expected or not token or not hmac.compare_digest(token,expected):
+            raise HTTPException(403,"Market maintenance endpoint disabled or unauthorized")
+
     @app.post("/api/v1/market/collect")
-    def collect_market():
+    def collect_market(x_market_token:str|None=Header(default=None,alias="X-SYNPORA-MARKET-TOKEN")):
+        require_market_admin(x_market_token)
         ext=_external_market()
         snap={"timestamp":time.time(),
               "btc_price_usd":ext.get("btcPrice"),
@@ -275,7 +281,8 @@ def install(app):
         return snap
 
     @app.post("/api/v1/market/backfill")
-    def backfill_market(limit:int=365):
+    def backfill_market(limit:int=365,x_market_token:str|None=Header(default=None,alias="X-SYNPORA-MARKET-TOKEN")):
+        require_market_admin(x_market_token)
         import urllib.request
         url="https://pro.startmining.io/api/price-history"
         try:
