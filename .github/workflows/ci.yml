@@ -225,6 +225,33 @@ jobs:
           assert fq["market_snapshot_freshness"]["source"] == "manual_reference_snapshot", fq
           assert any("reference values" in warning for warning in fq["warnings"]), fq
           assert forecast.json()["hardware_write"] is False
+          # Walk-forward backtesting must use consecutive fully external snapshots, never reference snapshots.
+          for offset,hashprice,gpu,fx,energy in ((-7200,38.0,1.00,1.10,0.07),(-3600,42.0,1.25,1.12,0.09)):
+              historical={"timestamp":ts+offset,"source":"validated_external_observation",
+                  "btc_hashprice_usd_ph_day":hashprice,"gpu_l40s_usd_hour":gpu,
+                  "eur_usd":fx,"austria_spot_eur_kwh":energy,
+                  "gpu_l40s_power_kw":0.35,"gpu_utilization":0.7,"gpu_platform_fee":0.15,
+                  "data_quality":provenance}
+              db.execute("INSERT INTO market_snapshots (id,ts,payload,btc_hashprice_usd_ph_day,gpu_l40s_usd_hour,eur_usd,austria_spot_eur_kwh,gpu_l40s_power_kw,gpu_utilization,gpu_platform_fee) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                  (str(uuid.uuid4()),ts+offset,json.dumps(historical),hashprice,gpu,fx,energy,0.35,0.7,0.15))
+          db.commit()
+          backtest=c.post(f"/api/v1/farms/{farm}/backtest",headers=h,json={"min_samples":1,"max_snapshots":100})
+          assert backtest.status_code==200, backtest.text
+          bt=backtest.json()
+          assert bt["method"]=="strict_walk_forward_next_snapshot_v1", bt
+          assert bt["status"]=="evaluated" and bt["evaluated_pairs"]>=2, bt
+          assert bt["metrics"]["mean_regret_eur_kwh"] is not None, bt
+          assert bt["recommendation_only"] is True and bt["hardware_write"] is False, bt
+          data_health=c.get("/api/v1/market/data-health")
+          assert data_health.status_code==200, data_health.text
+          dh=data_health.json()
+          assert dh["eligible_snapshots"]>=3 and dh["excluded_or_invalid_snapshots"]>=2, dh
+          assert dh["recommendation_only"] is True and dh["hardware_write"] is False, dh
+          paper=c.get(f"/api/v1/farms/{farm}/paper-trading",headers=h)
+          assert paper.status_code==200, paper.text
+          pb=paper.json()
+          assert pb["mode"]=="paper_trading_only" and pb["hardware_write"] is False, pb
+          assert pb["settled_decisions"]>=1 and "strategy_metrics" in pb, pb
           bad=c.post("/api/v1/auth/register",json={"email":"not-an-email","password":"ci-password-123"})
           assert bad.status_code==400, bad.text
           readiness=c.get("/api/v1/system/production-readiness")
