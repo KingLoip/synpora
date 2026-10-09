@@ -119,17 +119,19 @@ def install(app):
     @app.get("/api/v1/market/live")
     def live_market():
         ext=_external_market()
+        now=time.time()
+        quality=_market_quality(ext,now)
         return {
             "btc_price_usd":ext.get("btcPrice"),
-            "btc_hashprice_usd_ph_day":ext.get("hashpriceUsd") or 38.75,
+            "btc_hashprice_usd_ph_day":ext.get("hashpriceUsd") if ext.get("hashpriceUsd") is not None else 38.75,
             "btc_difficulty":ext.get("difficulty"),
             "network_hashrate_eh":ext.get("networkHashrate"),
             "eur_usd":1.1205,
             "austria_spot_eur_kwh":0.2055,
-            "gpu":{"model":"L40S","hourly_usd":1.09,"power_kw":0.35,"utilization":0.70,"platform_fee":0.15,"source":"RunPod Secure Cloud"},
-            "sources":["Startmining API","EUR/USD reference","EPEX Spot AT reference","RunPod pricing"],
-            "data_quality":{"btc":"live_external" if ext.get("btcPrice") is not None else "fallback","hashprice":"live_external" if ext.get("hashpriceUsd") is not None else "fallback","gpu":"reference","energy":"reference","overall":"mixed"},
-            "timestamp":time.time()
+            "gpu":{"model":"L40S","hourly_usd":1.09,"power_kw":0.35,"utilization":0.70,"platform_fee":0.15,"source":"RunPod pricing reference"},
+            "sources":["Startmining API (best effort)","EUR/USD reference","Austrian spot energy reference","GPU pricing reference"],
+            "data_quality":{"btc":"live_external" if quality["fields"]["btc_price_usd"]["available"] else "missing","hashprice":"live_external" if quality["fields"]["btc_hashprice_usd_ph_day"]["available"] else "fallback","gpu":"reference","energy":"reference","overall":quality["status"],"details":quality},
+            "timestamp":now
         }
 
     @app.post("/api/v1/farms/{farm_id}/optimize")
@@ -290,10 +292,58 @@ def install(app):
         out={}
         try:
             req=urllib.request.Request("https://pro.startmining.io/api/market-summary",headers={"User-Agent":"SYNPORA/1.0"})
-            with urllib.request.urlopen(req,timeout=5) as r: out.update(json.loads(r.read().decode()))
+            with urllib.request.urlopen(req,timeout=5) as r:
+                raw=json.loads(r.read().decode())
+                if isinstance(raw,dict): out.update(raw)
         except Exception:
             pass
         return out
+
+    def _market_quality(ext, now=None):
+        # Distinguish genuinely external observations from hard-coded reference values.
+        now=time.time() if now is None else float(now)
+        fields={
+            "btc_price_usd":("btcPrice","external",lambda v:float(v)>0),
+            "btc_hashprice_usd_ph_day":("hashpriceUsd","external",lambda v:float(v)>0),
+            "btc_difficulty":("difficulty","external",lambda v:float(v)>0),
+            "network_hashrate_eh":("networkHashrate","external",lambda v:float(v)>0),
+        }
+        observed={}
+        for name,(key,source,valid) in fields.items():
+            value=ext.get(key)
+            try: ok=value is not None and valid(value)
+            except (TypeError,ValueError): ok=False
+            observed[name]={"available":bool(ok),"source":source if ok else "missing","value":value if ok else None}
+        observed.update({
+            "eur_usd":{"available":True,"source":"reference","value":1.1205},
+            "austria_spot_eur_kwh":{"available":True,"source":"reference","value":0.2055},
+            "gpu_l40s_usd_hour":{"available":True,"source":"reference","value":1.09},
+        })
+        live=sum(1 for v in observed.values() if v["source"]=="external")
+        refs=sum(1 for v in observed.values() if v["source"]=="reference")
+        missing=sum(1 for v in observed.values() if v["source"]=="missing")
+        return {"fields":observed,"external_fields":live,"reference_fields":refs,"missing_fields":missing,
+                "status":"live" if live>=3 else ("partial" if live else "fallback"),
+                "generated_at":now,"warnings":[
+                    *(["External market feed is incomplete; missing values are not represented as live."] if missing else []),
+                    "EUR/USD, Austrian spot energy and GPU pricing are reference values, not verified live quotes."
+                ]}
+
+    def _forecast_quality(rows, models, confidence, hours):
+        values=[float(row[k]) for row in rows for k in ("btc_hashprice_usd_ph_day","gpu_hourly_usd","forecast_energy_cost_eur_kwh")]
+        finite=all(__import__("math").isfinite(v) for v in values)
+        nonnegative=all(v>=0 for v in values)
+        readiness={k:bool(v.get("ready")) for k,v in models.items()}
+        ready_count=sum(readiness.values())
+        warnings=[]
+        if not finite: warnings.append("Forecast contains non-finite values.")
+        if not nonnegative: warnings.append("Forecast contains negative market or energy values.")
+        if ready_count<3: warnings.append("Insufficient historical samples for fully validated forecasts.")
+        if any(float(v)<0.60 for v in confidence.values()): warnings.append("At least one forecast series has low confidence.")
+        return {"valid":finite and nonnegative,"historical_models_ready":ready_count,"model_readiness":readiness,
+                "confidence_by_series":confidence,"horizon_hours":hours,
+                "status":"validated" if finite and nonnegative and ready_count==3 else ("degraded" if finite and nonnegative else "invalid"),
+                "warnings":warnings}
 
     def _ensure_market_table(c):
         if c.is_postgres:
@@ -962,8 +1012,10 @@ def install(app):
             rows.append({"hour":h,"pv_kwh":round(pv,3),"gpu_hourly_usd":round(gpu,4),
                          "btc_hashprice_usd_ph_day":round(btc,4),"gpu_value_eur_kwh":round(gpu_v,5),"forecast_energy_cost_eur_kwh":round(energy,5),
                          "btc_value_eur_kwh":round(btc_v,5),"best_option":"AI Compute" if gpu_v>=btc_v else "BTC Mining"})
+        forecast_quality=_forecast_quality(rows,models,conf,hours)
         return {"farm_id":farm_id,"horizon_hours":hours,"forecast":rows,
                 "method":"historical_adaptive_model_selection","learning":learn,"models":models,"ensemble_weights":{"btc":btc_w,"gpu":gpu_w,"energy":energy_w},"ensemble_confidence":conf,
+                "forecast_quality":forecast_quality,
                 "recommendation_only":True,"hardware_write":False}
 
     @app.post("/api/v1/farms/{farm_id}/dispatch-plan")
