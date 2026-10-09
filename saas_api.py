@@ -950,7 +950,6 @@ def install(app):
             "method":"provenance_gated_snapshot_benchmark",
             "warnings":["Only fully external snapshots are included; reference and mixed snapshots are excluded.",
                 "This compares modeled economics at stored observations and is not a forward-looking backtest."],
-            "cost_model":_economic_cost_model(x),
             "recommendation_only":True,"hardware_write":False}
 
     @app.post("/api/v1/farms/{farm_id}/learning/settle")
