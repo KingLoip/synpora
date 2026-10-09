@@ -231,11 +231,12 @@ def install(app):
             if isinstance(value,(int,float)) and not isinstance(value,bool) and not math.isfinite(float(value)):
                 raise HTTPException(422, f"{key} must be a finite number")
         positive=("energy_kwh","eur_usd","gpu_power_kw","asic_efficiency_j_th",
-                  "btc_device_power_kw","battery_capacity_kwh","battery_power_kw","interval_hours")
+                  "btc_device_power_kw","interval_hours")
         nonnegative=("energy_cost_eur_kwh","btc_hashprice_usd_ph_day","gpu_hourly_usd",
                      "facility_overhead_kw","btc_facility_overhead_kw","gpu_facility_overhead_kw",
                      "battery_degradation_eur_kwh","grid_export_fee_eur_kwh","battery_value_eur_kwh",
-                     "grid_value_eur_kwh","pv_kwh")
+                     "grid_value_eur_kwh","pv_kwh","battery_capacity_kwh","battery_power_kw",
+                     "ai_value_eur_kwh")
         unit_interval=("gpu_utilization","gpu_platform_fee","uptime","pool_fee",
                        "battery_charge_efficiency","battery_discharge_efficiency",
                        "battery_round_trip_efficiency")
@@ -246,7 +247,10 @@ def install(app):
             if key in values and float(values[key]) < 0:
                 raise HTTPException(422, f"{key} must be zero or greater")
         for key in unit_interval:
-            if key in values and not 0 < float(values[key]) <= 1 if key.startswith("battery_") else key in values and not 0 <= float(values[key]) <= 1:
+            if key not in values:
+                continue
+            lower=0.0 if key in ("gpu_utilization","gpu_platform_fee","uptime","pool_fee") else 0.0000001
+            if not lower <= float(values[key]) <= 1:
                 raise HTTPException(422, f"{key} must be between zero and one")
         for key in ("battery_soc_pct","battery_reserve_pct"):
             if key in values and not 0 <= float(values[key]) <= 100:
