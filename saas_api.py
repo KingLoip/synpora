@@ -912,16 +912,32 @@ def install(app):
                 "winner_accuracy":round(winner,3) if rows else None,
                 "avg_regret_eur_kwh":round(sum(regrets)/len(regrets),8) if regrets else None}
 
+    def _snapshot_is_learning_eligible(payload):
+        # Learning targets must be based on independently sourced values, not defaults.
+        if not isinstance(payload,dict):
+            return False
+        quality=payload.get("data_quality")
+        fields=quality.get("fields") if isinstance(quality,dict) else None
+        if not isinstance(fields,dict):
+            return False
+        required=("btc_hashprice_usd_ph_day","gpu_l40s_usd_hour","eur_usd","austria_spot_eur_kwh")
+        for key in required:
+            field=fields.get(key)
+            if not isinstance(field,dict) or field.get("source")!="external" or not field.get("available",True):
+                return False
+        return True
+
     def _online_learning_update(c, farm_id):
         from datetime import datetime
         import math
         _ensure_market_table(c)
-        # Settle decisions only against the first later snapshot with usable observed/reference values.
-        # Missing fields are not silently replaced with defaults: otherwise the learner trains on invented data.
+        # Settle only on a later snapshot whose hashprice, GPU price, FX and energy price
+        # are all independently external. Reference/mixed/unknown snapshots are never training labels.
         snaps=c.execute("SELECT ts,payload FROM market_snapshots ORDER BY ts ASC").fetchall()
         decisions=c.execute("SELECT id,chosen,predicted_value,ts FROM decision_ledger WHERE farm_id=? AND status='open' ORDER BY ts ASC LIMIT 100",(farm_id,)).fetchall()
         settled=0
         skipped_invalid=0
+        skipped_ineligible=0
         sources_used=set()
         for d in decisions:
             try:
@@ -935,9 +951,13 @@ def install(app):
                 except (TypeError,ValueError): continue
                 if not math.isfinite(snap_ts) or snap_ts<=decision_ts: continue
                 try: payload=json.loads(snap[1])
-                except Exception: continue
-                # Require both compute-market inputs; do not manufacture one from a fallback constant.
-                required=("btc_hashprice_usd_ph_day","gpu_l40s_usd_hour")
+                except Exception:
+                    skipped_invalid+=1
+                    continue
+                if not _snapshot_is_learning_eligible(payload):
+                    skipped_ineligible+=1
+                    continue
+                # Require compute-market inputs after provenance has been validated.
                 parsed={}
                 valid=True
                 for key in required:
@@ -980,8 +1000,9 @@ def install(app):
         try: c.commit()
         except Exception: pass
         return {"settled_now":settled,"open_remaining":max(0,len(decisions)-settled),
-                "skipped_invalid_snapshots":skipped_invalid,"snapshot_sources_used":sorted(sources_used),
-                "method":"first_valid_later_market_snapshot"}
+                "skipped_invalid_snapshots":skipped_invalid,"skipped_ineligible_snapshots":skipped_ineligible,
+                "snapshot_sources_used":sorted(sources_used),
+                "method":"first_later_fully_external_market_snapshot"}
 
     def _forecast_learning(c, farm_id):
         _ensure_learning_tables(c)
