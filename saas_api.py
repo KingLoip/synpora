@@ -1007,7 +1007,7 @@ def install(app):
         db_configured=bool(os.getenv("DATABASE_URL") or os.getenv("POSTGRES_URL"))
         jwt_configured=bool(os.getenv("SYNPORA_JWT_SECRET","").strip())
         db_reachable=False
-        db_backend="sqlite_fallback"
+        db_backend="unavailable" if _database_required() else "sqlite_fallback"
         db_error=None
         try:
             c=init_db()
@@ -1018,6 +1018,8 @@ def install(app):
             except Exception: pass
         except Exception as e:
             db_error=type(e).__name__
+            if _database_required():
+                db_backend="unavailable"
         ready=bool(db_configured and jwt_configured and db_reachable)
         return {"database_configured":db_configured,"database_reachable":db_reachable,
                 "database_backend":db_backend,"database_error":db_error,
