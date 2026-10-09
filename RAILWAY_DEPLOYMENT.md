@@ -9,6 +9,7 @@ Configure these in the Railway service's Variables tab. Never commit the secret 
 - `DATABASE_URL`: reference the Railway PostgreSQL service's connection URL. Railway deployments disable the SQLite fallback; a missing or unreachable PostgreSQL database must fail closed.
 - `SYNPORA_JWT_SECRET`: a randomly generated secret with at least 32 characters. Changing it invalidates existing login tokens.
 - `SYNPORA_MARKET_ADMIN_TOKEN`: a separate, randomly generated secret with at least 32 characters. It protects market collection, backfill, and manual snapshot endpoints.
+- `SYNPORA_MARKET_DATA_URL` (optional): HTTPS endpoint for a verified external market feed. It must return JSON with a recent Unix `timestamp` (seconds or milliseconds) and any available fields among `btc_hashprice_usd_ph_day`, `gpu_l40s_usd_hour`, `eur_usd`, `austria_spot_eur_kwh`, `gpu_l40s_power_kw`, `gpu_utilization`, and `gpu_platform_fee`. Field aliases in camelCase are also accepted. Values older than 15 minutes, invalid values, and non-HTTPS URLs are rejected. Only the four critical values with accepted external provenance can qualify a snapshot for learning.
 - `PORT`: provided by Railway; do not hard-code it.
 
 Use distinct values for the JWT secret and market admin token. Do not paste either secret into issues, logs, or chat.
