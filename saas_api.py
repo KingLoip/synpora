@@ -135,22 +135,27 @@ def install(app):
         ok=c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone()
         if not ok: raise HTTPException(404,"Farm not found")
         # BTC gross revenue per kWh = hashprice / (J/TH) / 1000, adjusted for uptime/pool fee.
-        btc_gross=(x.btc_hashprice_usd_ph_day/x.eur_usd)/(x.asic_efficiency_j_th*1000)
-        btc_value=max(0,btc_gross*x.uptime*(1-x.pool_fee))
-        # GPU revenue/kWh converts a market GPU-hour into energy economics.
-        # Revenue is haircut by utilization and platform fee; power includes only the GPU load.
-        gpu_revenue_per_kwh=((x.gpu_hourly_usd/x.eur_usd)*x.gpu_utilization*(1-x.gpu_platform_fee))/max(x.gpu_power_kw,0.01)
-        ai_value=max(0,gpu_revenue_per_kwh)
+        energy_cost=max(0.0,x.energy_cost_eur_kwh)
+        btc_gross=(x.btc_hashprice_usd_ph_day/max(x.eur_usd,0.01))/(max(x.asic_efficiency_j_th,0.01)*1000)
+        btc_gross*=max(0.0,min(1.0,x.uptime))*(1-max(0.0,min(0.99,x.pool_fee)))
+        btc_overhead=max(0.0,x.btc_facility_overhead_kw)
+        btc_value=btc_gross*(max(x.asic_efficiency_j_th,0.01)/(max(x.asic_efficiency_j_th,0.01)+btc_overhead)) if btc_overhead else btc_gross
+        gpu_power=max(x.gpu_power_kw,0.01)
+        gpu_gross=((max(0.0,x.gpu_hourly_usd)/max(x.eur_usd,0.01))*max(0.0,min(1.0,x.gpu_utilization))*(1-max(0.0,min(0.99,x.gpu_platform_fee))))/gpu_power
+        gpu_overhead=max(0.0,x.gpu_facility_overhead_kw)
+        ai_value=gpu_gross*(gpu_power/(gpu_power+gpu_overhead)) if gpu_overhead else gpu_gross
+        battery_value=max(0.0,x.battery_value_eur_kwh*max(0.01,min(1.0,x.battery_round_trip_efficiency))-max(0.0,x.battery_degradation_eur_kwh))
+        grid_value=max(0.0,x.grid_value_eur_kwh-max(0.0,x.grid_export_fee_eur_kwh))
         options=[
-          {"option":"AI Compute","value_eur_kwh":ai_value,"source":"live_gpu_market"},
-          {"option":"BTC Mining","value_eur_kwh":btc_value,"source":"live_hashprice"},
-          {"option":"Battery","value_eur_kwh":x.battery_value_eur_kwh,"source":"farm_model"},
-          {"option":"Grid","value_eur_kwh":x.grid_value_eur_kwh,"source":"energy_model"}
+          {"option":"AI Compute","value_eur_kwh":max(0.0,ai_value-energy_cost),"gross_value_eur_kwh":ai_value,"energy_cost_eur_kwh":energy_cost,"source":"gpu_market_reference"},
+          {"option":"BTC Mining","value_eur_kwh":max(0.0,btc_value-energy_cost),"gross_value_eur_kwh":btc_value,"energy_cost_eur_kwh":energy_cost,"source":"hashprice_reference"},
+          {"option":"Battery","value_eur_kwh":battery_value,"gross_value_eur_kwh":x.battery_value_eur_kwh,"energy_cost_eur_kwh":0.0,"source":"farm_model"},
+          {"option":"Grid","value_eur_kwh":grid_value,"gross_value_eur_kwh":x.grid_value_eur_kwh,"energy_cost_eur_kwh":0.0,"source":"energy_model"}
         ]
         options.sort(key=lambda z:z["value_eur_kwh"],reverse=True)
         best=options[0]
-        gross=best["value_eur_kwh"]*x.energy_kwh
-        cost=x.energy_cost_eur_kwh*x.energy_kwh
+        gross=best["gross_value_eur_kwh"]*x.energy_kwh
+        cost=best["energy_cost_eur_kwh"]*x.energy_kwh
         spread=(best["value_eur_kwh"]-options[1]["value_eur_kwh"]) / max(best["value_eur_kwh"],0.0001)
         confidence=max(0.55,min(0.97,0.72+0.22*spread))
         learned_confidence=None
