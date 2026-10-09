@@ -166,12 +166,40 @@ jobs:
           assert snap.status_code==200, snap.text
           assert snap.json()["source"]=="manual_reference_snapshot", snap.json()
           assert snap.json()["data_quality"]["overall"]=="reference", snap.json()
+          # A reference-only snapshot must never become a learning label.
+          settled=c.post(f"/api/v1/farms/{farm}/learning/update",headers=h)
+          assert settled.status_code==200, settled.text
+          sb=settled.json()
+          assert sb["settled_now"]==0 and sb["open_remaining"]>=1, sb
+          assert sb["skipped_ineligible_snapshots"]>=1, sb
+          assert "manual_reference_snapshot" not in sb["snapshot_sources_used"], sb
+          # A fully externally sourced observation can settle the open decision exactly once.
+          import time, json, uuid
+          db=saas.init_db()
+          saas._ensure_market_table(db)
+          ts=time.time()+1
+          provenance={"fields":{
+              "btc_hashprice_usd_ph_day":{"source":"external","available":True},
+              "gpu_l40s_usd_hour":{"source":"external","available":True},
+              "eur_usd":{"source":"external","available":True},
+              "austria_spot_eur_kwh":{"source":"external","available":True}}}
+          payload={"timestamp":ts,"source":"validated_external_observation",
+              "btc_hashprice_usd_ph_day":40.0,"gpu_l40s_usd_hour":1.2,
+              "eur_usd":1.1,"austria_spot_eur_kwh":0.08,
+              "gpu_l40s_power_kw":0.35,"gpu_utilization":0.7,"gpu_platform_fee":0.15,
+              "data_quality":provenance}
+          db.execute("INSERT INTO market_snapshots (id,ts,payload,btc_hashprice_usd_ph_day,gpu_l40s_usd_hour,eur_usd,austria_spot_eur_kwh) VALUES (?,?,?,?,?,?,?)",
+              (str(uuid.uuid4()),ts,json.dumps(payload),40.0,1.2,1.1,0.08))
+          db.commit()
           settled=c.post(f"/api/v1/farms/{farm}/learning/update",headers=h)
           assert settled.status_code==200, settled.text
           sb=settled.json()
           assert sb["settled_now"]==1 and sb["open_remaining"]==0, sb
-          assert "manual_reference_snapshot" in sb["snapshot_sources_used"], sb
+          assert "validated_external_observation" in sb["snapshot_sources_used"], sb
           assert sb["hardware_write"] is False and sb["recommendation_only"] is True, sb
+          # Leave a reference snapshot as the newest observation for the forecast warning test.
+          snap_again=c.post("/api/v1/market/snapshot",headers={"X-SYNPORA-MARKET-TOKEN":"ci-market-secret"})
+          assert snap_again.status_code==200, snap_again.text
           # Market API must disclose provenance instead of presenting reference prices as live.
           market=c.get("/api/v1/market/live")
           assert market.status_code==200, market.text
