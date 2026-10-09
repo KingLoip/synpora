@@ -967,6 +967,7 @@ def install(app):
         summary["battery_soc_initial_kwh"]=round(initial_soc,3)
         summary["battery_soc_final_kwh"]=round(soc,3)
         summary["battery_soc_reserve_kwh"]=round(soc_min,3)
+        summary["battery_soc_balance_error_kwh"]=round(soc-(initial_soc+summary["battery_charge_stored_kwh"]-summary["battery_discharge_kwh"]/de),6)
         summary["net_value_eur"]=round(summary["total_value_eur"],2)
         summary["battery_degradation_cost_eur"]=round(summary["battery_discharge_kwh"]*max(0.0,x.battery_degradation_eur_kwh),3)
         summary["net_value_eur"]=round(summary["net_value_eur"]-summary["battery_degradation_cost_eur"],2)
