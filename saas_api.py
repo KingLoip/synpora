@@ -276,6 +276,16 @@ def install(app):
         grid_export_fee_eur_kwh: float=0.0
         battery_value_eur_kwh: float=0.071
         grid_value_eur_kwh: float=0.055
+        gpu_capex_eur: float=0.0
+        gpu_lifetime_years: float=5.0
+        gpu_maintenance_eur_year: float=0.0
+        gpu_uptime: float=0.98
+        btc_capex_eur: float=0.0
+        btc_lifetime_years: float=4.0
+        btc_maintenance_eur_year: float=0.0
+        btc_uptime: float=0.98
+        pool_fee: float=0.02
+        tax_rate: float=0.0
 
     def _validate_numeric_inputs(x):
         # Reject NaN/Infinity and impossible physical/financial inputs before they
@@ -286,13 +296,14 @@ def install(app):
             if isinstance(value,(int,float)) and not isinstance(value,bool) and not math.isfinite(float(value)):
                 raise HTTPException(422, f"{key} must be a finite number")
         positive=("energy_kwh","eur_usd","gpu_power_kw","asic_efficiency_j_th",
-                  "btc_device_power_kw","interval_hours")
+                  "btc_device_power_kw","interval_hours","gpu_lifetime_years","btc_lifetime_years")
         nonnegative=("energy_cost_eur_kwh","btc_hashprice_usd_ph_day","gpu_hourly_usd",
                      "facility_overhead_kw","btc_facility_overhead_kw","gpu_facility_overhead_kw",
                      "battery_degradation_eur_kwh","grid_export_fee_eur_kwh","battery_value_eur_kwh",
                      "grid_value_eur_kwh","pv_kwh","battery_capacity_kwh","battery_power_kw",
-                     "ai_value_eur_kwh")
-        unit_interval=("gpu_utilization","gpu_platform_fee","uptime","pool_fee",
+                     "ai_value_eur_kwh","gpu_capex_eur","btc_capex_eur",
+                     "gpu_maintenance_eur_year","btc_maintenance_eur_year")
+        unit_interval=("gpu_utilization","gpu_platform_fee","uptime","gpu_uptime","btc_uptime","pool_fee","tax_rate",
                        "battery_charge_efficiency","battery_discharge_efficiency",
                        "battery_round_trip_efficiency")
         for key in positive:
@@ -304,7 +315,7 @@ def install(app):
         for key in unit_interval:
             if key not in values:
                 continue
-            lower=0.0 if key in ("gpu_utilization","gpu_platform_fee","uptime","pool_fee") else 0.0000001
+            lower=0.0 if key in ("gpu_utilization","gpu_platform_fee","uptime","gpu_uptime","btc_uptime","pool_fee","tax_rate") else 0.0000001
             if not lower <= float(values[key]) <= 1:
                 raise HTTPException(422, f"{key} must be between zero and one")
         for key in ("battery_soc_pct","battery_reserve_pct"):
@@ -322,23 +333,59 @@ def install(app):
         eur_usd=max(float(x.eur_usd),0.01)
         energy_cost=max(0.0,float(x.energy_cost_eur_kwh))
         asic_eff=max(float(x.asic_efficiency_j_th),0.01)
-        btc_gross=(max(0.0,float(x.btc_hashprice_usd_ph_day))/eur_usd)/(asic_eff*24)*0.98*0.98
+        pool_fee=max(0.0,min(1.0,float(getattr(x,"pool_fee",0.02))))
+        tax_rate=max(0.0,min(1.0,float(getattr(x,"tax_rate",0.0))))
+        btc_gross=(max(0.0,float(x.btc_hashprice_usd_ph_day))/eur_usd)/(asic_eff*24)*(1-pool_fee)
         btc_overhead=max(0.0,float(getattr(x,"btc_facility_overhead_kw",0.0)))+max(0.0,float(getattr(x,"facility_overhead_kw",0.0)))
         gpu_power=max(float(x.gpu_power_kw),0.01)
         gpu_overhead=max(0.0,float(getattr(x,"gpu_facility_overhead_kw",0.0)))+max(0.0,float(getattr(x,"facility_overhead_kw",0.0)))
         gpu_gross=((max(0.0,float(x.gpu_hourly_usd))/eur_usd)*max(0.0,min(1.0,float(x.gpu_utilization)))*(1-max(0.0,min(0.99,float(x.gpu_platform_fee)))))/gpu_power
         btc_device_power=max(float(getattr(x,"btc_device_power_kw",3.5)),0.01)
-        btc_value=btc_gross*(btc_device_power/(btc_device_power+btc_overhead)) if btc_overhead else btc_gross
-        gpu_value=gpu_gross*(gpu_power/(gpu_power+gpu_overhead)) if gpu_overhead else gpu_gross
+        btc_active_value=btc_gross*(btc_device_power/(btc_device_power+btc_overhead)) if btc_overhead else btc_gross
+        gpu_active_value=gpu_gross*(gpu_power/(gpu_power+gpu_overhead)) if gpu_overhead else gpu_gross
+        btc_uptime=max(0.0,min(1.0,float(getattr(x,"btc_uptime",0.98))))
+        gpu_uptime=max(0.0,min(1.0,float(getattr(x,"gpu_uptime",0.98))))
+        btc_capex=max(0.0,float(getattr(x,"btc_capex_eur",0.0)))
+        gpu_capex=max(0.0,float(getattr(x,"gpu_capex_eur",0.0)))
+        btc_life=max(0.01,float(getattr(x,"btc_lifetime_years",4.0)))
+        gpu_life=max(0.01,float(getattr(x,"gpu_lifetime_years",5.0)))
+        btc_maintenance=max(0.0,float(getattr(x,"btc_maintenance_eur_year",0.0)))
+        gpu_maintenance=max(0.0,float(getattr(x,"gpu_maintenance_eur_year",0.0)))
+        btc_fixed=(btc_capex/btc_life+btc_maintenance)/(btc_device_power*8760)
+        gpu_fixed=(gpu_capex/gpu_life+gpu_maintenance)/(gpu_power*8760)
+        btc_pre_tax=btc_uptime*(btc_active_value-energy_cost)-btc_fixed
+        gpu_pre_tax=gpu_uptime*(gpu_active_value-energy_cost)-gpu_fixed
+        btc_value=btc_pre_tax-max(0.0,btc_pre_tax)*tax_rate
+        gpu_value=gpu_pre_tax-max(0.0,gpu_pre_tax)*tax_rate
         rte=max(0.01,min(1.0,float(getattr(x,"battery_round_trip_efficiency",0.90))))
         degradation=max(0.0,float(getattr(x,"battery_degradation_eur_kwh",0.015)))
         export_fee=max(0.0,float(getattr(x,"grid_export_fee_eur_kwh",0.0)))
         battery_net=float(x.battery_value_eur_kwh)*rte-degradation
         grid_net=float(x.grid_value_eur_kwh)-export_fee
-        # Preserve negative net economics for energy-consuming strategies: zero-clamping
-        # hides loss-making mining/compute and can make a bad option look break-even.
-        # Battery/grid remain floored at zero because the model can simply decline dispatch/export.
-        return {"AI Compute":gpu_value-energy_cost,"BTC Mining":btc_value-energy_cost,"Battery":max(0.0,battery_net),"Grid":max(0.0,grid_net)}
+        # Negative mining/compute margins remain negative; no artificial break-even clamp.
+        # Fixed equipment costs are spread over calendar site-energy capacity, while
+        # uptime reduces realized revenue and energy consumption. Tax is an operator input.
+        battery_net=max(0.0,battery_net)
+        grid_net=max(0.0,grid_net)
+        return {"AI Compute":gpu_value,"BTC Mining":btc_value,
+                "Battery":battery_net-max(0.0,battery_net)*tax_rate,
+                "Grid":grid_net-max(0.0,grid_net)*tax_rate}
+
+    def _economic_cost_model(x):
+        return {"basis":"EUR per available site kWh; equipment costs amortized over calendar lifetime",
+            "gpu":{"capex_eur":float(getattr(x,"gpu_capex_eur",0.0)),
+                "lifetime_years":float(getattr(x,"gpu_lifetime_years",5.0)),
+                "maintenance_eur_year":float(getattr(x,"gpu_maintenance_eur_year",0.0)),
+                "uptime":float(getattr(x,"gpu_uptime",0.98)),
+                "depreciation_and_maintenance_eur_kwh":round((float(getattr(x,"gpu_capex_eur",0.0))/float(getattr(x,"gpu_lifetime_years",5.0))+float(getattr(x,"gpu_maintenance_eur_year",0.0))/(float(getattr(x,"gpu_power_kw",0.35))*8760)),6)},
+            "btc":{"capex_eur":float(getattr(x,"btc_capex_eur",0.0)),
+                "lifetime_years":float(getattr(x,"btc_lifetime_years",4.0)),
+                "maintenance_eur_year":float(getattr(x,"btc_maintenance_eur_year",0.0)),
+                "uptime":float(getattr(x,"btc_uptime",0.98)),
+                "pool_fee":float(getattr(x,"pool_fee",0.02)),
+                "depreciation_and_maintenance_eur_kwh":round((float(getattr(x,"btc_capex_eur",0.0))/float(getattr(x,"btc_lifetime_years",4.0))+float(getattr(x,"btc_maintenance_eur_year",0.0))/(float(getattr(x,"btc_device_power_kw",3.5))*8760)),6)},
+            "tax_rate":float(getattr(x,"tax_rate",0.0)),
+            "warning":"Tax rate and cost assumptions are user supplied; not tax advice. Site/network limits and one-off installation costs are not modeled."}
 
     def _market_feed_host_allowed(feed_url):
         # Require an exact operator-supplied hostname allowlist; HTTPS alone is not enough.
@@ -672,6 +719,16 @@ def install(app):
         battery_value_eur_kwh: float=0.071
         grid_value_eur_kwh: float=0.055
         facility_overhead_kw: float=0.0
+        gpu_capex_eur: float=0.0
+        gpu_lifetime_years: float=5.0
+        gpu_maintenance_eur_year: float=0.0
+        gpu_uptime: float=0.98
+        btc_capex_eur: float=0.0
+        btc_lifetime_years: float=4.0
+        btc_maintenance_eur_year: float=0.0
+        btc_uptime: float=0.98
+        pool_fee: float=0.02
+        tax_rate: float=0.0
         scenarios: int=200
         seed: int=42
         shock_pct: float=0.20
@@ -891,6 +948,7 @@ def install(app):
             "method":"provenance_gated_snapshot_benchmark",
             "warnings":["Only fully external snapshots are included; reference and mixed snapshots are excluded.",
                 "This compares modeled economics at stored observations and is not a forward-looking backtest."],
+            "cost_model":_economic_cost_model(x),
             "recommendation_only":True,"hardware_write":False}
 
     @app.post("/api/v1/farms/{farm_id}/learning/settle")
@@ -1502,6 +1560,8 @@ def install(app):
         best=rows[0]
         return {"farm_id":farm_id,"inputs":x.model_dump(),"ranking":rows,"best":best,
                 "spread_eur_kwh":round(best["value_eur_kwh"]-rows[1]["value_eur_kwh"],5),
+                "cost_model":_economic_cost_model(x),
+                "warnings":["Hardware capex, maintenance and tax default to zero unless supplied; review inputs before relying on rankings."],
                 "recommendation_only":True,"hardware_write":False}
 
     @app.post("/api/v1/farms/{farm_id}/regret-analysis")
