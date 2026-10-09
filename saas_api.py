@@ -421,7 +421,7 @@ def install(app):
                          gpu_utilization=x.gpu_utilization,gpu_platform_fee=x.gpu_platform_fee,
                          asic_efficiency_j_th=x.asic_efficiency_j_th,facility_overhead_kw=x.facility_overhead_kw,
                          btc_facility_overhead_kw=x.btc_facility_overhead_kw,
-                         gpu_facility_overhead_kw=x.gpu_facility_overhead_kw,facility_overhead_kw=x.facility_overhead_kw,battery_round_trip_efficiency=x.battery_round_trip_efficiency,
+                         gpu_facility_overhead_kw=x.gpu_facility_overhead_kw,battery_round_trip_efficiency=x.battery_round_trip_efficiency,
                          battery_degradation_eur_kwh=x.battery_degradation_eur_kwh,grid_export_fee_eur_kwh=x.grid_export_fee_eur_kwh,
                          battery_value_eur_kwh=x.battery_value_eur_kwh,grid_value_eur_kwh=x.grid_value_eur_kwh)
             econ=_economics(s)
