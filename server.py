@@ -17,8 +17,10 @@ def _market_loop():
     while True:
         try:
             import urllib.request, json, os
-            req=urllib.request.Request("http://127.0.0.1:"+os.getenv("PORT","8000")+"/api/v1/market/collect")
-            urllib.request.urlopen(req,timeout=8).read()
+            token=os.getenv("SYNPORA_MARKET_ADMIN_TOKEN","").strip()
+            if token:
+                req=urllib.request.Request("http://127.0.0.1:"+os.getenv("PORT","8000")+"/api/v1/market/collect",headers={"X-SYNPORA-MARKET-TOKEN":token},method="POST")
+                urllib.request.urlopen(req,timeout=8).read()
         except Exception:
             pass
         time.sleep(900)
