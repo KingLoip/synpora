@@ -180,7 +180,7 @@ jobs:
           # A fully externally sourced observation can settle the open decision exactly once.
           import time, json, uuid
           db=saas.init_db()
-          ts=time.time()+1
+          ts=time.time()
           provenance={"fields":{
               "btc_hashprice_usd_ph_day":{"source":"external","available":True},
               "gpu_l40s_usd_hour":{"source":"external","available":True},
