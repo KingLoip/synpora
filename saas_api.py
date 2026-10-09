@@ -824,7 +824,7 @@ def install(app):
                     btc_hashprice_usd_ph_day=values["btc_hashprice_usd_ph_day"],
                     gpu_hourly_usd=values["gpu_l40s_usd_hour"],eur_usd=values["eur_usd"],
                     gpu_power_kw=float(payload.get("gpu_l40s_power_kw") or 0.35),
-                    gpu_utilization=max(0.0,min(1.0,float(payload.get("gpu_utilization",0.70))),
+                    gpu_utilization=max(0.0,min(1.0,float(payload.get("gpu_utilization",0.70)))),
                     gpu_platform_fee=max(0.0,min(1.0,float(payload.get("gpu_platform_fee",0.15))))
                 )
                 economics=_economics(scenario)
