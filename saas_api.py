@@ -1545,24 +1545,29 @@ def install(app):
         if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
         values=_economics(x)
         assets=[dict(r) for r in c.execute("SELECT id,name,kind,power_kw FROM assets WHERE farm_id=? ORDER BY created_at",(farm_id,)).fetchall()]
+        asset_cost_models=[]
         for a in assets:
-            if a["kind"].upper()=="GPU" and a["power_kw"]>0:
-                gross=(x.gpu_hourly_usd/max(x.eur_usd,0.01))*x.gpu_utilization*(1-x.gpu_platform_fee)/a["power_kw"]
-                overhead=max(0.0,x.gpu_facility_overhead_kw)+max(0.0,x.facility_overhead_kw)
-                if overhead: gross*=a["power_kw"]/(a["power_kw"]+overhead)
-                values["AI Compute"]=max(0.0,gross-x.energy_cost_eur_kwh)
-            if a["kind"].upper()=="BTC" and a["power_kw"]>0:
-                gross=(x.btc_hashprice_usd_ph_day/max(x.eur_usd,0.01))/(max(x.asic_efficiency_j_th,0.01)*24)*0.98*0.98
-                overhead=max(0.0,x.btc_facility_overhead_kw)+max(0.0,x.facility_overhead_kw)
-                if overhead: gross*=a["power_kw"]/(a["power_kw"]+overhead)
-                values["BTC Mining"]=max(0.0,gross-x.energy_cost_eur_kwh)
+            kind=a["kind"].upper()
+            if kind=="GPU" and a["power_kw"]>0:
+                asset_x=x.model_copy(update={"gpu_power_kw":float(a["power_kw"])})
+                asset_values=_economics(asset_x)
+                values["AI Compute"]=asset_values["AI Compute"]
+                asset_cost_models.append({"asset_id":a["id"],"name":a["name"],"kind":kind,
+                    "power_kw":float(a["power_kw"]),"cost_model":_economic_cost_model(asset_x)})
+            if kind=="BTC" and a["power_kw"]>0:
+                asset_x=x.model_copy(update={"btc_device_power_kw":float(a["power_kw"])})
+                asset_values=_economics(asset_x)
+                values["BTC Mining"]=asset_values["BTC Mining"]
+                asset_cost_models.append({"asset_id":a["id"],"name":a["name"],"kind":kind,
+                    "power_kw":float(a["power_kw"]),"cost_model":_economic_cost_model(asset_x)})
         rows=[{"option":k,"value_eur_kwh":round(v,5),"net_eur":round(v*x.energy_kwh,2)} for k,v in values.items()]
         rows.sort(key=lambda r:r["value_eur_kwh"],reverse=True)
         best=rows[0]
         return {"farm_id":farm_id,"inputs":x.model_dump(),"ranking":rows,"best":best,
                 "spread_eur_kwh":round(best["value_eur_kwh"]-rows[1]["value_eur_kwh"],5),
-                "cost_model":_economic_cost_model(x),
-                "warnings":["Hardware capex, maintenance and tax default to zero unless supplied; review inputs before relying on rankings."],
+                "cost_model":_economic_cost_model(x),"asset_cost_models":asset_cost_models,
+                "warnings":["Hardware capex, maintenance and tax default to zero unless supplied; review inputs before relying on rankings.",
+                    *([ "Asset-specific power values were used for registered hardware." ] if asset_cost_models else [])],
                 "recommendation_only":True,"hardware_write":False}
 
     @app.post("/api/v1/farms/{farm_id}/regret-analysis")
