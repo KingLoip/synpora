@@ -87,6 +87,8 @@ def install(app):
     from pydantic import BaseModel
     routes_before=list(app.router.routes)
     original_route_ids={id(r) for r in routes_before}
+    if _database_required() and len(JWT_SECRET)<32:
+        raise RuntimeError("SYNPORA_JWT_SECRET must contain at least 32 characters in production")
     init_db()
     @app.get("/api/v1/system/status")
     def status():
@@ -1042,6 +1044,9 @@ def install(app):
     def production_readiness():
         db_configured=bool(os.getenv("DATABASE_URL") or os.getenv("POSTGRES_URL"))
         jwt_configured=bool(os.getenv("SYNPORA_JWT_SECRET","").strip())
+        jwt_secret_strong=len(os.getenv("SYNPORA_JWT_SECRET","").strip())>=32
+        market_token_configured=bool(os.getenv("SYNPORA_MARKET_ADMIN_TOKEN","").strip())
+        market_token_strong=len(os.getenv("SYNPORA_MARKET_ADMIN_TOKEN","").strip())>=32
         db_reachable=False
         db_backend="unavailable" if _database_required() else "sqlite_fallback"
         db_error=None
@@ -1056,10 +1061,11 @@ def install(app):
             db_error=type(e).__name__
             if _database_required():
                 db_backend="unavailable"
-        ready=bool(db_configured and jwt_configured and db_reachable)
+        ready=bool(db_configured and db_reachable and jwt_configured and jwt_secret_strong and market_token_configured and market_token_strong)
         return {"database_configured":db_configured,"database_reachable":db_reachable,
                 "database_backend":db_backend,"database_error":db_error,
-                "jwt_secret_configured":jwt_configured,
+                "jwt_secret_configured":jwt_configured,"jwt_secret_strong":jwt_secret_strong,
+                "market_admin_token_configured":market_token_configured,"market_admin_token_strong":market_token_strong,
                 "hardware_write_enabled":False,"autonomous_control_enabled":False,
                 "recommendation_only":True,"external_market_layer":True,
                 "status":"ready" if ready else "configuration_required"}
