@@ -88,6 +88,12 @@ def install(app):
     class OptimizeIn(BaseModel):
         energy_kwh: float=10
         energy_cost_eur_kwh: float=0.05
+        facility_overhead_kw: float=0.0
+        btc_facility_overhead_kw: float=0.0
+        gpu_facility_overhead_kw: float=0.0
+        battery_round_trip_efficiency: float=0.90
+        battery_degradation_eur_kwh: float=0.015
+        grid_export_fee_eur_kwh: float=0.0
         ai_value_eur_kwh: float=0.0
         gpu_hourly_usd: float=1.09
         gpu_power_kw: float=0.35
@@ -196,13 +202,31 @@ def install(app):
         gpu_utilization: float=0.70
         gpu_platform_fee: float=0.15
         asic_efficiency_j_th: float=20.0
+        btc_facility_overhead_kw: float=0.0
+        gpu_facility_overhead_kw: float=0.0
+        battery_round_trip_efficiency: float=0.90
+        battery_degradation_eur_kwh: float=0.015
+        grid_export_fee_eur_kwh: float=0.0
         battery_value_eur_kwh: float=0.071
         grid_value_eur_kwh: float=0.055
 
     def _economics(x):
-        btc=((x.btc_hashprice_usd_ph_day/x.eur_usd)/(x.asic_efficiency_j_th*1000))*0.98*0.98
-        gpu=((x.gpu_hourly_usd/x.eur_usd)*x.gpu_utilization*(1-x.gpu_platform_fee))/max(x.gpu_power_kw,0.01)
-        return {"AI Compute":max(0,gpu),"BTC Mining":max(0,btc),"Battery":x.battery_value_eur_kwh,"Grid":x.grid_value_eur_kwh}
+        eur_usd=max(float(x.eur_usd),0.01)
+        energy_cost=max(0.0,float(x.energy_cost_eur_kwh))
+        asic_eff=max(float(x.asic_efficiency_j_th),0.01)
+        btc_gross=(max(0.0,float(x.btc_hashprice_usd_ph_day))/eur_usd)/(asic_eff*1000)*0.98*0.98
+        btc_overhead=max(0.0,float(getattr(x,"btc_facility_overhead_kw",0.0)))
+        gpu_power=max(float(x.gpu_power_kw),0.01)
+        gpu_overhead=max(0.0,float(getattr(x,"gpu_facility_overhead_kw",0.0)))
+        gpu_gross=((max(0.0,float(x.gpu_hourly_usd))/eur_usd)*max(0.0,min(1.0,float(x.gpu_utilization)))*(1-max(0.0,min(0.99,float(x.gpu_platform_fee)))))/gpu_power
+        btc_value=btc_gross*(asic_eff/(asic_eff+btc_overhead)) if btc_overhead else btc_gross
+        gpu_value=gpu_gross*(gpu_power/(gpu_power+gpu_overhead)) if gpu_overhead else gpu_gross
+        rte=max(0.01,min(1.0,float(getattr(x,"battery_round_trip_efficiency",0.90))))
+        degradation=max(0.0,float(getattr(x,"battery_degradation_eur_kwh",0.015)))
+        export_fee=max(0.0,float(getattr(x,"grid_export_fee_eur_kwh",0.0)))
+        battery_net=float(x.battery_value_eur_kwh)*rte-degradation
+        grid_net=float(x.grid_value_eur_kwh)-export_fee
+        return {"AI Compute":max(0.0,gpu_value-energy_cost),"BTC Mining":max(0.0,btc_value-energy_cost),"Battery":max(0.0,battery_net),"Grid":max(0.0,grid_net)}
 
     def _external_market():
         import urllib.request
