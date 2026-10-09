@@ -67,13 +67,26 @@ jobs:
           assert body["hardware_write"] is False
           assert body["method"] == "unified_forecast_risk_regret_v1"
           assert body["recommendation_only"] is True
-          assert body["method"] == "unified_forecast_risk_regret_v1"
-          assert body["recommendation_only"] is True
-          risk=c.post(f"/api/v1/farms/{farm}/risk-analysis",headers=h,json={"scenarios":50,"seed":42,"risk_aversion":0.5})
+          risk_payload={"scenarios":50,"seed":42,"risk_aversion":0.5}
+          risk=c.post(f"/api/v1/farms/{farm}/risk-analysis",headers=h,json=risk_payload)
           assert risk.status_code==200, risk.text
-          assert "strategies" in risk.json()
-          assert all("mean" in v for v in risk.json()["strategies"].values())
-          assert risk.json()["base_case"]["net_eur"] == risk.json()["base_case"]["net_eur"]
+          rb=risk.json()
+          assert rb["samples"] == 50 and rb["seed"] == 42, rb
+          assert rb["method"] == "deterministic_seeded_monte_carlo_lognormal_shocks", rb
+          assert rb["recommendation_only"] is True and rb["hardware_write"] is False, rb
+          assert set(rb["strategies"]) == {"AI Compute","BTC Mining","Battery","Grid"}, rb["strategies"]
+          for name,metrics in rb["strategies"].items():
+              assert all(k in metrics for k in ("mean","p10","p50","p90","downside","volatility","probability_positive")), (name,metrics)
+              assert metrics["p10"] <= metrics["p50"] <= metrics["p90"], (name,metrics)
+              assert metrics["downside"] >= 0 and metrics["volatility"] >= 0, (name,metrics)
+              assert 0 <= metrics["probability_positive"] <= 1, (name,metrics)
+          risk_repeat=c.post(f"/api/v1/farms/{farm}/risk-analysis",headers=h,json=risk_payload)
+          assert risk_repeat.status_code==200, risk_repeat.text
+          rr=risk_repeat.json()
+          assert rb["base_case"] == rr["base_case"], (rb["base_case"],rr["base_case"])
+          assert rb["strategies"] == rr["strategies"], "Fixed seed must produce repeatable risk metrics"
+          assert set(rb["regret_vs_base_best_eur"]) == set(rb["strategies"]), rb["regret_vs_base_best_eur"]
+          assert all(v >= 0 for v in rb["regret_vs_base_best_eur"].values()), rb["regret_vs_base_best_eur"]
           scenario=c.post(f"/api/v1/farms/{farm}/scenario",headers=h,json={
               "energy_kwh":100,"energy_cost_eur_kwh":0.05,
               "btc_hashprice_usd_ph_day":39.64,"asic_efficiency_j_th":20})
