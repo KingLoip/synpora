@@ -14,6 +14,10 @@ Configure these in the Railway service's Variables tab. Never commit the secret 
 
 Use distinct values for the JWT secret and market admin token. Do not paste either secret into issues, logs, or chat.
 
+## Scheduled market collection
+
+The repository includes `.github/workflows/market-collection.yml`, which runs every 15 minutes and can also be started manually. In GitHub, configure repository Actions secrets `SYNPORA_BASE_URL` (the public base URL of the deployed service, without a trailing slash) and `SYNPORA_MARKET_ADMIN_TOKEN` (the same secret configured in Railway). Until both are configured, the workflow safely skips collection. The collector reports provenance quality; snapshots containing reference values remain excluded from learning and backtesting.
+
 ## Deployment checks
 
 1. Confirm the service uses the repository's root `Dockerfile` and `railway.toml`.
