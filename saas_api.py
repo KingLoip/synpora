@@ -630,17 +630,24 @@ def install(app):
 
     def _risk_metrics(values, base):
         if not values:
-            return {"mean":0.0,"p10":0.0,"p50":0.0,"p90":0.0,"downside":0.0,"volatility":0.0,"probability_positive":0.0}
+            return {"mean":0.0,"p05":0.0,"p10":0.0,"p50":0.0,"p90":0.0,
+                    "expected_shortfall_p05":0.0,"downside":0.0,"volatility":0.0,
+                    "probability_positive":0.0,"probability_negative":0.0}
         vals=sorted(float(v) for v in values)
         n=len(vals)
         mean=sum(vals)/n
         p=lambda q: vals[min(n-1,max(0,int((n-1)*q)))]
         variance=sum((v-mean)**2 for v in vals)/n
+        tail_count=max(1,int(__import__("math").ceil(n*0.05)))
+        tail_mean=sum(vals[:tail_count])/tail_count
         return {
-            "mean":round(mean,6),"p10":round(p(.10),6),"p50":round(p(.50),6),"p90":round(p(.90),6),
+            "mean":round(mean,6),"p05":round(p(.05),6),"p10":round(p(.10),6),
+            "p50":round(p(.50),6),"p90":round(p(.90),6),
+            "expected_shortfall_p05":round(tail_mean,6),
             "downside":round(max(0.0,base-p(.10)),6),
             "volatility":round(variance**0.5,6),
-            "probability_positive":round(sum(v>0 for v in vals)/n,3)
+            "probability_positive":round(sum(v>0 for v in vals)/n,3),
+            "probability_negative":round(sum(v<0 for v in vals)/n,3)
         }
 
     @app.post("/api/v1/farms/{farm_id}/risk-analysis")
@@ -671,18 +678,38 @@ def install(app):
                 strategy_values[k].append(float(v)*float(x.energy_kwh))
         base_net={k:float(v)*x.energy_kwh for k,v in base.items()}
         metrics={k:_risk_metrics(v,base_net[k]) for k,v in strategy_values.items()}
-        ranked=sorted(metrics,key=lambda k:(metrics[k]["p10"],metrics[k]["mean"]),reverse=True)
+        av=max(0.0,min(1.0,float(x.risk_aversion)))
+        scores={k:round((1-av)*metrics[k]["mean"]+av*metrics[k]["p05"],4) for k in metrics}
+        ranked=sorted(metrics,key=lambda k:(scores[k],metrics[k]["p05"],metrics[k]["mean"]),reverse=True)
         robust=ranked[0] if ranked else None
         best_base=max(base,key=base.get)
         regret={k:round(max(0.0,base_net[best_base]-base_net[k]),4) for k in base}
+        stress_cases=[]
+        stress_updates=(
+            ("btc_hashprice_down_35pct",{"btc_hashprice_usd_ph_day":x.btc_hashprice_usd_ph_day*0.65}),
+            ("gpu_rate_down_30pct",{"gpu_hourly_usd":x.gpu_hourly_usd*0.70}),
+            ("energy_price_up_50pct",{"energy_cost_eur_kwh":x.energy_cost_eur_kwh*1.50}),
+            ("combined_downside",{"btc_hashprice_usd_ph_day":x.btc_hashprice_usd_ph_day*0.65,
+                "gpu_hourly_usd":x.gpu_hourly_usd*0.70,"energy_cost_eur_kwh":x.energy_cost_eur_kwh*1.50,
+                "eur_usd":x.eur_usd*1.10,"gpu_utilization":x.gpu_utilization*0.85})
+        )
+        for label,updates in stress_updates:
+            stressed=x.model_copy(update=updates)
+            values=_economics(stressed)
+            winner=max(values,key=values.get)
+            stress_cases.append({"scenario":label,"best_strategy":winner,
+                "net_value_eur_kwh":{k:round(float(v),6) for k,v in values.items()},
+                "best_value_eur_kwh":round(float(values[winner]),6)})
+        risk_gate="loss_exposure" if robust and metrics[robust]["p05"]<0 else ("high_uncertainty" if robust and metrics[robust]["probability_positive"]<0.80 else "within_simulated_limits")
         return {
             "farm_id":farm_id,"samples":n,"seed":x.seed,"shock_pct":shock,
             "base_case":{"best":best_base,"net_eur":round(base_net[best_base],4),"values_eur_kwh":{k:round(v,6) for k,v in base.items()}},
             "strategies":metrics,"robust_strategy":robust,"base_case_strategy":best_base,
-            "regret_vs_base_best_eur":regret,
-            "risk_aversion":round(max(0.0,min(1.0,float(x.risk_aversion))),3),
-            "risk_adjusted_score":{k:round((1-max(0.0,min(1.0,float(x.risk_aversion))))*metrics[k]["mean"]+max(0.0,min(1.0,float(x.risk_aversion)))*metrics[k]["p10"],4) for k in metrics},
-            "method":"deterministic_seeded_monte_carlo_lognormal_shocks",
+            "regret_vs_base_best_eur":regret,"risk_aversion":round(av,3),
+            "risk_adjusted_score":scores,"stress_scenarios":stress_cases,
+            "risk_gate":{"status":risk_gate,"basis":"simulated_p05_and_probability_positive",
+                "note":"A scenario gate is a warning, not a guarantee; input assumptions and external data quality still matter."},
+            "method":"deterministic_seeded_monte_carlo_lognormal_shocks_with_stress_tests",
             "recommendation_only":True,"hardware_write":False
         }
 
