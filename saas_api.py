@@ -791,27 +791,60 @@ def install(app):
     @app.get("/api/v1/farms/{farm_id}/benchmark")
     def benchmark(farm_id:str,limit:int=500,authorization:str|None=Header(default=None)):
         uid=user(authorization); c=init_db()
-        if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
+        if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone():
+            raise HTTPException(404,"Farm not found")
+        _ensure_market_table(c)
         try:
-            rows=c.execute("SELECT ts,payload FROM market_snapshots ORDER BY ts ASC LIMIT ?",(min(limit,1000),)).fetchall()
+            rows=c.execute("SELECT ts,payload FROM market_snapshots ORDER BY ts ASC LIMIT ?",(max(1,min(limit,1000)),)).fetchall()
         except Exception:
             rows=[]
-        ai_total=btc_total=0.0; points=[]
-        for r in rows:
-            d=json.loads(r[1]); h=d.get("btc_hashprice_usd_ph_day")
-            g=d.get("gpu_l40s_usd_hour")
-            if not h or not g: continue
-            s=ScenarioIn(energy_kwh=100,energy_cost_eur_kwh=0.05,btc_hashprice_usd_ph_day=float(h),gpu_hourly_usd=float(g))
-            vals=_economics(s)
-            ai=(vals["AI Compute"]-s.energy_cost_eur_kwh)*100
-            btc=(vals["BTC Mining"]-s.energy_cost_eur_kwh)*100
-            ai_total+=ai; btc_total+=btc
-            points.append({"timestamp":r[0],"ai_net_eur":round(ai,2),"btc_net_eur":round(btc,2),"winner":"AI Compute" if ai>btc else "BTC Mining"})
-        return {"farm_id":farm_id,"points":points,"samples":len(points),
-                "ai_total_net_eur":round(ai_total,2),"btc_total_net_eur":round(btc_total,2),
-                "ai_delta_vs_btc_eur":round(ai_total-btc_total,2),
-                "winner_share":round(sum(p["winner"]=="AI Compute" for p in points)/len(points),3) if points else None,
-                "method":"stored_market_snapshots","recommendation_only":True}
+        totals={k:0.0 for k in ("AI Compute","BTC Mining","Battery","Grid")}
+        points=[]; excluded=0
+        for row in rows:
+            try:
+                payload=json.loads(row[1] or "{}")
+                if not isinstance(payload,dict) or not _snapshot_is_learning_eligible(payload):
+                    excluded+=1
+                    continue
+                values={}
+                valid=True
+                for key in ("btc_hashprice_usd_ph_day","gpu_l40s_usd_hour","eur_usd","austria_spot_eur_kwh"):
+                    try:
+                        value=float(payload[key])
+                        if not __import__("math").isfinite(value) or value<=0:
+                            valid=False; break
+                        values[key]=value
+                    except (KeyError,TypeError,ValueError):
+                        valid=False; break
+                if not valid:
+                    excluded+=1
+                    continue
+                scenario=ScenarioIn(energy_kwh=100,
+                    energy_cost_eur_kwh=values["austria_spot_eur_kwh"],
+                    btc_hashprice_usd_ph_day=values["btc_hashprice_usd_ph_day"],
+                    gpu_hourly_usd=values["gpu_l40s_usd_hour"],eur_usd=values["eur_usd"],
+                    gpu_power_kw=float(payload.get("gpu_l40s_power_kw") or 0.35),
+                    gpu_utilization=max(0.0,min(1.0,float(payload.get("gpu_utilization",0.70))),
+                    gpu_platform_fee=max(0.0,min(1.0,float(payload.get("gpu_platform_fee",0.15))))
+                )
+                economics=_economics(scenario)
+                for name,value in economics.items():
+                    totals[name]+=float(value)*scenario.energy_kwh
+                winner=max(economics,key=economics.get)
+                points.append({"timestamp":float(row[0]),"net_eur_per_100_kwh":{k:round(float(v)*100,2) for k,v in economics.items()},
+                    "winner":winner,"source":payload.get("source","external_observation")})
+            except (TypeError,ValueError,json.JSONDecodeError):
+                excluded+=1
+        count=len(points)
+        return {"farm_id":farm_id,"points":points,"samples":count,"excluded_snapshots":excluded,
+            "mean_net_eur_per_100_kwh":{k:round(v/count,2) if count else None for k,v in totals.items()},
+            "ai_total_net_eur":round(totals["AI Compute"],2),"btc_total_net_eur":round(totals["BTC Mining"],2),
+            "ai_delta_vs_btc_eur":round(totals["AI Compute"]-totals["BTC Mining"],2),
+            "winner_share":round(sum(p["winner"]=="AI Compute" for p in points)/count,3) if count else None,
+            "method":"provenance_gated_snapshot_benchmark",
+            "warnings":["Only fully external snapshots are included; reference and mixed snapshots are excluded.",
+                "This compares modeled economics at stored observations and is not a forward-looking backtest."],
+            "recommendation_only":True,"hardware_write":False}
 
     @app.post("/api/v1/farms/{farm_id}/learning/settle")
     def settle_learning(farm_id:str,authorization:str|None=Header(default=None)):
