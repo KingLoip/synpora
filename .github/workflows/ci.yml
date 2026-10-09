@@ -74,6 +74,9 @@ jobs:
           readiness=c.get("/api/v1/system/production-readiness")
           assert readiness.status_code==200, readiness.text
           assert readiness.json()["hardware_write_enabled"] is False
+          for path in ("/api/v1/market/collect", "/api/v1/market/backfill", "/api/v1/market/snapshot"):
+              protected=c.post(path)
+              assert protected.status_code==403, (path, protected.status_code, protected.text)
           print("SYNPORA API end-to-end smoke test: OK")
           PY
 
