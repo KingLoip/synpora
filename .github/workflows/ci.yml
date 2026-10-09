@@ -94,6 +94,23 @@ jobs:
           assert scenario.status_code==200, scenario.text
           btc_value=next(row["value_eur_kwh"] for row in scenario.json()["ranking"] if row["option"]=="BTC Mining")
           assert 0.01 < btc_value < 0.10, btc_value
+          assert "cost_model" in scenario.json(), scenario.json()
+          costed=c.post(f"/api/v1/farms/{farm}/scenario",headers=h,json={
+              "energy_kwh":100,"energy_cost_eur_kwh":0.05,
+              "btc_hashprice_usd_ph_day":39.64,"asic_efficiency_j_th":20,
+              "gpu_capex_eur":15000,"gpu_lifetime_years":5,"gpu_maintenance_eur_year":500,
+              "btc_capex_eur":5000,"btc_lifetime_years":4,"btc_maintenance_eur_year":200,
+              "gpu_uptime":0.90,"btc_uptime":0.95,"pool_fee":0.03,"tax_rate":0.25})
+          assert costed.status_code==200, costed.text
+          cm=costed.json()["cost_model"]
+          assert cm["gpu"]["depreciation_and_maintenance_eur_kwh"]>0, cm
+          assert cm["btc"]["depreciation_and_maintenance_eur_kwh"]>0, cm
+          assert cm["tax_rate"]==0.25 and cm["gpu"]["uptime"]==0.90, cm
+          costed_values={row["option"]:row["value_eur_kwh"] for row in costed.json()["ranking"]}
+          assert costed_values["BTC Mining"]<btc_value, (costed_values,btc_value)
+          invalid_lifetime=c.post(f"/api/v1/farms/{farm}/scenario",headers=h,json={"gpu_lifetime_years":0})
+          assert invalid_lifetime.status_code==422, invalid_lifetime.text
+          assert "cost_model" in rb, rb
           # Invalid physical and financial inputs must fail clearly instead of being clamped silently.
           invalid_energy=c.post(f"/api/v1/farms/{farm}/scenario",headers=h,json={"energy_kwh":-1})
           assert invalid_energy.status_code==422, invalid_energy.text
