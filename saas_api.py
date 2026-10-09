@@ -134,6 +134,7 @@ def install(app):
 
     @app.post("/api/v1/farms/{farm_id}/optimize")
     def optimize(farm_id:str,x:OptimizeIn,authorization:str|None=Header(default=None)):
+        _validate_numeric_inputs(x)
         uid=user(authorization); c=init_db()
         ok=c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone()
         if not ok: raise HTTPException(404,"Farm not found")
@@ -221,7 +222,44 @@ def install(app):
         battery_value_eur_kwh: float=0.071
         grid_value_eur_kwh: float=0.055
 
+    def _validate_numeric_inputs(x):
+        # Reject NaN/Infinity and impossible physical/financial inputs before they
+        # can silently become misleading recommendations or non-JSON responses.
+        import math
+        values=getattr(x,"__dict__",{})
+        for key,value in values.items():
+            if isinstance(value,(int,float)) and not isinstance(value,bool) and not math.isfinite(float(value)):
+                raise HTTPException(422, f"{key} must be a finite number")
+        positive=("energy_kwh","eur_usd","gpu_power_kw","asic_efficiency_j_th",
+                  "btc_device_power_kw","battery_capacity_kwh","battery_power_kw","interval_hours")
+        nonnegative=("energy_cost_eur_kwh","btc_hashprice_usd_ph_day","gpu_hourly_usd",
+                     "facility_overhead_kw","btc_facility_overhead_kw","gpu_facility_overhead_kw",
+                     "battery_degradation_eur_kwh","grid_export_fee_eur_kwh","battery_value_eur_kwh",
+                     "grid_value_eur_kwh","pv_kwh")
+        unit_interval=("gpu_utilization","gpu_platform_fee","uptime","pool_fee",
+                       "battery_charge_efficiency","battery_discharge_efficiency",
+                       "battery_round_trip_efficiency")
+        for key in positive:
+            if key in values and float(values[key]) <= 0:
+                raise HTTPException(422, f"{key} must be greater than zero")
+        for key in nonnegative:
+            if key in values and float(values[key]) < 0:
+                raise HTTPException(422, f"{key} must be zero or greater")
+        for key in unit_interval:
+            if key in values and not 0 < float(values[key]) <= 1 if key.startswith("battery_") else key in values and not 0 <= float(values[key]) <= 1:
+                raise HTTPException(422, f"{key} must be between zero and one")
+        for key in ("battery_soc_pct","battery_reserve_pct"):
+            if key in values and not 0 <= float(values[key]) <= 100:
+                raise HTTPException(422, f"{key} must be between 0 and 100")
+        if "shock_pct" in values and not 0 <= float(values["shock_pct"]) <= 0.80:
+            raise HTTPException(422, "shock_pct must be between 0 and 0.8")
+        if "risk_aversion" in values and not 0 <= float(values["risk_aversion"]) <= 1:
+            raise HTTPException(422, "risk_aversion must be between 0 and 1")
+        if "horizon_hours" in values and not 1 <= int(values["horizon_hours"]) <= 72:
+            raise HTTPException(422, "horizon_hours must be between 1 and 72")
+
     def _economics(x):
+        _validate_numeric_inputs(x)
         eur_usd=max(float(x.eur_usd),0.01)
         energy_cost=max(0.0,float(x.energy_cost_eur_kwh))
         asic_eff=max(float(x.asic_efficiency_j_th),0.01)
@@ -892,6 +930,7 @@ def install(app):
 
     @app.post("/api/v1/farms/{farm_id}/forecast-plan")
     def forecast_plan(farm_id:str,x:DispatchIn,authorization:str|None=Header(default=None)):
+        _validate_numeric_inputs(x)
         uid=user(authorization); c=init_db()
         _ensure_market_table(c)
         if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
@@ -925,6 +964,7 @@ def install(app):
 
     @app.post("/api/v1/farms/{farm_id}/dispatch-plan")
     def dispatch_plan(farm_id:str,x:DispatchIn,authorization:str|None=Header(default=None)):
+        _validate_numeric_inputs(x)
         uid=user(authorization); c=init_db()
         _ensure_market_table(c)
         if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
