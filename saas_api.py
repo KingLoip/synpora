@@ -446,9 +446,9 @@ def install(app):
         uid=user(authorization); c=init_db()
         if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone():
             raise HTTPException(404,"Farm not found")
-        # Unified decision layer: current economics + Monte-Carlo risk + regret proxy.
+        # Unified decision layer: net economics + Monte-Carlo risk and regret.
         base=_economics(x)
-        base_net={k:(float(v)-x.energy_cost_eur_kwh)*x.energy_kwh for k,v in base.items()}
+        base_net={k:float(v)*x.energy_kwh for k,v in base.items()}
         risk_seed=int(x.seed); n=max(100,min(5000,int(x.scenarios))); rng=__import__("random").Random(risk_seed)
         samples=[]
         for _ in range(n):
