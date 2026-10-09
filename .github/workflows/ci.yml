@@ -87,9 +87,22 @@ jobs:
           assert charging.status_code==200, charging.text
           cs=charging.json()["summary"]
           assert abs(cs["pv_balance_error_kwh"]) < 0.01, cs
-          assert cs["battery_charge_kwh"] >= 0, cs
-          assert cs["battery_losses_kwh"] >= 0, cs
+          assert cs["battery_charge_kwh"] > 0, cs
+          assert abs(cs["battery_charge_stored_kwh"]-cs["battery_charge_kwh"]*0.95) < 0.01, cs
+          assert abs(cs["battery_soc_balance_error_kwh"]) < 0.01, cs
+          assert cs["battery_losses_kwh"] >= cs["battery_charge_kwh"]*0.05-0.01, cs
           assert cs["battery_soc_final_kwh"] >= cs["battery_soc_reserve_kwh"]-0.01, cs
+          discharging=c.post(f"/api/v1/farms/{farm}/dispatch-plan",headers=h,json={
+              "horizon_hours":24,"pv_kwh":0,"battery_capacity_kwh":10,
+              "battery_soc_pct":100,"battery_reserve_pct":20,"battery_power_kw":2,
+              "energy_cost_eur_kwh":0.2,"battery_discharge_efficiency":0.9})
+          assert discharging.status_code==200, discharging.text
+          ds=discharging.json()["summary"]
+          assert ds["battery_discharge_kwh"] > 0, ds
+          assert ds["battery_losses_kwh"] > 0, ds
+          assert abs(ds["battery_soc_balance_error_kwh"]) < 0.01, ds
+          assert ds["battery_soc_final_kwh"] >= ds["battery_soc_reserve_kwh"]-0.01, ds
+          assert all(row["soc_pct"] >= 19.99 for row in discharging.json()["soc_trace"]), ds
           exporting=c.post(f"/api/v1/farms/{farm}/dispatch-plan",headers=h,json={
               "horizon_hours":24,"pv_kwh":50,"battery_capacity_kwh":10,
               "battery_soc_pct":100,"battery_reserve_pct":20,"battery_power_kw":5})
@@ -97,6 +110,7 @@ jobs:
           es=exporting.json()["summary"]
           assert abs(es["pv_balance_error_kwh"]) < 0.01, es
           assert es["grid_export_kwh"] > 0, es
+          assert abs(es["battery_soc_balance_error_kwh"]) < 0.01, es
           assert es["battery_soc_final_kwh"] >= es["battery_soc_reserve_kwh"]-0.01, es
           quality=c.get(f"/api/v1/farms/{farm}/decision-quality",headers=h)
           assert quality.status_code==200, quality.text
