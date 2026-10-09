@@ -354,6 +354,7 @@ def install(app):
         # It must be HTTPS and include a recent Unix timestamp (seconds or milliseconds).
         feed_url=os.getenv("SYNPORA_MARKET_DATA_URL","").strip()
         if feed_url:
+            out["_configuredFeedConfigured"]=True
             parsed=urlparse(feed_url)
             if parsed.scheme=="https" and parsed.hostname:
                 try:
@@ -407,9 +408,10 @@ def install(app):
             try: ok=value is not None and __import__("math").isfinite(float(value)) and float(value)>0
             except (TypeError,ValueError): ok=False
             observed[name]={"available":bool(ok),"source":"external" if ok else "missing","value":float(value) if ok else None}
-        configured=bool(ext.get("_configuredFeedAccepted"))
-        feed_age=(now-float(ext.get("_configuredFeedObservedAt",0))) if configured else None
-        feed_fresh=configured and feed_age is not None and -60<=feed_age<=900
+        configured=bool(ext.get("_configuredFeedConfigured") or ext.get("_configuredFeedAccepted"))
+        accepted=bool(ext.get("_configuredFeedAccepted"))
+        feed_age=(now-float(ext.get("_configuredFeedObservedAt",0))) if accepted else None
+        feed_fresh=accepted and feed_age is not None and -60<=feed_age<=900
         refs={
             "eur_usd":("eurUsd",1.1205,lambda v:float(v)>0),
             "austria_spot_eur_kwh":("austriaSpotEurKwh",0.2055,lambda v:float(v)>0),
@@ -428,7 +430,7 @@ def install(app):
         warnings=[]
         if missing: warnings.append("External Bitcoin market feed is incomplete; missing values are not represented as live.")
         if reference: warnings.append("EUR/USD, Austrian spot energy and GPU pricing contain reference values, not verified live quotes.")
-        if configured and not feed_fresh: warnings.append("Configured market feed timestamp is stale or invalid; its values were not accepted.")
+        if configured and not feed_fresh: warnings.append("Configured market feed is stale, invalid, or not HTTPS; its values were not accepted.")
         return {"fields":observed,"external_fields":live,"reference_fields":reference,"missing_fields":missing,
                 "status":"live" if all_critical_external else ("partial" if live else "fallback"),
                 "generated_at":now,"configured_feed_accepted":bool(feed_fresh),
@@ -1259,7 +1261,7 @@ def install(app):
                 "jwt_secret_configured":jwt_configured,"jwt_secret_strong":jwt_secret_strong,
                 "market_admin_token_configured":market_token_configured,"market_admin_token_strong":market_token_strong,
                 "market_data_feed_configured":bool(os.getenv("SYNPORA_MARKET_DATA_URL","").strip()),
-                "market_data_feed_https":urlparse(os.getenv("SYNPORA_MARKET_DATA_URL","").strip()).scheme=="https" if os.getenv("SYNPORA_MARKET_DATA_URL","").strip() else False,
+                "market_data_feed_https":bool(urlparse(os.getenv("SYNPORA_MARKET_DATA_URL","").strip()).scheme=="https" and urlparse(os.getenv("SYNPORA_MARKET_DATA_URL","").strip()).hostname) if os.getenv("SYNPORA_MARKET_DATA_URL","").strip() else False,
                 "market_data_mode":"configured_feed" if os.getenv("SYNPORA_MARKET_DATA_URL","").strip() else "reference_fallback_possible",
                 "hardware_write_enabled":False,"autonomous_control_enabled":False,
                 "recommendation_only":True,"external_market_layer":True,
