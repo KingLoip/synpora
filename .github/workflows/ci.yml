@@ -148,6 +148,22 @@ jobs:
           assert es["battery_soc_final_kwh"] >= es["battery_soc_reserve_kwh"]-0.01, es
           quality=c.get(f"/api/v1/farms/{farm}/decision-quality",headers=h)
           assert quality.status_code==200, quality.text
+          # Market API must disclose provenance instead of presenting reference prices as live.
+          market=c.get("/api/v1/market/live")
+          assert market.status_code==200, market.text
+          mq=market.json()["data_quality"]
+          assert mq["overall"] in {"live","partial","fallback"}, mq
+          assert "details" in mq and "fields" in mq["details"], mq
+          assert mq["details"]["fields"]["eur_usd"]["source"]=="reference", mq
+          assert mq["details"]["fields"]["austria_spot_eur_kwh"]["source"]=="reference", mq
+          assert mq["details"]["fields"]["gpu_l40s_usd_hour"]["source"]=="reference", mq
+          # Forecasts expose readiness and validation warnings when historical data is sparse.
+          forecast=c.post(f"/api/v1/farms/{farm}/forecast-plan",headers=h,json={"horizon_hours":3})
+          assert forecast.status_code==200, forecast.text
+          fq=forecast.json()["forecast_quality"]
+          assert fq["status"] in {"validated","degraded","invalid"}, fq
+          assert fq["horizon_hours"]==3 and "model_readiness" in fq, fq
+          assert forecast.json()["hardware_write"] is False
           bad=c.post("/api/v1/auth/register",json={"email":"not-an-email","password":"ci-password-123"})
           assert bad.status_code==400, bad.text
           readiness=c.get("/api/v1/system/production-readiness")
