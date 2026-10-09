@@ -159,6 +159,16 @@ jobs:
           learning_status=c.get(f"/api/v1/farms/{farm}/learning",headers=h)
           assert learning_status.status_code==200, learning_status.text
           assert learning_status.json()["open"]>=1, learning_status.json()
+          # A later valid market snapshot must settle the pending decision exactly once.
+          import os
+          os.environ["SYNPORA_MARKET_ADMIN_TOKEN"]="ci-market-secret"
+          snap=c.post("/api/v1/market/snapshot",headers={"X-SYNPORA-MARKET-TOKEN":"ci-market-secret"})
+          assert snap.status_code==200, snap.text
+          settled=c.post(f"/api/v1/farms/{farm}/learning/update",headers=h)
+          assert settled.status_code==200, settled.text
+          sb=settled.json()
+          assert sb["settled_now"]==1 and sb["open_remaining"]==0, sb
+          assert sb["hardware_write"] is False and sb["recommendation_only"] is True, sb
           # Market API must disclose provenance instead of presenting reference prices as live.
           market=c.get("/api/v1/market/live")
           assert market.status_code==200, market.text
