@@ -699,9 +699,6 @@ def install(app):
         btc_facility_overhead_kw: float=0.0
         gpu_facility_overhead_kw: float=0.0
         facility_overhead_kw: float=0.0
-        battery_power_kw: float=100.0
-        battery_charge_efficiency: float=0.95
-        battery_discharge_efficiency: float=0.95
 
     def _adaptive_model_weights(c, series_key):
         rows=c.execute("SELECT ts,btc_hashprice_usd_ph_day,gpu_hourly_usd,austria_spot_eur_kwh FROM market_snapshots ORDER BY ts DESC LIMIT 168").fetchall()
@@ -925,7 +922,7 @@ def install(app):
         except Exception:
             btc_fc=[x.btc_hashprice_usd_ph_day]*hours; gpu_fc=[x.gpu_hourly_usd]*hours; energy_fc=[x.energy_cost_eur_kwh]*hours; forecast_source="input_fallback"
         reserve=max(0,min(100,x.battery_reserve_pct)); cap=max(0,x.battery_capacity_kwh); soc=max(cap*reserve/100,min(cap,cap*x.battery_soc_pct/100))
-        power=max(0,x.battery_power_kw); ce=max(.01,min(1,x.battery_charge_efficiency)); de=max(.01,min(1,x.battery_discharge_efficiency)); soc_min=cap*reserve/100
+        power=max(0,x.battery_power_kw); ce=max(.01,min(1,x.battery_charge_efficiency)); de=max(.01,min(1,x.battery_discharge_efficiency)); soc_min=cap*reserve/100; initial_soc=soc
         import math
         shape=[max(.05,math.sin(math.pi*(i+.5)/hours)) for i in range(hours)]; pv_total=max(0,x.pv_kwh); scale=pv_total/sum(shape) if sum(shape) else 0; pv=[v*scale for v in shape]
         candidates=[{"name":a["name"],"kind":"AI Compute" if str(a["kind"]).upper()=="GPU" else "BTC Mining","power":float(a["power_kw"] or 0)} for a in assets if str(a["kind"]).upper() in ("GPU","BTC") and float(a["power_kw"] or 0)>0]
@@ -952,7 +949,7 @@ def install(app):
                 rem-=take; summary["pv_to_compute_kwh"]+=take; summary["total_value_eur"]+=value*take; summary["energy_cost_eur"]+=price*take; summary["gpu_kwh" if a["kind"]=="AI Compute" else "btc_kwh"]+=take
                 plan.append({"hour":h,"asset":a["name"],"action":a["kind"],"pv_kwh":round(take,3),"battery_discharge_kwh":0,"battery_charge_kwh":round(charge,3),"grid_export_kwh":0,"value_eur_kwh":round(value,5),"soc_before_pct":round(100*before/cap,2) if cap else 0,"soc_after_pct":round(100*soc/cap,2) if cap else 0,"reason":"forecast-ranked opportunity"})
             if rem>0:
-                summary["total_value_eur"]+=grid*rem; summary["energy_cost_eur"]+=price*rem; summary["grid_export_kwh"]+=rem
+                summary["total_value_eur"]+=grid*rem; summary["grid_export_kwh"]+=rem
                 plan.append({"hour":h,"asset":"Grid","action":"Grid","pv_kwh":round(rem,3),"battery_discharge_kwh":0,"battery_charge_kwh":round(charge,3),"grid_export_kwh":round(rem,3),"value_eur_kwh":round(grid,5),"soc_before_pct":round(100*before/cap,2) if cap else 0,"soc_after_pct":round(100*soc/cap,2) if cap else 0,"reason":"PV surplus"})
             if charge<=1e-9 and future>max(btc,gpu,grid)+max(.005,x.battery_value_eur_kwh*max(0.01,min(1.0,x.battery_round_trip_efficiency))) and soc>soc_min:
                 kind="AI Compute" if gpu>=btc else "BTC Mining"; target=next((a for a in candidates if a["kind"]==kind),None); value=max(gpu,btc)
@@ -963,7 +960,7 @@ def install(app):
                         plan.append({"hour":h,"asset":target["name"],"action":kind,"pv_kwh":0,"battery_discharge_kwh":round(take,3),"battery_charge_kwh":0,"grid_export_kwh":0,"value_eur_kwh":round(value,5),"soc_before_pct":round(100*before/cap,2) if cap else 0,"soc_after_pct":round(100*soc/cap,2) if cap else 0,"reason":"future opportunity value"})
             trace.append({"hour":h,"soc_kwh":round(soc,3),"soc_pct":round(100*soc/cap,2) if cap else 0,"btc_value_eur_kwh":round(btc,5),"gpu_value_eur_kwh":round(gpu,5),"energy_cost_eur_kwh":round(price,5)})
         summary["pv_balance_error_kwh"]=round(summary["pv_generation_kwh"]-summary["pv_to_compute_kwh"]-summary["battery_charge_kwh"]-summary["grid_export_kwh"],6)
-        summary["battery_soc_initial_kwh"]=round(cap*max(0,min(100,x.battery_soc_pct))/100,3)
+        summary["battery_soc_initial_kwh"]=round(initial_soc,3)
         summary["battery_soc_final_kwh"]=round(soc,3)
         summary["battery_soc_reserve_kwh"]=round(soc_min,3)
         summary["net_value_eur"]=round(summary["total_value_eur"],2)
@@ -1017,8 +1014,8 @@ def install(app):
         for m in multipliers:
             s=ScenarioIn(energy_kwh=100,energy_cost_eur_kwh=0.05,btc_hashprice_usd_ph_day=base.btc_hashprice_usd_ph_day*m,gpu_hourly_usd=base.gpu_hourly_usd*m)
             vals=_economics(s); best=max(vals,key=vals.get)
-            samples.append({"market_multiplier":m,"best":best,"best_value_eur_kwh":round(vals[best],5),"ai_net_eur":round((vals["AI Compute"]-s.energy_cost_eur_kwh)*100,2),"btc_net_eur":round((vals["BTC Mining"]-s.energy_cost_eur_kwh)*100,2)})
-            total_ai+=(vals["AI Compute"]-s.energy_cost_eur_kwh)*100; total_btc+=(vals["BTC Mining"]-s.energy_cost_eur_kwh)*100
+            samples.append({"market_multiplier":m,"best":best,"best_value_eur_kwh":round(vals[best],5),"ai_net_eur":round(vals["AI Compute"]*100,2),"btc_net_eur":round(vals["BTC Mining"]*100,2)})
+            total_ai+=vals["AI Compute"]*100; total_btc+=vals["BTC Mining"]*100
         wins={k:sum(1 for s in samples if s["best"]==k) for k in ["AI Compute","BTC Mining","Battery","Grid"]}
         return {"farm_id":farm_id,"samples":samples,"wins":wins,"cumulative_net_eur":{"ai":round(total_ai,2),"btc":round(total_btc,2),"delta_ai_vs_btc":round(total_ai-total_btc,2)},"method":"synthetic_market_sensitivity","recommendation_only":True}
 
