@@ -167,6 +167,8 @@ jobs:
           assert snap.status_code==200, snap.text
           assert snap.json()["source"]=="manual_reference_snapshot", snap.json()
           assert snap.json()["data_quality"]["overall"]=="reference", snap.json()
+          db=saas.init_db()
+          assert len(saas._eligible_market_rows(db,168))==0, "Reference-only snapshots must not train forecasts"
           # A reference-only snapshot must never become a learning label.
           settled=c.post(f"/api/v1/farms/{farm}/learning/update",headers=h)
           assert settled.status_code==200, settled.text
@@ -192,6 +194,7 @@ jobs:
           db.execute("INSERT INTO market_snapshots (id,ts,payload,btc_hashprice_usd_ph_day,gpu_l40s_usd_hour,eur_usd,austria_spot_eur_kwh) VALUES (?,?,?,?,?,?,?)",
               (str(uuid.uuid4()),ts,json.dumps(payload),40.0,1.2,1.1,0.08))
           db.commit()
+          assert len(saas._eligible_market_rows(db,168))==1, "Only validated external snapshots should train forecasts"
           settled=c.post(f"/api/v1/farms/{farm}/learning/update",headers=h)
           assert settled.status_code==200, settled.text
           sb=settled.json()
