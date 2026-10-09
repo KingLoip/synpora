@@ -377,13 +377,13 @@ def install(app):
                 "lifetime_years":float(getattr(x,"gpu_lifetime_years",5.0)),
                 "maintenance_eur_year":float(getattr(x,"gpu_maintenance_eur_year",0.0)),
                 "uptime":float(getattr(x,"gpu_uptime",0.98)),
-                "depreciation_and_maintenance_eur_kwh":round((float(getattr(x,"gpu_capex_eur",0.0))/float(getattr(x,"gpu_lifetime_years",5.0))+float(getattr(x,"gpu_maintenance_eur_year",0.0))/(float(getattr(x,"gpu_power_kw",0.35))*8760)),6)},
+                "depreciation_and_maintenance_eur_kwh":round((float(getattr(x,"gpu_capex_eur",0.0))/float(getattr(x,"gpu_lifetime_years",5.0))+float(getattr(x,"gpu_maintenance_eur_year",0.0)))/(float(getattr(x,"gpu_power_kw",0.35))*8760),6)},
             "btc":{"capex_eur":float(getattr(x,"btc_capex_eur",0.0)),
                 "lifetime_years":float(getattr(x,"btc_lifetime_years",4.0)),
                 "maintenance_eur_year":float(getattr(x,"btc_maintenance_eur_year",0.0)),
                 "uptime":float(getattr(x,"btc_uptime",0.98)),
                 "pool_fee":float(getattr(x,"pool_fee",0.02)),
-                "depreciation_and_maintenance_eur_kwh":round((float(getattr(x,"btc_capex_eur",0.0))/float(getattr(x,"btc_lifetime_years",4.0))+float(getattr(x,"btc_maintenance_eur_year",0.0))/(float(getattr(x,"btc_device_power_kw",3.5))*8760)),6)},
+                "depreciation_and_maintenance_eur_kwh":round((float(getattr(x,"btc_capex_eur",0.0))/float(getattr(x,"btc_lifetime_years",4.0))+float(getattr(x,"btc_maintenance_eur_year",0.0)))/(float(getattr(x,"btc_device_power_kw",3.5))*8760),6)},
             "tax_rate":float(getattr(x,"tax_rate",0.0)),
             "warning":"Tax rate and cost assumptions are user supplied; not tax advice. Site/network limits and one-off installation costs are not modeled."}
 
