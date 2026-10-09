@@ -58,7 +58,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:.84rem;color:#c8d4e3}
 button{background:#315c8b;color:white;border:0;border-radius:8px;padding:10px 14px;font-size:1rem}
 footer{margin-top:24px}.small{font-size:.9rem}
 </style></head><body>
-<h1>SYNPORA – Betriebsstatus</h1><p class="muted">Technische Übersicht · automatische Aktualisierung alle 30 Sekunden · Empfehlungen בלבד, keine Hardwaresteuerung/Trades</p>
+<h1>SYNPORA – Betriebsstatus</h1><p class="muted">Technische Übersicht · automatische Aktualisierung alle 30 Sekunden · Nur Empfehlungen – keine Hardwaresteuerung oder Trades</p>
 <button id="refresh">Jetzt aktualisieren</button><span id="updated" class="muted small"> Noch nicht aktualisiert</span>
 <div class="grid">
 <section class="card"><h2>Produktionsbereitschaft</h2><div id="ready" class="status">Lade…</div><pre id="ready-detail"></pre></section>
