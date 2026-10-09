@@ -74,6 +74,12 @@ jobs:
           assert "strategies" in risk.json()
           assert all("mean" in v for v in risk.json()["strategies"].values())
           assert risk.json()["base_case"]["net_eur"] == risk.json()["base_case"]["net_eur"]
+          scenario=c.post(f"/api/v1/farms/{farm}/scenario",headers=h,json={
+              "energy_kwh":100,"energy_cost_eur_kwh":0.05,
+              "btc_hashprice_usd_ph_day":39.64,"asic_efficiency_j_th":20})
+          assert scenario.status_code==200, scenario.text
+          btc_value=next(row["value_eur_kwh"] for row in scenario.json()["ranking"] if row["option"]=="BTC Mining")
+          assert 0.01 < btc_value < 0.10, btc_value
           # Dispatch energy accounting: PV must be allocated exactly once and battery reserve preserved.
           for kind,power in (("GPU",0.5),("BTC",0.5)):
               asset=c.post(f"/api/v1/farms/{farm}/assets",headers=h,json={"name":kind+" test asset","kind":kind,"power_kw":power})
