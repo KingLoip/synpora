@@ -551,10 +551,8 @@ def install(app):
         import urllib.request
         out={}
         try:
-            req=urllib.request.Request("https://pro.startmining.io/api/market-summary",headers={"User-Agent":"SYNPORA/1.0"})
-            with urllib.request.urlopen(req,timeout=5) as r:
-                raw=json.loads(r.read().decode())
-                if isinstance(raw,dict): out.update(raw)
+            raw=_provider_json("https://pro.startmining.io/api/market-summary",headers={"User-Agent":"SYNPORA/1.2.0","Accept":"application/json"},ttl_seconds=60)
+            if isinstance(raw,dict): out.update(raw)
         except Exception:
             pass
         out=_fetch_builtin_market_sources(out)
