@@ -386,7 +386,9 @@ def install(app):
     def collect_market(x_market_token:str|None=Header(default=None,alias="X-SYNPORA-MARKET-TOKEN")):
         require_market_admin(x_market_token)
         ext=_external_market()
-        snap={"timestamp":time.time(),
+        now=time.time()
+        ext_quality=_market_quality(ext,now)
+        snap={"timestamp":now,
               "btc_price_usd":ext.get("btcPrice"),
               "btc_hashprice_usd_ph_day":ext.get("hashpriceUsd"),
               "btc_difficulty":ext.get("difficulty"),
@@ -396,7 +398,8 @@ def install(app):
               "gpu_l40s_power_kw":0.35,
               "gpu_utilization":0.70,
               "gpu_platform_fee":0.15,
-              "source":"Startmining API + RunPod reference" if ext else "fallback"}
+              "source":"startmining_external_plus_reference_prices",
+              "data_quality":ext_quality}
         c=init_db()
         _ensure_market_table(c)
         values=(secrets.token_hex(12),snap["timestamp"],json.dumps(snap),
@@ -603,7 +606,11 @@ def install(app):
         require_market_admin(x_market_token)
         c=init_db()
         snap={"timestamp":time.time(),"btc_hashprice_usd_ph_day":39.6395,"eur_usd":1.1205,
-              "gpu_l40s_usd_hour":1.09,"gpu_l40s_power_kw":0.35}
+              "gpu_l40s_usd_hour":1.09,"gpu_l40s_power_kw":0.35,
+              "source":"manual_reference_snapshot",
+              "data_quality":{"overall":"reference","settlement_basis":"reference_inputs",
+                              "fields":{"btc_hashprice_usd_ph_day":"reference","eur_usd":"reference",
+                                        "gpu_l40s_usd_hour":"reference","gpu_l40s_power_kw":"reference"}}}
         _ensure_market_table(c)
         vals=(secrets.token_hex(12),snap["timestamp"],json.dumps(snap),None,snap["btc_hashprice_usd_ph_day"],None,None,
               snap["eur_usd"],snap["gpu_l40s_usd_hour"],snap["gpu_l40s_power_kw"],0.70,0.15,None)
@@ -878,6 +885,7 @@ def install(app):
         decisions=c.execute("SELECT id,chosen,predicted_value,ts FROM decision_ledger WHERE farm_id=? AND status='open' ORDER BY ts ASC LIMIT 100",(farm_id,)).fetchall()
         settled=0
         skipped_invalid=0
+        sources_used=set()
         for d in decisions:
             try:
                 decision_ts=float(d[3])
@@ -927,6 +935,7 @@ def install(app):
                     continue
                 actual_best=max(economics.values())
                 regret=max(0.0,actual_best-float(actual))
+                sources_used.add(str(payload.get("source") or payload.get("data_quality",{}).get("overall") or "unspecified"))
                 c.execute("UPDATE decision_ledger SET actual_value=?,actual_best_value=?,regret_eur_kwh=?,status='settled',settled_at=? WHERE id=? AND status='open'",
                           (float(actual),float(actual_best),float(regret),time.time(),d[0]))
                 settled+=1
@@ -934,7 +943,8 @@ def install(app):
         try: c.commit()
         except Exception: pass
         return {"settled_now":settled,"open_remaining":max(0,len(decisions)-settled),
-                "skipped_invalid_snapshots":skipped_invalid,"method":"first_valid_later_market_snapshot"}
+                "skipped_invalid_snapshots":skipped_invalid,"snapshot_sources_used":sorted(sources_used),
+                "method":"first_valid_later_market_snapshot"}
 
     def _forecast_learning(c, farm_id):
         _ensure_learning_tables(c)
