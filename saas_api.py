@@ -297,7 +297,7 @@ def install(app):
                 raise HTTPException(422, f"{key} must be a finite number")
         positive=("energy_kwh","eur_usd","gpu_power_kw","asic_efficiency_j_th",
                   "btc_device_power_kw","interval_hours","gpu_lifetime_years","btc_lifetime_years")
-        nonnegative=("energy_cost_eur_kwh","btc_hashprice_usd_ph_day","gpu_hourly_usd",
+        nonnegative=("btc_hashprice_usd_ph_day","gpu_hourly_usd",
                      "facility_overhead_kw","btc_facility_overhead_kw","gpu_facility_overhead_kw",
                      "battery_degradation_eur_kwh","grid_export_fee_eur_kwh","battery_value_eur_kwh",
                      "grid_value_eur_kwh","pv_kwh","battery_capacity_kwh","battery_power_kw",
@@ -312,6 +312,8 @@ def install(app):
         for key in nonnegative:
             if key in values and float(values[key]) < 0:
                 raise HTTPException(422, f"{key} must be zero or greater")
+        if "energy_cost_eur_kwh" in values and not -1.0 <= float(values["energy_cost_eur_kwh"]) <= 10.0:
+            raise HTTPException(422, "energy_cost_eur_kwh must be between -1 and 10 EUR/kWh")
         for key in unit_interval:
             if key not in values:
                 continue
@@ -331,7 +333,7 @@ def install(app):
     def _economics(x):
         _validate_numeric_inputs(x)
         eur_usd=max(float(x.eur_usd),0.01)
-        energy_cost=max(0.0,float(x.energy_cost_eur_kwh))
+        energy_cost=float(x.energy_cost_eur_kwh)
         asic_eff=max(float(x.asic_efficiency_j_th),0.01)
         pool_fee=max(0.0,min(1.0,float(getattr(x,"pool_fee",0.02))))
         tax_rate=max(0.0,min(1.0,float(getattr(x,"tax_rate",0.0))))
@@ -592,9 +594,9 @@ def install(app):
                                     if not __import__("math").isfinite(number): continue
                                     if _field in ("gpu_utilization","gpu_platform_fee"):
                                         if not 0<=number<=1: continue
+                                    elif _field=="austria_spot_eur_kwh":
+                                        if not -1.0<=number<=10.0: continue
                                     elif number<=0: continue
-                                    if _field=="austria_spot_eur_kwh" and not -1.0<=number<=10.0:
-                                        continue
                                     out[target]=number
                                     feed_meta[target]={"source":"external","provider":feed_source,
                                         "observed_at":observed,"age_seconds":round(age,1),"valid":True}
@@ -1063,7 +1065,7 @@ def install(app):
                 for key in ("btc_hashprice_usd_ph_day","gpu_l40s_usd_hour","eur_usd","austria_spot_eur_kwh"):
                     try:
                         value=float(payload[key])
-                        if not __import__("math").isfinite(value) or value<=0:
+                        if not __import__("math").isfinite(value) or (value<=0 and key!="austria_spot_eur_kwh") or (key=="austria_spot_eur_kwh" and not -1.0<=value<=10.0):
                             valid=False; break
                         values[key]=value
                     except (KeyError,TypeError,ValueError):
