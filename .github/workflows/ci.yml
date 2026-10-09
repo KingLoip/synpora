@@ -334,6 +334,23 @@ jobs:
           print("SYNPORA API end-to-end smoke test: OK")
           PY
 
+      - name: Operations dashboard smoke test
+        run: |
+          SYNPORA_JWT_SECRET=ci-test-secret python - <<'PY'
+          from fastapi.testclient import TestClient
+          from server import app
+          c=TestClient(app)
+          ops=c.get("/ops")
+          assert ops.status_code==200, ops.text
+          assert "SYNPORA – Betriebsstatus" in ops.text
+          assert "/api/v1/system/production-readiness" in ops.text
+          assert "setInterval(refresh,30000)" in ops.text
+          assert ops.headers.get("content-security-policy")
+          health=c.get("/health")
+          assert health.status_code==200 and health.json()["status"]=="ok", health.text
+          print("SYNPORA operations dashboard smoke test: OK")
+          PY
+
       - name: Docker build smoke test
         run: docker build --pull=false -t synpora-ci .
 
@@ -364,6 +381,13 @@ jobs:
           assert '/api/v1/market/data-health' in s
           assert '/api/v1/farms/{farm_id}/paper-trading' in s
           assert 'SYNPORA_MARKET_DATA_URL' in s
+          assert 'SYNPORA_MARKET_DATA_ALLOWED_HOSTS' in s
+          assert 'SYNPORA_MARKET_DATA_API_KEY' in s
+          assert 'def _market_feed_host_allowed' in s
+          assert 'def _open_market_feed' in s
+          assert 'HTTPRedirectHandler' in s
+          assert '/ops' in Path("server.py").read_text()
+          assert 'Content-Security-Policy' in Path("server.py").read_text()
           assert 'expected_shortfall_p05' in s
           assert 'combined_downside' in s
           assert 'def _database_required()' in s
