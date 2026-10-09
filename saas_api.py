@@ -682,13 +682,18 @@ def install(app):
         battery_capacity_kwh: float=100
         battery_reserve_pct: float=20
         battery_value_eur_kwh: float=0.071
+        battery_degradation_eur_kwh: float=0.015
+        battery_round_trip_efficiency: float=0.90
         grid_value_eur_kwh: float=0.055
+        grid_export_fee_eur_kwh: float=0.0
         btc_hashprice_usd_ph_day: float=38.75
         eur_usd: float=1.1205
         gpu_hourly_usd: float=1.09
         gpu_utilization: float=0.70
         gpu_platform_fee: float=0.15
         asic_efficiency_j_th: float=20.0
+        btc_facility_overhead_kw: float=0.0
+        gpu_facility_overhead_kw: float=0.0
 
     def _adaptive_model_weights(c, series_key):
         rows=c.execute("SELECT ts,btc_hashprice_usd_ph_day,gpu_hourly_usd,austria_spot_eur_kwh FROM market_snapshots ORDER BY ts DESC LIMIT 168").fetchall()
@@ -918,7 +923,13 @@ def install(app):
         candidates=[{"name":a["name"],"kind":"AI Compute" if str(a["kind"]).upper()=="GPU" else "BTC Mining","power":float(a["power_kw"] or 0)} for a in assets if str(a["kind"]).upper() in ("GPU","BTC") and float(a["power_kw"] or 0)>0]
         plan=[]; trace=[]; summary={"btc_kwh":0.0,"gpu_kwh":0.0,"grid_export_kwh":0.0,"battery_charge_kwh":0.0,"battery_discharge_kwh":0.0,"total_value_eur":0.0,"energy_cost_eur":0.0}
         for h in range(hours):
-            btc=(float(btc_fc[h])/x.eur_usd)/(x.asic_efficiency_j_th*1000)*.98*.98; gpu=(float(gpu_fc[h])/x.eur_usd)*x.gpu_utilization*(1-x.gpu_platform_fee)/.35; grid=x.grid_value_eur_kwh; price=float(energy_fc[h]); before=soc
+            eur_usd=max(0.01,float(x.eur_usd)); asic_eff=max(0.01,float(x.asic_efficiency_j_th)); gpu_util=max(0.0,min(1.0,float(x.gpu_utilization))); gpu_fee=max(0.0,min(0.99,float(x.gpu_platform_fee)))
+            btc_gross=(float(btc_fc[h])/eur_usd)/(asic_eff*1000)*.98*.98
+            btc_over=max(0.0,x.btc_facility_overhead_kw)
+            btc=(btc_gross*(asic_eff/(asic_eff+btc_over)) if btc_over else btc_gross)-float(energy_fc[h])
+            gpu_gross=(float(gpu_fc[h])/eur_usd)*gpu_util*(1-gpu_fee)/(.35+max(0.0,x.gpu_facility_overhead_kw))
+            gpu=gpu_gross-float(energy_fc[h]); grid=max(0.0,x.grid_value_eur_kwh-max(0.0,x.grid_export_fee_eur_kwh)); price=max(0.0,float(energy_fc[h])); before=soc
+            btc=max(0.0,btc); gpu=max(0.0,gpu)
             future=max([btc,gpu,grid]+[max((float(btc_fc[j])/x.eur_usd)/(x.asic_efficiency_j_th*1000)*.98*.98,(float(gpu_fc[j])/x.eur_usd)*x.gpu_utilization*(1-x.gpu_platform_fee)/.35,grid) for j in range(h+1,hours)] or [max(btc,gpu,grid)])
             charge=min(pv[h],power*dt,(cap-soc)/ce) if future>max(btc,gpu,grid)+.005 and cap>soc else 0; soc+=charge*ce; rem=pv[h]-charge; summary["battery_charge_kwh"]+=charge
             ranked=sorted(candidates,key=lambda a:gpu if a["kind"]=="AI Compute" else btc,reverse=True)
@@ -930,7 +941,7 @@ def install(app):
             if rem>0:
                 summary["total_value_eur"]+=grid*rem; summary["energy_cost_eur"]+=price*rem; summary["grid_export_kwh"]+=rem
                 plan.append({"hour":h,"asset":"Grid","action":"Grid","pv_kwh":round(rem,3),"battery_discharge_kwh":0,"battery_charge_kwh":round(charge,3),"grid_export_kwh":round(rem,3),"value_eur_kwh":round(grid,5),"soc_before_pct":round(100*before/cap,2) if cap else 0,"soc_after_pct":round(100*soc/cap,2) if cap else 0,"reason":"PV surplus"})
-            if future>max(btc,gpu,grid)+max(.005,x.battery_value_eur_kwh*.1) and soc>soc_min:
+            if future>max(btc,gpu,grid)+max(.005,x.battery_value_eur_kwh*max(0.01,min(1.0,x.battery_round_trip_efficiency))) and soc>soc_min:
                 kind="AI Compute" if gpu>=btc else "BTC Mining"; target=next((a for a in candidates if a["kind"]==kind),None); value=max(gpu,btc)
                 if target:
                     take=min(target["power"]*dt,(soc-soc_min)*de,power*dt)
@@ -938,7 +949,9 @@ def install(app):
                         soc-=take/de; summary["battery_discharge_kwh"]+=take; summary["total_value_eur"]+=value*take; summary["energy_cost_eur"]+=price*take; summary["gpu_kwh" if kind=="AI Compute" else "btc_kwh"]+=take
                         plan.append({"hour":h,"asset":target["name"],"action":kind,"pv_kwh":0,"battery_discharge_kwh":round(take,3),"battery_charge_kwh":0,"grid_export_kwh":0,"value_eur_kwh":round(value,5),"soc_before_pct":round(100*before/cap,2) if cap else 0,"soc_after_pct":round(100*soc/cap,2) if cap else 0,"reason":"future opportunity value"})
             trace.append({"hour":h,"soc_kwh":round(soc,3),"soc_pct":round(100*soc/cap,2) if cap else 0,"btc_value_eur_kwh":round(btc,5),"gpu_value_eur_kwh":round(gpu,5),"energy_cost_eur_kwh":round(price,5)})
-        summary["net_value_eur"]=round(summary["total_value_eur"]-summary["energy_cost_eur"],2)
+        summary["net_value_eur"]=round(summary["total_value_eur"],2)
+        summary["battery_degradation_cost_eur"]=round(summary["battery_discharge_kwh"]*max(0.0,x.battery_degradation_eur_kwh),3)
+        summary["net_value_eur"]=round(summary["net_value_eur"]-summary["battery_degradation_cost_eur"],2)
         return {"farm_id":farm_id,"horizon_hours":hours,"interval_hours":dt,"plan":plan,"soc_trace":trace,"forecasts":{"btc_hashprice_usd_ph_day":btc_fc,"gpu_hourly_usd":gpu_fc,"energy_cost_eur_kwh":energy_fc},"summary":{k:round(v,3) if isinstance(v,float) else v for k,v in summary.items()},"constraints":{"battery_reserve_pct":reserve,"battery_capacity_kwh":cap,"battery_power_kw":power,"charge_efficiency":ce,"discharge_efficiency":de},"forecast_source":forecast_source,"optimizer":"forecast_aware_horizon_v1","objective":"maximize_expected_value_with_battery_opportunity_cost","recommendation_only":True,"hardware_write":False}
 
     @app.post("/api/v1/farms/{farm_id}/scenario")
