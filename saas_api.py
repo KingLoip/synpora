@@ -1079,6 +1079,8 @@ def install(app):
     def create_farm(x:FarmIn,authorization:str|None=Header(default=None)):
         uid=user(authorization); c=init_db(); fid=secrets.token_hex(12)
         c.execute("INSERT INTO farms VALUES(?,?,?,?)",(fid,uid,x.name.strip()[:120] or "Farm",time.time()))
+        try: c.commit()
+        except Exception: pass
         return {"id":fid,"name":x.name.strip()[:120] or "Farm"}
 
     @app.get("/api/v1/farms/{farm_id}/assets")
@@ -1094,6 +1096,8 @@ def install(app):
         ok=c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone()
         if not ok: raise HTTPException(404,"Farm not found")
         aid=secrets.token_hex(12); c.execute("INSERT INTO assets VALUES(?,?,?,?,?,?)",(aid,farm_id,x.name.strip()[:120],x.kind.strip()[:50],x.power_kw,time.time()))
+        try: c.commit()
+        except Exception: pass
         return {"id":aid,"name":x.name.strip()[:120],"kind":x.kind.strip()[:50],"power_kw":x.power_kw}
 
     @app.get("/api/v1/system/database")
