@@ -975,6 +975,7 @@ def install(app):
                     skipped_ineligible+=1
                     continue
                 # Require compute-market inputs after provenance has been validated.
+                required=("btc_hashprice_usd_ph_day","gpu_l40s_usd_hour")
                 parsed={}
                 valid=True
                 for key in required:
