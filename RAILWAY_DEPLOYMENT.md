@@ -9,7 +9,8 @@ Configure these in the Railway service's Variables tab. Never commit the secret 
 - `DATABASE_URL`: reference the Railway PostgreSQL service's connection URL. Railway deployments disable the SQLite fallback; a missing or unreachable PostgreSQL database must fail closed.
 - `SYNPORA_JWT_SECRET`: a randomly generated secret with at least 32 characters. Changing it invalidates existing login tokens.
 - `SYNPORA_MARKET_ADMIN_TOKEN`: a separate, randomly generated secret with at least 32 characters. It protects market collection, backfill, and manual snapshot endpoints.
-- `SYNPORA_MARKET_DATA_URL` (optional): HTTPS endpoint for a verified external market feed. It must return JSON with a recent Unix `timestamp` (seconds or milliseconds) and fields `btc_hashprice_usd_ph_day`, `gpu_l40s_usd_hour`, `eur_usd`, and `austria_spot_eur_kwh`, plus optional `gpu_l40s_power_kw`, `gpu_utilization`, and `gpu_platform_fee`. Field aliases in camelCase are also accepted. Values older than 15 minutes, invalid values, and non-HTTPS URLs are rejected. Only the four critical values with accepted external provenance can qualify a snapshot for learning.
+- `SYNPORA_VAST_API_KEY` (optional): your Vast.ai API key. When configured, SYNPORA samples live L40S marketplace offers and uses the median per-GPU hourly rate. Without it, GPU pricing remains a reference value unless the custom feed provides a verified value.
+- `SYNPORA_MARKET_DATA_URL` (optional): HTTPS endpoint for a verified external market feed. It must return JSON with a recent Unix `timestamp` (seconds or milliseconds) and fields `btc_hashprice_usd_ph_day`, `gpu_l40s_usd_hour`, `eur_usd`, and `austria_spot_eur_kwh`, plus optional `gpu_l40s_power_kw`, `gpu_utilization`, and `gpu_platform_fee`. Field aliases in camelCase are also accepted. Values older than 15 minutes, invalid values, and non-HTTPS URLs are rejected. Only fields actually provided and validated by this feed receive its provenance.
 - `SYNPORA_MARKET_DATA_ALLOWED_HOSTS` (required when a custom feed URL is configured): comma-separated exact hostnames allowed to serve the feed, e.g. `market-provider.example`. Do not include schemes, paths, credentials, or wildcards. The host must be public; unsafe/private DNS targets and HTTP redirects are rejected. A URL not on this list is ignored.
 - `SYNPORA_MARKET_DATA_API_KEY` (optional): API key sent as `Authorization: Bearer …` to the configured feed. Store the key only in Railway Variables, never in the URL or repository.
 - `PORT`: provided by Railway; do not hard-code it.
@@ -19,6 +20,15 @@ Use distinct values for the JWT secret and market admin token. Do not paste eith
 ## Operations dashboard
 
 Open `/ops` on the deployed service for a live operational overview of production readiness, data freshness/eligibility, warnings, and release safety flags. It refreshes every 30 seconds and never displays secret values. The dashboard is diagnostic, not proof of profitability; the raw JSON is available at `/api/v1/system/production-readiness` and `/api/v1/market/data-health`.
+
+## Built-in market sources
+
+- Bitcoin hashprice and network indicators: Startmining's public market API.
+- EUR/USD: Frankfurter's ECB-provider daily exchange rate; the source date is checked and the value is accepted for up to 96 hours to accommodate weekends.
+- Austrian day-ahead spot electricity: Fraunhofer ISE Energy-Charts current-interval endpoint for bidding zone `AT`; the interval's validity is checked. Energy-Charts data is CC BY 4.0 and should be attributed when republished.
+- GPU L40S rental rate: median of current Vast.ai marketplace offers when `SYNPORA_VAST_API_KEY` is configured. It is an indicative marketplace rate, not a guaranteed contract price; storage, bandwidth, downtime, and workload performance can change realized revenue.
+
+Every source has its own freshness/provenance checks. If a provider is unavailable, stale, or incomplete, SYNPORA falls back to reference values for display but those reference values do not qualify snapshots for learning or backtesting. The custom aggregator feed is optional and can supplement or override individual fields.
 
 ## Market collection
 
