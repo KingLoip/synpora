@@ -302,6 +302,11 @@ jobs:
                           "eur_usd":1.09,"austria_spot_eur_kwh":0.075,
                           "gpu_l40s_power_kw":0.35,"gpu_utilization":0.70,"gpu_platform_fee":0.15})
                   raise OSError("Unexpected feed host in CI")
+          def fake_build_opener(*handlers):
+              assert any(isinstance(handler,type) and issubclass(handler,urllib.request.HTTPRedirectHandler)
+                         and handler().redirect_request(None,None,302,"Found",{},"https://127.0.0.1/") is None
+                         for handler in handlers), "Redirects must be disabled for custom market feeds"
+              return FakeFeedOpener()
           def fake_urlopen(request,timeout=5):
               raise OSError("External network intentionally disabled in CI")
           old_feed_url=os.environ.get("SYNPORA_MARKET_DATA_URL")
@@ -311,7 +316,7 @@ jobs:
           os.environ["SYNPORA_MARKET_DATA_ALLOWED_HOSTS"]="feed.example.test"
           os.environ["SYNPORA_MARKET_DATA_API_KEY"]="ci-feed-secret"
           urllib.request.urlopen=fake_urlopen
-          urllib.request.build_opener=lambda *handlers: FakeFeedOpener()
+          urllib.request.build_opener=fake_build_opener
           socket.getaddrinfo=lambda host,port,type: [(socket.AF_INET,socket.SOCK_STREAM,6,"",("93.184.216.34",port))]
           try:
               feed_market=c.get("/api/v1/market/live")
@@ -324,6 +329,10 @@ jobs:
               assert feed_headers_seen.get("Authorization")=="Bearer ci-feed-secret", feed_headers_seen
               for field in ("btc_hashprice_usd_ph_day","gpu_l40s_usd_hour","eur_usd","austria_spot_eur_kwh"):
                   assert fm["data_quality"]["details"]["fields"][field]["source"]=="external", fm["data_quality"]
+              socket.getaddrinfo=lambda host,port,type: [(socket.AF_INET,socket.SOCK_STREAM,6,"",("127.0.0.1",port))]
+              private_dns=c.get("/api/v1/market/live")
+              assert private_dns.status_code==200 and private_dns.json()["data_quality"]["details"]["configured_feed_accepted"] is False, private_dns.json()
+              socket.getaddrinfo=lambda host,port,type: [(socket.AF_INET,socket.SOCK_STREAM,6,"",("93.184.216.34",port))]
               os.environ["SYNPORA_MARKET_DATA_URL"]="https://evil.example/market"
               rejected=c.get("/api/v1/market/live")
               assert rejected.status_code==200, rejected.text
