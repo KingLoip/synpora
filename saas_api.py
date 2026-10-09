@@ -151,8 +151,8 @@ def install(app):
         battery_value=max(0.0,x.battery_value_eur_kwh*max(0.01,min(1.0,x.battery_round_trip_efficiency))-max(0.0,x.battery_degradation_eur_kwh))
         grid_value=max(0.0,x.grid_value_eur_kwh-max(0.0,x.grid_export_fee_eur_kwh))
         options=[
-          {"option":"AI Compute","value_eur_kwh":max(0.0,ai_value-energy_cost),"gross_value_eur_kwh":ai_value,"energy_cost_eur_kwh":energy_cost,"source":"gpu_market_reference"},
-          {"option":"BTC Mining","value_eur_kwh":max(0.0,btc_value-energy_cost),"gross_value_eur_kwh":btc_value,"energy_cost_eur_kwh":energy_cost,"source":"hashprice_reference"},
+          {"option":"AI Compute","value_eur_kwh":ai_value-energy_cost,"gross_value_eur_kwh":ai_value,"energy_cost_eur_kwh":energy_cost,"source":"gpu_market_reference"},
+          {"option":"BTC Mining","value_eur_kwh":btc_value-energy_cost,"gross_value_eur_kwh":btc_value,"energy_cost_eur_kwh":energy_cost,"source":"hashprice_reference"},
           {"option":"Battery","value_eur_kwh":battery_value,"gross_value_eur_kwh":x.battery_value_eur_kwh,"energy_cost_eur_kwh":0.0,"source":"farm_model"},
           {"option":"Grid","value_eur_kwh":grid_value,"gross_value_eur_kwh":x.grid_value_eur_kwh,"energy_cost_eur_kwh":0.0,"source":"energy_model"}
         ]
@@ -238,7 +238,10 @@ def install(app):
         export_fee=max(0.0,float(getattr(x,"grid_export_fee_eur_kwh",0.0)))
         battery_net=float(x.battery_value_eur_kwh)*rte-degradation
         grid_net=float(x.grid_value_eur_kwh)-export_fee
-        return {"AI Compute":max(0.0,gpu_value-energy_cost),"BTC Mining":max(0.0,btc_value-energy_cost),"Battery":max(0.0,battery_net),"Grid":max(0.0,grid_net)}
+        # Preserve negative net economics for energy-consuming strategies: zero-clamping
+        # hides loss-making mining/compute and can make a bad option look break-even.
+        # Battery/grid remain floored at zero because the model can simply decline dispatch/export.
+        return {"AI Compute":gpu_value-energy_cost,"BTC Mining":btc_value-energy_cost,"Battery":max(0.0,battery_net),"Grid":max(0.0,grid_net)}
 
     def _external_market():
         import urllib.request
