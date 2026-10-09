@@ -858,7 +858,8 @@ def install(app):
                 "ranking":ranked,"risk_aversion":round(av,3),"samples":n,"seed":risk_seed,
                 "fallback":ranked[1]["strategy"] if len(ranked)>1 else None,
                 "explanation":"Risk-adjusted choice from current economics plus seeded Monte-Carlo market shocks; no hardware action is executed.",
-                "method":"unified_forecast_risk_regret_v1","recommendation_only":True,"hardware_write":False}
+                "method":"unified_forecast_risk_regret_v1","cost_model":_economic_cost_model(x),
+                "recommendation_only":True,"hardware_write":False}
 
     @app.post("/api/v1/farms/{farm_id}/decision")
     def record_decision(farm_id:str,x:ScenarioIn,authorization:str|None=Header(default=None)):
