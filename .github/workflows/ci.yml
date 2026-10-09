@@ -210,9 +210,9 @@ jobs:
               raise AssertionError("Production without DATABASE_URL must fail closed")
           except RuntimeError as exc:
               assert "DATABASE_URL is required" in str(exc), str(exc)
-          readiness_required=c.get("/api/v1/system/production-readiness")
-          assert readiness_required.status_code==200, readiness_required.text
-          assert readiness_required.json()["database_backend"]=="unavailable", readiness_required.json()
+              readiness_required=c.get("/api/v1/system/production-readiness")
+              assert readiness_required.status_code==200, readiness_required.text
+              assert readiness_required.json()["database_backend"]=="unavailable", readiness_required.json()
           finally:
               saas.DB_URL=old_db_url
               if old_required is None: os.environ.pop("SYNPORA_REQUIRE_DATABASE",None)
