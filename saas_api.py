@@ -592,7 +592,7 @@ def install(app):
         if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
         _ensure_learning_tables(c)
         vals=_economics(x); chosen=max(vals,key=vals.get); did=secrets.token_hex(12)
-        c.execute("INSERT INTO decision_ledger VALUES(?,?,?,?,?,?,?,?,?)",(did,farm_id,time.time(),chosen,vals[chosen],0.80,"open",None,None))
+        c.execute("INSERT INTO decision_ledger (id,farm_id,ts,chosen,predicted_value,confidence,status,actual_value,settled_at) VALUES(?,?,?,?,?,?,?,?,?)",(did,farm_id,time.time(),chosen,vals[chosen],0.80,"open",None,None))
         try: c.commit()
         except Exception: pass
         return {"decision_id":did,"chosen":chosen,"predicted_value_eur_kwh":round(vals[chosen],6),"confidence":0.80,"status":"open"}
@@ -643,21 +643,9 @@ def install(app):
     def settle_learning(farm_id:str,authorization:str|None=Header(default=None)):
         uid=user(authorization); c=init_db()
         if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
-        _ensure_learning_tables(c)
-        rows=c.execute("SELECT id,chosen,predicted_value FROM decision_ledger WHERE farm_id=? AND status='open' ORDER BY ts LIMIT 100",(farm_id,)).fetchall()
-        markets=c.execute("SELECT ts,payload FROM market_snapshots ORDER BY ts").fetchall()
-        errors=[]
-        for r in rows:
-            if not markets: continue
-            d=json.loads(markets[-1][1]); h=d.get("btc_hashprice_usd_ph_day"); g=d.get("gpu_l40s_usd_hour")
-            if not h or not g: continue
-            s=ScenarioIn(btc_hashprice_usd_ph_day=float(h),gpu_hourly_usd=float(g))
-            actual=_economics(s).get(r[1],0); errors.append(actual-float(r[2]))
-            c.execute("UPDATE decision_ledger SET status='settled',actual_value=?,settled_at=? WHERE id=?",(actual,time.time(),r[0]))
-        try: c.commit()
-        except Exception: pass
-        mae=sum(abs(e) for e in errors)/len(errors) if errors else None
-        return {"settled":len(errors),"mae_eur_kwh":round(mae,6) if mae is not None else None}
+        settlement=_online_learning_update(c,farm_id)
+        stats=_forecast_learning(c,farm_id)
+        return {"farm_id":farm_id,**settlement,"learning":stats,"recommendation_only":True,"hardware_write":False}
 
     @app.get("/api/v1/farms/{farm_id}/learning/calibration")
     def learning_calibration(farm_id:str,authorization:str|None=Header(default=None)):
@@ -722,10 +710,10 @@ def install(app):
         uid=user(authorization); c=init_db()
         if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
         _ensure_learning_tables(c)
-        rows=c.execute("SELECT status,predicted_value,actual_value,confidence FROM decision_ledger WHERE farm_id=? ORDER BY ts DESC LIMIT 500").fetchall()
+        rows=c.execute("SELECT status,predicted_value,actual_value,confidence FROM decision_ledger WHERE farm_id=? ORDER BY ts DESC LIMIT 500",(farm_id,)).fetchall()
         settled=[r for r in rows if r[0]=="settled" and r[2] is not None]
         mae=sum(abs(float(r[2])-float(r[1])) for r in settled)/len(settled) if settled else None
-        return {"samples":len(rows),"settled":len(settled),"open":len(rows)-len(settled),"mae_eur_kwh":round(mae,6) if mae is not None else None,"learning_ready":len(settled)>=5}
+        return {"farm_id":farm_id,"samples":len(rows),"settled":len(settled),"open":sum(1 for r in rows if r[0]=="open"),"mae_eur_kwh":round(mae,6) if mae is not None else None,"learning_ready":len(settled)>=5,"recommendation_only":True}
 
     @app.get("/api/v1/market/history")
     def market_history(limit:int=100):
@@ -881,48 +869,82 @@ def install(app):
 
     def _online_learning_update(c, farm_id):
         from datetime import datetime
-        # Settle against the first market snapshot strictly newer than the decision.
-        # IMPORTANT: actual_value is normalized to the same €/kWh economics used by the optimizer.
+        import math
+        # Settle decisions only against the first later snapshot with usable observed/reference values.
+        # Missing fields are not silently replaced with defaults: otherwise the learner trains on invented data.
         snaps=c.execute("SELECT ts,payload FROM market_snapshots ORDER BY ts ASC").fetchall()
         decisions=c.execute("SELECT id,chosen,predicted_value,ts FROM decision_ledger WHERE farm_id=? AND status='open' ORDER BY ts ASC LIMIT 100",(farm_id,)).fetchall()
         settled=0
+        skipped_invalid=0
         for d in decisions:
-            decision_ts=float(d[3]) if isinstance(d[3],(int,float)) else None
-            if decision_ts is None:
+            try:
+                decision_ts=float(d[3])
+                if not math.isfinite(decision_ts): continue
+            except (TypeError,ValueError):
                 try: decision_ts=datetime.fromisoformat(str(d[3]).replace("Z","+00:00")).timestamp()
                 except Exception: continue
-            actual=None
-            for s in snaps:
-                try: snap_ts=float(s[0])
+            for snap in snaps:
+                try: snap_ts=float(snap[0])
+                except (TypeError,ValueError): continue
+                if not math.isfinite(snap_ts) or snap_ts<=decision_ts: continue
+                try: payload=json.loads(snap[1])
                 except Exception: continue
-                if snap_ts<=decision_ts: continue
-                try: payload=json.loads(s[1])
-                except Exception: continue
-                h=payload.get("btc_hashprice_usd_ph_day")
-                g=payload.get("gpu_l40s_usd_hour")
-                if h is None and g is None: continue
+                # Require both compute-market inputs; do not manufacture one from a fallback constant.
+                required=("btc_hashprice_usd_ph_day","gpu_l40s_usd_hour")
+                parsed={}
+                valid=True
+                for key in required:
+                    try:
+                        value=float(payload[key])
+                        if not math.isfinite(value) or value<0: valid=False; break
+                        parsed[key]=value
+                    except (KeyError,TypeError,ValueError):
+                        valid=False; break
+                if not valid:
+                    skipped_invalid+=1
+                    continue
+                def finite_or(key, default, minimum=0.000001):
+                    try:
+                        value=float(payload.get(key,default))
+                        return value if math.isfinite(value) and value>=minimum else default
+                    except (TypeError,ValueError):
+                        return default
                 scenario=ScenarioIn(
-                    btc_hashprice_usd_ph_day=float(h or 39.64),
-                    gpu_hourly_usd=float(g or 1.09),
-                    eur_usd=float(payload.get("eur_usd") or 1.1205),
-                    energy_cost_eur_kwh=float(payload.get("austria_spot_eur_kwh") or 0.2055),
-                    gpu_power_kw=float(payload.get("gpu_l40s_power_kw") or 0.35),
-                    gpu_utilization=float(payload.get("gpu_utilization") or 0.70),
-                    gpu_platform_fee=float(payload.get("gpu_platform_fee") or 0.15)
+                    btc_hashprice_usd_ph_day=parsed["btc_hashprice_usd_ph_day"],
+                    gpu_hourly_usd=parsed["gpu_l40s_usd_hour"],
+                    eur_usd=finite_or("eur_usd",1.1205),
+                    energy_cost_eur_kwh=finite_or("austria_spot_eur_kwh",0.2055,0.0),
+                    gpu_power_kw=finite_or("gpu_l40s_power_kw",0.35),
+                    gpu_utilization=max(0.0,min(1.0,finite_or("gpu_utilization",0.70,0.0))),
+                    gpu_platform_fee=max(0.0,min(1.0,finite_or("gpu_platform_fee",0.15,0.0)))
                 )
                 economics=_economics(scenario)
                 actual=economics.get(d[1])
-                if actual is not None:
-                    actual_best=max(economics.values())
-                    regret=max(0.0,actual_best-float(actual))
-                    c.execute("UPDATE decision_ledger SET actual_value=?,actual_best_value=?,regret_eur_kwh=?,status='settled',settled_at=? WHERE id=?",
-                              (float(actual),float(actual_best),float(regret),time.time(),d[0]))
-                    settled+=1
+                if actual is None or not math.isfinite(float(actual)): 
+                    skipped_invalid+=1
+                    continue
+                actual_best=max(economics.values())
+                regret=max(0.0,actual_best-float(actual))
+                c.execute("UPDATE decision_ledger SET actual_value=?,actual_best_value=?,regret_eur_kwh=?,status='settled',settled_at=? WHERE id=? AND status='open'",
+                          (float(actual),float(actual_best),float(regret),time.time(),d[0]))
+                settled+=1
                 break
         try: c.commit()
         except Exception: pass
-        remaining=max(0,len(decisions)-settled)
-        return {"settled_now":settled,"open_remaining":remaining}
+        return {"settled_now":settled,"open_remaining":max(0,len(decisions)-settled),
+                "skipped_invalid_snapshots":skipped_invalid,"method":"first_valid_later_market_snapshot"}
+
+    def _forecast_learning(c, farm_id):
+        _ensure_learning_tables(c)
+        rows=c.execute("SELECT status,predicted_value,actual_value,confidence FROM decision_ledger WHERE farm_id=? ORDER BY ts DESC LIMIT 500",(farm_id,)).fetchall()
+        settled=[r for r in rows if r[0]=="settled" and r[2] is not None]
+        mae=sum(abs(float(r[2])-float(r[1])) for r in settled)/len(settled) if settled else None
+        open_count=sum(1 for r in rows if r[0]=="open")
+        return {"samples":len(rows),"settled":len(settled),"open":open_count,
+                "mae_eur_kwh":round(mae,6) if mae is not None else None,
+                "learning_ready":len(settled)>=5,
+                "status":"calibrating" if len(settled)<5 else "learning",
+                "recommendation_only":True}
 
     @app.get("/api/v1/system/release")
     def release_status():
