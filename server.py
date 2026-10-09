@@ -82,7 +82,7 @@ async function refresh(){
     if(results.some(r=>!r.ok))throw new Error('Ein Status-Endpunkt ist nicht erreichbar.');
     const [r,m,v]=await Promise.all(results.map(x=>x.json()));
     show('ready',r.status==='ready'?'Bereit':'Konfiguration prüfen',r.status==='ready'?'ok':'warn',JSON.stringify(r,null,2));
-    const eligible=m.eligible_snapshots||0,excluded=m.excluded_snapshots||0;
+    const eligible=m.eligible_snapshots||0,excluded=m.excluded_or_invalid_snapshots||0;
     const marketKind=(m.latest_eligible_age_seconds!==null&&m.latest_eligible_age_seconds!==undefined&&m.latest_eligible_age_seconds<=1200&&eligible>0)?'ok':'warn';
     show('market',marketKind==='ok'?'Externe Daten vorhanden':'Datenqualität prüfen',marketKind,JSON.stringify(m,null,2));
     show('learning',eligible>0?'Geeignete Snapshots: '+eligible:'Noch keine geeigneten Snapshots',eligible>0?'ok':'warn','Ausgeschlossen: '+excluded+'\nLetzter geeigneter Snapshot (Alter Sekunden): '+(m.latest_eligible_age_seconds??'—')+'\nWarnungen: '+JSON.stringify(m.warnings||[]));
