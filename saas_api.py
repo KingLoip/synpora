@@ -109,6 +109,7 @@ def install(app):
         btc_hashprice_usd_ph_day: float=39.64
         eur_usd: float=1.1205
         asic_efficiency_j_th: float=20.0
+        btc_device_power_kw: float=3.5
         battery_power_kw: float=100.0
         battery_charge_efficiency: float=0.95
         battery_discharge_efficiency: float=0.95
@@ -138,10 +139,11 @@ def install(app):
         if not ok: raise HTTPException(404,"Farm not found")
         # BTC gross revenue per kWh = hashprice / (J/TH) / 1000, adjusted for uptime/pool fee.
         energy_cost=max(0.0,x.energy_cost_eur_kwh)
-        btc_gross=(x.btc_hashprice_usd_ph_day/max(x.eur_usd,0.01))/(max(x.asic_efficiency_j_th,0.01)*1000)
+        btc_gross=(x.btc_hashprice_usd_ph_day/max(x.eur_usd,0.01))/(max(x.asic_efficiency_j_th,0.01)*24)
         btc_gross*=max(0.0,min(1.0,x.uptime))*(1-max(0.0,min(0.99,x.pool_fee)))
         btc_overhead=max(0.0,x.btc_facility_overhead_kw)+max(0.0,x.facility_overhead_kw)
-        btc_value=btc_gross*(max(x.asic_efficiency_j_th,0.01)/(max(x.asic_efficiency_j_th,0.01)+btc_overhead)) if btc_overhead else btc_gross
+        btc_device_power=max(x.btc_device_power_kw,0.01)
+        btc_value=btc_gross*(btc_device_power/(btc_device_power+btc_overhead)) if btc_overhead else btc_gross
         gpu_power=max(x.gpu_power_kw,0.01)
         gpu_gross=((max(0.0,x.gpu_hourly_usd)/max(x.eur_usd,0.01))*max(0.0,min(1.0,x.gpu_utilization))*(1-max(0.0,min(0.99,x.gpu_platform_fee))))/gpu_power
         gpu_overhead=max(0.0,x.gpu_facility_overhead_kw)+max(0.0,x.facility_overhead_kw)
@@ -210,6 +212,7 @@ def install(app):
         gpu_utilization: float=0.70
         gpu_platform_fee: float=0.15
         asic_efficiency_j_th: float=20.0
+        btc_device_power_kw: float=3.5
         btc_facility_overhead_kw: float=0.0
         gpu_facility_overhead_kw: float=0.0
         battery_round_trip_efficiency: float=0.90
@@ -222,12 +225,13 @@ def install(app):
         eur_usd=max(float(x.eur_usd),0.01)
         energy_cost=max(0.0,float(x.energy_cost_eur_kwh))
         asic_eff=max(float(x.asic_efficiency_j_th),0.01)
-        btc_gross=(max(0.0,float(x.btc_hashprice_usd_ph_day))/eur_usd)/(asic_eff*1000)*0.98*0.98
-        btc_overhead=max(0.0,float(getattr(x,"btc_facility_overhead_kw",0.0)))
+        btc_gross=(max(0.0,float(x.btc_hashprice_usd_ph_day))/eur_usd)/(asic_eff*24)*0.98*0.98
+        btc_overhead=max(0.0,float(getattr(x,"btc_facility_overhead_kw",0.0)))+max(0.0,float(getattr(x,"facility_overhead_kw",0.0)))
         gpu_power=max(float(x.gpu_power_kw),0.01)
-        gpu_overhead=max(0.0,float(getattr(x,"gpu_facility_overhead_kw",0.0)))
+        gpu_overhead=max(0.0,float(getattr(x,"gpu_facility_overhead_kw",0.0)))+max(0.0,float(getattr(x,"facility_overhead_kw",0.0)))
         gpu_gross=((max(0.0,float(x.gpu_hourly_usd))/eur_usd)*max(0.0,min(1.0,float(x.gpu_utilization)))*(1-max(0.0,min(0.99,float(x.gpu_platform_fee)))))/gpu_power
-        btc_value=btc_gross*(asic_eff/(asic_eff+btc_overhead)) if btc_overhead else btc_gross
+        btc_device_power=max(float(getattr(x,"btc_device_power_kw",3.5)),0.01)
+        btc_value=btc_gross*(btc_device_power/(btc_device_power+btc_overhead)) if btc_overhead else btc_gross
         gpu_value=gpu_gross*(gpu_power/(gpu_power+gpu_overhead)) if gpu_overhead else gpu_gross
         rte=max(0.01,min(1.0,float(getattr(x,"battery_round_trip_efficiency",0.90))))
         degradation=max(0.0,float(getattr(x,"battery_degradation_eur_kwh",0.015)))
@@ -375,6 +379,7 @@ def install(app):
         gpu_utilization: float=0.70
         gpu_platform_fee: float=0.15
         asic_efficiency_j_th: float=20.0
+        btc_device_power_kw: float=3.5
         btc_facility_overhead_kw: float=0.0
         gpu_facility_overhead_kw: float=0.0
         battery_round_trip_efficiency: float=0.90
@@ -421,7 +426,7 @@ def install(app):
             s=RiskScenarioIn(energy_kwh=x.energy_kwh,energy_cost_eur_kwh=energy,btc_hashprice_usd_ph_day=btc,
                          eur_usd=x.eur_usd,gpu_hourly_usd=gpu,gpu_power_kw=x.gpu_power_kw,
                          gpu_utilization=x.gpu_utilization,gpu_platform_fee=x.gpu_platform_fee,
-                         asic_efficiency_j_th=x.asic_efficiency_j_th,facility_overhead_kw=x.facility_overhead_kw,
+                         asic_efficiency_j_th=x.asic_efficiency_j_th,btc_device_power_kw=x.btc_device_power_kw,facility_overhead_kw=x.facility_overhead_kw,
                          btc_facility_overhead_kw=x.btc_facility_overhead_kw,
                          gpu_facility_overhead_kw=x.gpu_facility_overhead_kw,battery_round_trip_efficiency=x.battery_round_trip_efficiency,
                          battery_degradation_eur_kwh=x.battery_degradation_eur_kwh,grid_export_fee_eur_kwh=x.grid_export_fee_eur_kwh,
@@ -646,6 +651,7 @@ def install(app):
         gpu_utilization: float=0.70
         gpu_platform_fee: float=0.15
         asic_efficiency_j_th: float=20.0
+        btc_device_power_kw: float=3.5
 
     @app.post("/api/v1/farms/{farm_id}/portfolio-optimize")
     def portfolio_optimize(farm_id:str,x:PortfolioIn,authorization:str|None=Header(default=None)):
@@ -659,7 +665,7 @@ def install(app):
                 value=(x.gpu_hourly_usd/x.eur_usd)*x.gpu_utilization*(1-x.gpu_platform_fee)/power
                 candidates.append({"asset_id":a["id"],"asset":a["name"],"kind":"GPU","value_eur_kwh":value,"capacity_kwh":power*x.horizon_hours})
             elif kind=="BTC":
-                value=(x.btc_hashprice_usd_ph_day/x.eur_usd)/(x.asic_efficiency_j_th*1000)*0.98*0.98
+                value=(x.btc_hashprice_usd_ph_day/x.eur_usd)/(x.asic_efficiency_j_th*24)*0.98*0.98
                 candidates.append({"asset_id":a["id"],"asset":a["name"],"kind":"BTC","value_eur_kwh":value,"capacity_kwh":power*x.horizon_hours})
         candidates.sort(key=lambda z:z["value_eur_kwh"],reverse=True)
         remaining=max(0,x.energy_kwh); allocation=[]
@@ -698,6 +704,7 @@ def install(app):
         gpu_utilization: float=0.70
         gpu_platform_fee: float=0.15
         asic_efficiency_j_th: float=20.0
+        btc_device_power_kw: float=3.5
         btc_facility_overhead_kw: float=0.0
         gpu_facility_overhead_kw: float=0.0
         facility_overhead_kw: float=0.0
@@ -933,13 +940,13 @@ def install(app):
         plan=[]; trace=[]; summary={"btc_kwh":0.0,"gpu_kwh":0.0,"pv_generation_kwh":0.0,"pv_to_compute_kwh":0.0,"grid_export_kwh":0.0,"battery_charge_kwh":0.0,"battery_charge_stored_kwh":0.0,"battery_discharge_kwh":0.0,"battery_losses_kwh":0.0,"total_value_eur":0.0,"energy_cost_eur":0.0}
         for h in range(hours):
             eur_usd=max(0.01,float(x.eur_usd)); asic_eff=max(0.01,float(x.asic_efficiency_j_th)); gpu_util=max(0.0,min(1.0,float(x.gpu_utilization))); gpu_fee=max(0.0,min(0.99,float(x.gpu_platform_fee)))
-            btc_gross=(float(btc_fc[h])/eur_usd)/(asic_eff*1000)*.98*.98
+            btc_gross=(float(btc_fc[h])/eur_usd)/(asic_eff*24)*.98*.98
             btc_over=max(0.0,x.btc_facility_overhead_kw)+max(0.0,x.facility_overhead_kw)
             btc=(btc_gross*(asic_eff/(asic_eff+btc_over)) if btc_over else btc_gross)-float(energy_fc[h])
             gpu_gross=(float(gpu_fc[h])/eur_usd)*gpu_util*(1-gpu_fee)/(.35+max(0.0,x.gpu_facility_overhead_kw)+max(0.0,x.facility_overhead_kw))
             gpu=gpu_gross-float(energy_fc[h]); grid=max(0.0,x.grid_value_eur_kwh-max(0.0,x.grid_export_fee_eur_kwh)); price=max(0.0,float(energy_fc[h])); before=soc
             btc=max(0.0,btc); gpu=max(0.0,gpu)
-            future=max([btc,gpu,grid]+[max((float(btc_fc[j])/x.eur_usd)/(x.asic_efficiency_j_th*1000)*.98*.98,(float(gpu_fc[j])/x.eur_usd)*x.gpu_utilization*(1-x.gpu_platform_fee)/.35,grid) for j in range(h+1,hours)] or [max(btc,gpu,grid)])
+            future=max([btc,gpu,grid]+[max((float(btc_fc[j])/x.eur_usd)/(x.asic_efficiency_j_th*24)*.98*.98,(float(gpu_fc[j])/x.eur_usd)*x.gpu_utilization*(1-x.gpu_platform_fee)/.35,grid) for j in range(h+1,hours)] or [max(btc,gpu,grid)])
             summary["pv_generation_kwh"]+=pv[h]
             charge=min(pv[h],power*dt,(cap-soc)/ce) if future>max(btc,gpu,grid)+.005 and cap>soc else 0
             charge=max(0.0,charge); soc+=charge*ce; rem=pv[h]-charge
@@ -984,7 +991,7 @@ def install(app):
                 gross=(x.gpu_hourly_usd/max(x.eur_usd,0.01))*x.gpu_utilization*(1-x.gpu_platform_fee)/a["power_kw"]
                 values["AI Compute"]=max(0.0,gross-x.energy_cost_eur_kwh)
             if a["kind"].upper()=="BTC" and a["power_kw"]>0:
-                gross=(x.btc_hashprice_usd_ph_day/max(x.eur_usd,0.01))/(max(x.asic_efficiency_j_th,0.01)*1000)*0.98*0.98
+                gross=(x.btc_hashprice_usd_ph_day/max(x.eur_usd,0.01))/(max(x.asic_efficiency_j_th,0.01)*24)*0.98*0.98
                 values["BTC Mining"]=max(0.0,gross-x.energy_cost_eur_kwh)
         rows=[{"option":k,"value_eur_kwh":round(v,5),"net_eur":round(v*x.energy_kwh,2)} for k,v in values.items()]
         rows.sort(key=lambda r:r["value_eur_kwh"],reverse=True)
