@@ -1034,6 +1034,72 @@ def install(app):
                 "status":"calibrating" if len(settled)<5 else "learning",
                 "recommendation_only":True}
 
+    @app.get("/api/v1/market/data-health")
+    def market_data_health():
+        c=init_db(); _ensure_market_table(c)
+        rows=c.execute("SELECT ts,payload FROM market_snapshots ORDER BY ts DESC LIMIT ?",(500,)).fetchall()
+        now=time.time(); eligible=[]; excluded=0; latest_quality=None; latest_source=None
+        for row in rows:
+            try:
+                payload=json.loads(row[1] or "{}")
+                if not isinstance(payload,dict):
+                    excluded+=1; continue
+                if latest_quality is None:
+                    latest_quality=payload.get("data_quality"); latest_source=payload.get("source","unknown")
+                if _snapshot_is_learning_eligible(payload):
+                    eligible.append({"ts":float(row[0]),"payload":payload})
+                else:
+                    excluded+=1
+            except (TypeError,ValueError,json.JSONDecodeError):
+                excluded+=1
+        newest=eligible[0] if eligible else None
+        age=max(0.0,now-newest["ts"]) if newest else None
+        status="missing" if not rows else ("no_eligible_data" if not newest else ("stale" if age>900 else "eligible_data_available"))
+        warnings=[]
+        if not rows: warnings.append("No market snapshots have been stored.")
+        if not newest: warnings.append("No snapshot has verified external provenance for every learning-critical field.")
+        elif age>900: warnings.append("The latest eligible external snapshot is older than 15 minutes.")
+        if excluded: warnings.append("Reference, mixed, incomplete, and unknown-provenance snapshots are excluded from learning and backtesting.")
+        return {"status":status,"snapshots_scanned":len(rows),"eligible_snapshots":len(eligible),
+            "excluded_or_invalid_snapshots":excluded,"latest_snapshot_source":latest_source,
+            "latest_snapshot_quality":latest_quality,"latest_eligible_timestamp":newest["ts"] if newest else None,
+            "latest_eligible_age_seconds":round(age,1) if age is not None else None,
+            "learning_fields_required":["btc_hashprice_usd_ph_day","gpu_l40s_usd_hour","eur_usd","austria_spot_eur_kwh"],
+            "warnings":warnings,"recommendation_only":True,"hardware_write":False}
+
+    @app.get("/api/v1/farms/{farm_id}/paper-trading")
+    def paper_trading_status(farm_id:str,authorization:str|None=Header(default=None)):
+        uid=user(authorization); c=init_db()
+        if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone():
+            raise HTTPException(404,"Farm not found")
+        _ensure_learning_tables(c)
+        rows=c.execute("SELECT chosen,predicted_value,confidence,status,actual_value,actual_best_value,regret_eur_kwh,ts,settled_at FROM decision_ledger WHERE farm_id=? ORDER BY ts DESC LIMIT 500",(farm_id,)).fetchall()
+        settled=[r for r in rows if r[3]=="settled" and r[4] is not None]
+        open_rows=[r for r in rows if r[3]=="open"]
+        now=time.time(); by_strategy={}
+        for strategy in ("AI Compute","BTC Mining","Battery","Grid"):
+            group=[r for r in settled if r[0]==strategy]
+            by_strategy[strategy]={"settled":len(group),
+                "mean_prediction_error_eur_kwh":round(sum(abs(float(r[4])-float(r[1])) for r in group)/len(group),6) if group else None,
+                "mean_regret_eur_kwh":round(sum(float(r[6] or 0.0) for r in group)/len(group),6) if group else None}
+        errors=[abs(float(r[4])-float(r[1])) for r in settled]
+        regrets=[float(r[6] or 0.0) for r in settled]
+        return {"farm_id":farm_id,"mode":"paper_trading_only",
+            "status":"collecting" if len(settled)<24 else "evaluation_available",
+            "decisions_tracked":len(rows),"settled_decisions":len(settled),"open_decisions":len(open_rows),
+            "oldest_open_age_seconds":round(max(0.0,now-min(float(r[7]) for r in open_rows)),1) if open_rows else None,
+            "mean_prediction_error_eur_kwh":round(sum(errors)/len(errors),6) if errors else None,
+            "mean_regret_eur_kwh":round(sum(regrets)/len(regrets),6) if regrets else None,
+            "strategy_metrics":by_strategy,
+            "recent_decisions":[{"strategy":r[0],"predicted_value_eur_kwh":float(r[1]),"confidence":float(r[2]),
+                "status":r[3],"actual_value_eur_kwh":float(r[4]) if r[4] is not None else None,
+                "actual_best_value_eur_kwh":float(r[5]) if r[5] is not None else None,
+                "regret_eur_kwh":float(r[6]) if r[6] is not None else None,"timestamp":float(r[7]),
+                "settled_at":float(r[8]) if r[8] is not None else None} for r in rows[:50]],
+            "recommendation_only":True,"hardware_write":False,
+            "warnings":["This endpoint reports recommendations only; it does not execute trades or control hardware.",
+                *(["Fewer than 24 settled decisions are available; performance conclusions are premature."] if len(settled)<24 else [])]}
+
     @app.get("/api/v1/system/release")
     def release_status():
         return {"product":"SYNPORA","release":"1.0.1","ai_core":"self_learning_v1",
@@ -1241,20 +1307,98 @@ def install(app):
             rs=sorted(regret[k]); mean=sum(rs)/n; p95=rs[min(n-1,int(.95*n))]; out[k]={"mean_regret_eur_kwh":round(mean,5),"p95_regret_eur_kwh":round(p95,5),"max_regret_eur_kwh":round(rs[-1],5),"winner_probability":round(winners[k]/n,4)}
         safest=min(out,key=lambda k:out[k]["p95_regret_eur_kwh"]); return {"farm_id":farm_id,"samples":n,"seed":int(x.seed),"strategies":out,"lowest_tail_regret":safest,"method":"stochastic_regret_analysis","recommendation_only":True}
 
+    class BacktestIn(BaseModel):
+        min_samples: int=24
+        max_snapshots: int=1000
+
     @app.post("/api/v1/farms/{farm_id}/backtest")
-    def backtest(farm_id:str,authorization:str|None=Header(default=None)):
+    def backtest(farm_id:str,x:BacktestIn,authorization:str|None=Header(default=None)):
         uid=user(authorization); c=init_db()
-        if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
-        base=ScenarioIn()
-        multipliers=[0.65,0.8,0.95,1.0,1.1,1.25,1.4]
-        samples=[]; total_ai=total_btc=0.0
-        for m in multipliers:
-            s=ScenarioIn(energy_kwh=100,energy_cost_eur_kwh=0.05,btc_hashprice_usd_ph_day=base.btc_hashprice_usd_ph_day*m,gpu_hourly_usd=base.gpu_hourly_usd*m)
-            vals=_economics(s); best=max(vals,key=vals.get)
-            samples.append({"market_multiplier":m,"best":best,"best_value_eur_kwh":round(vals[best],5),"ai_net_eur":round(vals["AI Compute"]*100,2),"btc_net_eur":round(vals["BTC Mining"]*100,2)})
-            total_ai+=vals["AI Compute"]*100; total_btc+=vals["BTC Mining"]*100
-        wins={k:sum(1 for s in samples if s["best"]==k) for k in ["AI Compute","BTC Mining","Battery","Grid"]}
-        return {"farm_id":farm_id,"samples":samples,"wins":wins,"cumulative_net_eur":{"ai":round(total_ai,2),"btc":round(total_btc,2),"delta_ai_vs_btc":round(total_ai-total_btc,2)},"method":"synthetic_market_sensitivity","recommendation_only":True}
+        if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone():
+            raise HTTPException(404,"Farm not found")
+        _ensure_market_table(c)
+        limit=max(2,min(5000,int(x.max_snapshots)))
+        min_samples=max(1,min(500,int(x.min_samples)))
+        raw=c.execute("SELECT ts,payload FROM market_snapshots ORDER BY ts DESC LIMIT ?",(limit,)).fetchall()
+        observations=[]; excluded=0
+        for row in reversed(raw):
+            try:
+                payload=json.loads(row[1] or "{}")
+                if not isinstance(payload,dict) or not _snapshot_is_learning_eligible(payload):
+                    excluded+=1
+                    continue
+                values={}
+                valid=True
+                for key in ("btc_hashprice_usd_ph_day","gpu_l40s_usd_hour","eur_usd","austria_spot_eur_kwh"):
+                    try:
+                        value=float(payload[key])
+                        if not __import__("math").isfinite(value) or value<=0:
+                            valid=False; break
+                        values[key]=value
+                    except (KeyError,TypeError,ValueError):
+                        valid=False; break
+                if not valid:
+                    excluded+=1
+                    continue
+                def optional_number(key,default,minimum=0.000001,maximum=None):
+                    try:
+                        value=float(payload.get(key,default))
+                        if not __import__("math").isfinite(value) or value<minimum or (maximum is not None and value>maximum):
+                            return default
+                        return value
+                    except (TypeError,ValueError):
+                        return default
+                observations.append({"ts":float(row[0]),"values":values,
+                    "gpu_power":optional_number("gpu_l40s_power_kw",0.35),
+                    "gpu_utilization":optional_number("gpu_utilization",0.70,0.0,1.0),
+                    "gpu_fee":optional_number("gpu_platform_fee",0.15,0.0,1.0)})
+            except (TypeError,ValueError,json.JSONDecodeError):
+                excluded+=1
+        pairs=[]
+        for i in range(len(observations)-1):
+            current,nxt=observations[i],observations[i+1]
+            if nxt["ts"]<=current["ts"]:
+                continue
+            def to_scenario(obs):
+                v=obs["values"]
+                return RiskScenarioIn(energy_cost_eur_kwh=v["austria_spot_eur_kwh"],
+                    btc_hashprice_usd_ph_day=v["btc_hashprice_usd_ph_day"],
+                    gpu_hourly_usd=v["gpu_l40s_usd_hour"],eur_usd=v["eur_usd"],
+                    gpu_power_kw=obs["gpu_power"],gpu_utilization=obs["gpu_utilization"],
+                    gpu_platform_fee=obs["gpu_fee"])
+            predicted=_economics(to_scenario(current))
+            actual=_economics(to_scenario(nxt))
+            chosen=max(predicted,key=predicted.get)
+            pairs.append({"chosen":chosen,"predicted":float(predicted[chosen]),"actual":float(actual[chosen]),
+                "actual_best":float(max(actual.values())),"regret":float(max(0.0,max(actual.values())-actual[chosen])),
+                "actual_best_strategy":max(actual,key=actual.get),"actual_values":actual,
+                "from_ts":current["ts"],"to_ts":nxt["ts"]})
+        n=len(pairs); strategies=("AI Compute","BTC Mining","Battery","Grid")
+        benchmarks={}
+        for name in strategies:
+            vals=[p["actual_values"][name] for p in pairs]
+            benchmarks[name]={"mean_next_period_value_eur_kwh":round(sum(vals)/len(vals),6) if vals else None,
+                              "observations":len(vals)}
+        mae=sum(abs(p["actual"]-p["predicted"]) for p in pairs)/n if n else None
+        regret=sum(p["regret"] for p in pairs)/n if n else None
+        accuracy=sum(1 for p in pairs if p["chosen"]==p["actual_best_strategy"])/n if n else None
+        warnings=[]
+        if n<min_samples:
+            warnings.append(f"Need at least {min_samples} eligible walk-forward pairs; only {n} are available.")
+        warnings.append("Strict walk-forward: strategy choice uses snapshot t; scoring uses the next eligible snapshot.")
+        warnings.append("Reference, mixed, incomplete and unknown-provenance snapshots are excluded. Historical results do not guarantee future returns.")
+        return {"farm_id":farm_id,"status":"insufficient_data" if n<min_samples else "evaluated",
+            "method":"strict_walk_forward_next_snapshot_v1","eligible_snapshots":len(observations),
+            "excluded_snapshots":excluded,"evaluated_pairs":n,"minimum_pairs_required":min_samples,
+            "metrics":{"prediction_mae_eur_kwh":round(mae,6) if mae is not None else None,
+                "mean_regret_eur_kwh":round(regret,6) if regret is not None else None,
+                "strategy_selection_accuracy":round(accuracy,4) if accuracy is not None else None},
+            "benchmark_by_strategy":benchmarks,
+            "recent_evaluations":[{"from_timestamp":p["from_ts"],"to_timestamp":p["to_ts"],
+                "chosen_strategy":p["chosen"],"predicted_value_eur_kwh":round(p["predicted"],6),
+                "actual_next_value_eur_kwh":round(p["actual"],6),"actual_best_strategy":p["actual_best_strategy"],
+                "regret_eur_kwh":round(p["regret"],6)} for p in pairs[-20:]],
+            "warnings":warnings,"recommendation_only":True,"hardware_write":False}
 
     class AuthIn(BaseModel):
         email: str
