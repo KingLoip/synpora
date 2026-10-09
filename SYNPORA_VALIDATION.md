@@ -31,6 +31,8 @@ A mixed snapshot is not partially used for training/backtesting. Reference-only 
 ## Important limitations
 
 - The current Startmining collector can provide selected Bitcoin market fields, but EUR/USD, Austrian spot energy and GPU pricing remain reference values unless a verified external provider supplies them. A response marked `partial` or `fallback` is not an eligible learning label.
+- Operators can configure `SYNPORA_MARKET_DATA_URL` to an HTTPS JSON endpoint. The feed must provide a recent Unix `timestamp` (seconds or milliseconds) and verified values for the required fields. Data older than 15 minutes is rejected. Provider configuration alone does not prove that the endpoint returns trustworthy data; monitor `data-health` and field-level provenance.
+- Risk analysis now includes P05, a lower-tail expected-shortfall metric, probability of negative outcomes, and four deterministic stress cases. `risk_gate` is a warning based on simulated assumptions, not a safety guarantee.
 - A successful API response or CI test does not prove that a live provider is available, that Railway secrets are set, or that production PostgreSQL persists data after restart.
 - Backtesting measures historical simulated strategy values using the model's assumptions. It is not a promise of future returns and is not a substitute for fees, tax, hardware depreciation, downtime, contract availability or full site-specific engineering inputs.
 - Keep `hardware_write=false` and `autonomous_control=false`. These APIs are recommendation and observation tools only.
