@@ -129,19 +129,63 @@ def install(app):
         ext=_external_market()
         now=time.time()
         quality=_market_quality(ext,now)
+        fields=quality["fields"]
         return {
             "btc_price_usd":ext.get("btcPrice"),
             "btc_hashprice_usd_ph_day":ext.get("hashpriceUsd") if ext.get("hashpriceUsd") is not None else 38.75,
             "btc_difficulty":ext.get("difficulty"),
             "network_hashrate_eh":ext.get("networkHashrate"),
-            "eur_usd":1.1205,
-            "austria_spot_eur_kwh":0.2055,
-            "gpu":{"model":"L40S","hourly_usd":1.09,"power_kw":0.35,"utilization":0.70,"platform_fee":0.15,"source":"RunPod pricing reference"},
-            "sources":["Startmining API (best effort)","EUR/USD reference","Austrian spot energy reference","GPU pricing reference"],
-            "data_quality":{"btc":"live_external" if quality["fields"]["btc_price_usd"]["available"] else "missing","hashprice":"live_external" if quality["fields"]["btc_hashprice_usd_ph_day"]["available"] else "fallback","gpu":"reference","energy":"reference","overall":quality["status"],"details":quality},
+            "eur_usd":fields["eur_usd"]["value"],
+            "austria_spot_eur_kwh":fields["austria_spot_eur_kwh"]["value"],
+            "gpu":{"model":"L40S","hourly_usd":fields["gpu_l40s_usd_hour"]["value"],
+                   "power_kw":ext.get("gpuPowerKw",0.35),"utilization":ext.get("gpuUtilization",0.70),
+                   "platform_fee":ext.get("gpuPlatformFee",0.15),
+                   "source":"configured external feed" if fields["gpu_l40s_usd_hour"]["source"]=="external" else "pricing reference"},
+            "sources":["Startmining API (best effort)",
+                "Configured external market feed" if ext.get("_configuredFeedAccepted") else "Reference FX, Austrian energy and GPU pricing where no verified feed value is available"],
+            "data_quality":{"btc":"live_external" if fields["btc_price_usd"]["available"] else "missing",
+                "hashprice":"live_external" if fields["btc_hashprice_usd_ph_day"]["source"]=="external" else "fallback",
+                "gpu":fields["gpu_l40s_usd_hour"]["source"],"energy":fields["austria_spot_eur_kwh"]["source"],
+                "overall":quality["status"],"details":quality},
             "snapshot_freshness":_market_snapshot_freshness(init_db(),now),
             "timestamp":now
         }
+
+    @app.post("/api/v1/market/collect")
+    def collect_market(x_market_token:str|None=Header(default=None,alias="X-SYNPORA-MARKET-TOKEN")):
+        require_market_admin(x_market_token)
+        ext=_external_market()
+        now=time.time()
+        ext_quality=_market_quality(ext,now)
+        fields=ext_quality["fields"]
+        all_critical_external=all(fields[k]["source"]=="external" for k in
+            ("btc_hashprice_usd_ph_day","gpu_l40s_usd_hour","eur_usd","austria_spot_eur_kwh"))
+        snap={"timestamp":now,
+              "btc_price_usd":ext.get("btcPrice"),
+              "btc_hashprice_usd_ph_day":fields["btc_hashprice_usd_ph_day"]["value"],
+              "btc_difficulty":ext.get("difficulty"),
+              "network_hashrate_eh":ext.get("networkHashrate"),
+              "eur_usd":fields["eur_usd"]["value"],
+              "austria_spot_eur_kwh":fields["austria_spot_eur_kwh"]["value"],
+              "gpu_l40s_usd_hour":fields["gpu_l40s_usd_hour"]["value"],
+              "gpu_l40s_power_kw":ext.get("gpuPowerKw",0.35),
+              "gpu_utilization":ext.get("gpuUtilization",0.70),
+              "gpu_platform_fee":ext.get("gpuPlatformFee",0.15),
+              "source":"configured_external_market_feed" if all_critical_external else "startmining_external_plus_reference_prices",
+              "data_quality":ext_quality}
+        c=init_db()
+        _ensure_market_table(c)
+        values=(secrets.token_hex(12),snap["timestamp"],json.dumps(snap),
+                snap["btc_price_usd"],snap["btc_hashprice_usd_ph_day"],snap["btc_difficulty"],snap["network_hashrate_eh"],
+                snap["eur_usd"],snap["gpu_l40s_usd_hour"],snap["gpu_l40s_power_kw"],snap["gpu_utilization"],
+                snap["gpu_platform_fee"],snap["austria_spot_eur_kwh"])
+        c.execute("""INSERT INTO market_snapshots
+            (id,ts,payload,btc_price_usd,btc_hashprice_usd_ph_day,btc_difficulty,network_hashrate_eh,eur_usd,
+             gpu_l40s_usd_hour,gpu_l40s_power_kw,gpu_utilization,gpu_platform_fee,austria_spot_eur_kwh)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",values)
+        try: c.commit()
+        except Exception: pass
+        return snap
 
     @app.post("/api/v1/farms/{farm_id}/optimize")
     def optimize(farm_id:str,x:OptimizeIn,authorization:str|None=Header(default=None)):
@@ -306,37 +350,91 @@ def install(app):
                 if isinstance(raw,dict): out.update(raw)
         except Exception:
             pass
+        # Optional operator-configured provider for the four fields needed by learning.
+        # It must be HTTPS and include a recent Unix timestamp (seconds or milliseconds).
+        feed_url=os.getenv("SYNPORA_MARKET_DATA_URL","").strip()
+        if feed_url:
+            parsed=urlparse(feed_url)
+            if parsed.scheme=="https" and parsed.hostname:
+                try:
+                    req=urllib.request.Request(feed_url,headers={"User-Agent":"SYNPORA/1.0"})
+                    with urllib.request.urlopen(req,timeout=5) as r:
+                        feed=json.loads(r.read().decode())
+                    if isinstance(feed,dict):
+                        observed=feed.get("timestamp",feed.get("observed_at"))
+                        observed=float(observed)
+                        if observed>1e11: observed/=1000.0
+                        age=time.time()-observed
+                        if -60<=age<=900:
+                            mapping={
+                                "btc_hashprice_usd_ph_day":("hashpriceUsd",("btc_hashprice_usd_ph_day","hashprice_usd_ph_day")),
+                                "gpu_l40s_usd_hour":("gpuHourlyUsd",("gpu_l40s_usd_hour","gpu_hourly_usd","gpuHourlyUsd")),
+                                "eur_usd":("eurUsd",("eur_usd","eurUsd")),
+                                "austria_spot_eur_kwh":("austriaSpotEurKwh",("austria_spot_eur_kwh","austriaSpotEurKwh")),
+                                "gpu_l40s_power_kw":("gpuPowerKw",("gpu_l40s_power_kw","gpuPowerKw")),
+                                "gpu_utilization":("gpuUtilization",("gpu_utilization","gpuUtilization")),
+                                "gpu_platform_fee":("gpuPlatformFee",("gpu_platform_fee","gpuPlatformFee")),
+                            }
+                            accepted=0
+                            for _field,(target,aliases) in mapping.items():
+                                value=next((feed[k] for k in aliases if k in feed),None)
+                                try:
+                                    number=float(value)
+                                    if not __import__("math").isfinite(number): continue
+                                    if _field in ("gpu_utilization","gpu_platform_fee"):
+                                        if not 0<=number<=1: continue
+                                    elif number<=0: continue
+                                    out[target]=number
+                                    accepted+=1
+                                except (TypeError,ValueError):
+                                    continue
+                            if accepted:
+                                out["_configuredFeedAccepted"]=True
+                                out["_configuredFeedObservedAt"]=observed
+                                out["_configuredFeedSource"]=str(feed.get("source","configured_external_feed"))[:80]
+                except Exception:
+                    # Fail closed: unavailable, malformed or stale provider data is ignored.
+                    pass
         return out
 
     def _market_quality(ext, now=None):
-        # Distinguish genuinely external observations from hard-coded reference values.
+        # A field is external only when a validated provider returned a finite value.
         now=time.time() if now is None else float(now)
-        fields={
-            "btc_price_usd":("btcPrice","external",lambda v:float(v)>0),
-            "btc_hashprice_usd_ph_day":("hashpriceUsd","external",lambda v:float(v)>0),
-            "btc_difficulty":("difficulty","external",lambda v:float(v)>0),
-            "network_hashrate_eh":("networkHashrate","external",lambda v:float(v)>0),
-        }
         observed={}
-        for name,(key,source,valid) in fields.items():
+        for name,key in (("btc_price_usd","btcPrice"),("btc_hashprice_usd_ph_day","hashpriceUsd"),
+                         ("btc_difficulty","difficulty"),("network_hashrate_eh","networkHashrate")):
             value=ext.get(key)
-            try: ok=value is not None and valid(value)
+            try: ok=value is not None and __import__("math").isfinite(float(value)) and float(value)>0
             except (TypeError,ValueError): ok=False
-            observed[name]={"available":bool(ok),"source":source if ok else "missing","value":value if ok else None}
-        observed.update({
-            "eur_usd":{"available":True,"source":"reference","value":1.1205},
-            "austria_spot_eur_kwh":{"available":True,"source":"reference","value":0.2055},
-            "gpu_l40s_usd_hour":{"available":True,"source":"reference","value":1.09},
-        })
+            observed[name]={"available":bool(ok),"source":"external" if ok else "missing","value":float(value) if ok else None}
+        configured=bool(ext.get("_configuredFeedAccepted"))
+        feed_age=(now-float(ext.get("_configuredFeedObservedAt",0))) if configured else None
+        feed_fresh=configured and feed_age is not None and -60<=feed_age<=900
+        refs={
+            "eur_usd":("eurUsd",1.1205,lambda v:float(v)>0),
+            "austria_spot_eur_kwh":("austriaSpotEurKwh",0.2055,lambda v:float(v)>0),
+            "gpu_l40s_usd_hour":("gpuHourlyUsd",1.09,lambda v:float(v)>0),
+        }
+        for name,(key,fallback,valid) in refs.items():
+            value=ext.get(key)
+            try: ok=feed_fresh and value is not None and valid(value)
+            except (TypeError,ValueError): ok=False
+            observed[name]={"available":True,"source":"external","value":float(value)} if ok else {"available":True,"source":"reference","value":fallback}
         live=sum(1 for v in observed.values() if v["source"]=="external")
-        refs=sum(1 for v in observed.values() if v["source"]=="reference")
+        reference=sum(1 for v in observed.values() if v["source"]=="reference")
         missing=sum(1 for v in observed.values() if v["source"]=="missing")
-        return {"fields":observed,"external_fields":live,"reference_fields":refs,"missing_fields":missing,
-                "status":"live" if live>=3 else ("partial" if live else "fallback"),
-                "generated_at":now,"warnings":[
-                    *(["External market feed is incomplete; missing values are not represented as live."] if missing else []),
-                    "EUR/USD, Austrian spot energy and GPU pricing are reference values, not verified live quotes."
-                ]}
+        critical=("btc_hashprice_usd_ph_day","gpu_l40s_usd_hour","eur_usd","austria_spot_eur_kwh")
+        all_critical_external=all(observed[k]["source"]=="external" for k in critical)
+        warnings=[]
+        if missing: warnings.append("External Bitcoin market feed is incomplete; missing values are not represented as live.")
+        if reference: warnings.append("EUR/USD, Austrian spot energy and GPU pricing contain reference values, not verified live quotes.")
+        if configured and not feed_fresh: warnings.append("Configured market feed timestamp is stale or invalid; its values were not accepted.")
+        return {"fields":observed,"external_fields":live,"reference_fields":reference,"missing_fields":missing,
+                "status":"live" if all_critical_external else ("partial" if live else "fallback"),
+                "generated_at":now,"configured_feed_accepted":bool(feed_fresh),
+                "configured_feed_source":ext.get("_configuredFeedSource") if feed_fresh else None,
+                "configured_feed_age_seconds":round(feed_age,1) if feed_fresh else None,
+                "warnings":warnings}
 
     def _market_snapshot_freshness(c, now=None):
         # Reference snapshots must not be mistaken for live observations.
