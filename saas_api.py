@@ -1012,7 +1012,7 @@ def install(app):
         uid=user(authorization); c=init_db()
         _ensure_market_table(c)
         if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
-        learn=_forecast_learning(c)
+        learn=_forecast_learning(c,farm_id)
         models=_model_select(c)
         conf={"btc":_ensemble_confidence(c,"btc"),"gpu":_ensemble_confidence(c,"gpu"),"energy":_ensemble_confidence(c,"energy")}
         hours=max(1,min(72,x.horizon_hours))
