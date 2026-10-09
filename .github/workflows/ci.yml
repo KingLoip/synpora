@@ -64,6 +64,7 @@ jobs:
           assert body["recommended"] in {"AI Compute","BTC Mining","Battery","Grid"}
           assert 0 <= body["risk_aversion"] <= 1
           assert "expected_regret_eur_kwh" in body["decision"]
+          assert body["hardware_write"] is False
           assert body["method"] == "unified_forecast_risk_regret_v1"
           assert body["recommendation_only"] is True
           assert body["method"] == "unified_forecast_risk_regret_v1"
@@ -101,6 +102,7 @@ jobs:
           assert 'SELECT ts,payload FROM market_snapshots' in s
           assert 'forecast_hit_rate' in s
           assert '/api/v1/farms/{farm_id}/risk-analysis' in s
+          assert s.count("def risk_analysis(farm_id:str,x:RiskScenarioIn") == 1
           assert 'risk_aversion' in s
           assert '/api/v1/farms/{farm_id}/decision-engine' in s
           assert 'unified_forecast_risk_regret_v1' in s
