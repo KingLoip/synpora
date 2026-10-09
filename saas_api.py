@@ -825,7 +825,7 @@ def install(app):
         return out,weights
 
     def _model_select(c):
-        rows=c.execute("SELECT ts,btc_hashprice_usd_ph_day,gpu_hourly_usd,austria_spot_eur_kwh FROM market_snapshots WHERE btc_hashprice_usd_ph_day IS NOT NULL ORDER BY ts DESC LIMIT 168").fetchall()
+        rows=c.execute("SELECT ts,btc_hashprice_usd_ph_day,gpu_hourly_usd,austria_spot_eur_kwh FROM market_snapshots ORDER BY ts DESC LIMIT 168").fetchall()
         result={}
         for name,idx in (("btc",1),("gpu",2),("energy",3)):
             y=[float(r[idx]) for r in rows if r[idx] is not None]
