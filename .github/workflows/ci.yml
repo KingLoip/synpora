@@ -340,6 +340,13 @@ jobs:
           assert 'SQLite fallback is disabled in production' in s
           assert 'SYNPORA_JWT_SECRET must contain at least 32 characters in production' in s
           assert 'market_admin_token_strong' in s
+          assert '/api/v1/farms/{farm_id}/backtest' in s
+          assert 'strict_walk_forward_next_snapshot_v1' in s
+          assert '/api/v1/market/data-health' in s
+          assert '/api/v1/farms/{farm_id}/paper-trading' in s
+          assert 'SYNPORA_MARKET_DATA_URL' in s
+          assert 'expected_shortfall_p05' in s
+          assert 'combined_downside' in s
           assert 'def _database_required()' in s
           assert 'hardware_write":False' in s
           print("SYNPORA release invariants: OK")
