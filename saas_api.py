@@ -372,6 +372,11 @@ def install(app):
         gpu_utilization: float=0.70
         gpu_platform_fee: float=0.15
         asic_efficiency_j_th: float=20.0
+        btc_facility_overhead_kw: float=0.0
+        gpu_facility_overhead_kw: float=0.0
+        battery_round_trip_efficiency: float=0.90
+        battery_degradation_eur_kwh: float=0.015
+        grid_export_fee_eur_kwh: float=0.0
         battery_value_eur_kwh: float=0.071
         grid_value_eur_kwh: float=0.055
         scenarios: int=200
@@ -409,15 +414,17 @@ def install(app):
             btc=max(0.01,float(x.btc_hashprice_usd_ph_day)*rng.lognormvariate(0,shock))
             gpu=max(0.01,float(x.gpu_hourly_usd)*rng.lognormvariate(0,shock))
             energy=max(0.001,float(x.energy_cost_eur_kwh)*rng.lognormvariate(0,shock*0.65))
-            s=ScenarioIn(energy_kwh=x.energy_kwh,energy_cost_eur_kwh=energy,btc_hashprice_usd_ph_day=btc,
+            s=RiskScenarioIn(energy_kwh=x.energy_kwh,energy_cost_eur_kwh=energy,btc_hashprice_usd_ph_day=btc,
                          eur_usd=x.eur_usd,gpu_hourly_usd=gpu,gpu_power_kw=x.gpu_power_kw,
                          gpu_utilization=x.gpu_utilization,gpu_platform_fee=x.gpu_platform_fee,
-                         asic_efficiency_j_th=x.asic_efficiency_j_th,battery_value_eur_kwh=x.battery_value_eur_kwh,
-                         grid_value_eur_kwh=x.grid_value_eur_kwh)
+                         asic_efficiency_j_th=x.asic_efficiency_j_th,btc_facility_overhead_kw=x.btc_facility_overhead_kw,
+                         gpu_facility_overhead_kw=x.gpu_facility_overhead_kw,battery_round_trip_efficiency=x.battery_round_trip_efficiency,
+                         battery_degradation_eur_kwh=x.battery_degradation_eur_kwh,grid_export_fee_eur_kwh=x.grid_export_fee_eur_kwh,
+                         battery_value_eur_kwh=x.battery_value_eur_kwh,grid_value_eur_kwh=x.grid_value_eur_kwh)
             econ=_economics(s)
             for k,v in econ.items():
-                strategy_values[k].append((float(v)-energy)*float(x.energy_kwh))
-        base_net={k:(float(v)-x.energy_cost_eur_kwh)*x.energy_kwh for k,v in base.items()}
+                strategy_values[k].append(float(v)*float(x.energy_kwh))
+        base_net={k:float(v)*x.energy_kwh for k,v in base.items()}
         metrics={k:_risk_metrics(v,base_net[k]) for k,v in strategy_values.items()}
         ranked=sorted(metrics,key=lambda k:(metrics[k]["p10"],metrics[k]["mean"]),reverse=True)
         robust=ranked[0] if ranked else None
