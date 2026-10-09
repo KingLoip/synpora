@@ -942,7 +942,8 @@ def install(app):
             eur_usd=max(0.01,float(x.eur_usd)); asic_eff=max(0.01,float(x.asic_efficiency_j_th)); gpu_util=max(0.0,min(1.0,float(x.gpu_utilization))); gpu_fee=max(0.0,min(0.99,float(x.gpu_platform_fee)))
             btc_gross=(float(btc_fc[h])/eur_usd)/(asic_eff*24)*.98*.98
             btc_over=max(0.0,x.btc_facility_overhead_kw)+max(0.0,x.facility_overhead_kw)
-            btc=(btc_gross*(asic_eff/(asic_eff+btc_over)) if btc_over else btc_gross)-float(energy_fc[h])
+            btc_device_power=max(0.01,float(x.btc_device_power_kw))
+            btc=(btc_gross*(btc_device_power/(btc_device_power+btc_over)) if btc_over else btc_gross)-float(energy_fc[h])
             gpu_gross=(float(gpu_fc[h])/eur_usd)*gpu_util*(1-gpu_fee)/(.35+max(0.0,x.gpu_facility_overhead_kw)+max(0.0,x.facility_overhead_kw))
             gpu=gpu_gross-float(energy_fc[h]); grid=max(0.0,x.grid_value_eur_kwh-max(0.0,x.grid_export_fee_eur_kwh)); price=max(0.0,float(energy_fc[h])); before=soc
             btc=max(0.0,btc); gpu=max(0.0,gpu)
@@ -989,9 +990,13 @@ def install(app):
         for a in assets:
             if a["kind"].upper()=="GPU" and a["power_kw"]>0:
                 gross=(x.gpu_hourly_usd/max(x.eur_usd,0.01))*x.gpu_utilization*(1-x.gpu_platform_fee)/a["power_kw"]
+                overhead=max(0.0,x.gpu_facility_overhead_kw)+max(0.0,x.facility_overhead_kw)
+                if overhead: gross*=a["power_kw"]/(a["power_kw"]+overhead)
                 values["AI Compute"]=max(0.0,gross-x.energy_cost_eur_kwh)
             if a["kind"].upper()=="BTC" and a["power_kw"]>0:
                 gross=(x.btc_hashprice_usd_ph_day/max(x.eur_usd,0.01))/(max(x.asic_efficiency_j_th,0.01)*24)*0.98*0.98
+                overhead=max(0.0,x.btc_facility_overhead_kw)+max(0.0,x.facility_overhead_kw)
+                if overhead: gross*=a["power_kw"]/(a["power_kw"]+overhead)
                 values["BTC Mining"]=max(0.0,gross-x.energy_cost_eur_kwh)
         rows=[{"option":k,"value_eur_kwh":round(v,5),"net_eur":round(v*x.energy_kwh,2)} for k,v in values.items()]
         rows.sort(key=lambda r:r["value_eur_kwh"],reverse=True)
