@@ -81,9 +81,6 @@ jobs:
               assert 0 <= metrics["probability_negative"] <= 1, (name,metrics)
           assert len(rb["stress_scenarios"]) == 4, rb
           assert rb["risk_gate"]["status"] in {"loss_exposure","high_uncertainty","within_simulated_limits"}, rb
-              assert metrics["p10"] <= metrics["p50"] <= metrics["p90"], (name,metrics)
-              assert metrics["downside"] >= 0 and metrics["volatility"] >= 0, (name,metrics)
-              assert 0 <= metrics["probability_positive"] <= 1, (name,metrics)
           risk_repeat=c.post(f"/api/v1/farms/{farm}/risk-analysis",headers=h,json=risk_payload)
           assert risk_repeat.status_code==200, risk_repeat.text
           rr=risk_repeat.json()
