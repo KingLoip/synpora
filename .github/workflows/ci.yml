@@ -93,6 +93,13 @@ jobs:
           assert scenario.status_code==200, scenario.text
           btc_value=next(row["value_eur_kwh"] for row in scenario.json()["ranking"] if row["option"]=="BTC Mining")
           assert 0.01 < btc_value < 0.10, btc_value
+          # Invalid physical and financial inputs must fail clearly instead of being clamped silently.
+          invalid_energy=c.post(f"/api/v1/farms/{farm}/scenario",headers=h,json={"energy_kwh":-1})
+          assert invalid_energy.status_code==422, invalid_energy.text
+          invalid_shock=c.post(f"/api/v1/farms/{farm}/risk-analysis",headers=h,json={"shock_pct":1.0})
+          assert invalid_shock.status_code==422, invalid_shock.text
+          invalid_soc=c.post(f"/api/v1/farms/{farm}/dispatch-plan",headers=h,json={"battery_soc_pct":101})
+          assert invalid_soc.status_code==422, invalid_soc.text
           # Loss-making compute/mining must stay negative rather than being hidden as break-even.
           loss=c.post(f"/api/v1/farms/{farm}/scenario",headers=h,json={
               "energy_kwh":100,"energy_cost_eur_kwh":10.0,
