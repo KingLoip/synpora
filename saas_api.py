@@ -1041,22 +1041,6 @@ def install(app):
         aid=secrets.token_hex(12); c.execute("INSERT INTO assets VALUES(?,?,?,?,?,?)",(aid,farm_id,x.name.strip()[:120],x.kind.strip()[:50],x.power_kw,time.time()))
         return {"id":aid,"name":x.name.strip()[:120],"kind":x.kind.strip()[:50],"power_kw":x.power_kw}
 
-    @app.get("/api/v1/system/production-readiness")
-    def production_readiness():
-        db_configured=bool(DB_URL)
-        db_reachable=False
-        db_backend="postgresql" if db_configured else "sqlite_fallback"
-        db_error=None
-        try:
-            c=init_db()
-            db_reachable=True
-            c.close()
-        except Exception as e:
-            db_error=type(e).__name__
-        jwt_configured=bool(JWT_SECRET)
-        ready=bool(db_configured and db_reachable and jwt_configured)
-        return {"status":"ready" if ready else "not_ready","database_configured":db_configured,"database_reachable":db_reachable,"database_backend":db_backend,"database_error":db_error,"jwt_secret_configured":jwt_configured,"hardware_write_enabled":False,"autonomous_control_enabled":False,"recommendation_only":True,"external_market_layer":True}
-
     @app.get("/api/v1/system/database")
     def database():
         return {"persistent_database":"postgresql" if DB_URL else "sqlite_fallback","configured":bool(DB_URL)}
