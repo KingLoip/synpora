@@ -199,6 +199,21 @@ jobs:
           for path in ("/api/v1/market/collect", "/api/v1/market/backfill", "/api/v1/market/snapshot"):
               protected=c.post(path)
               assert protected.status_code==403, (path, protected.status_code, protected.text)
+          # Production must never silently fall back to ephemeral SQLite.
+          import backend.app.saas_api as saas
+          old_db_url=saas.DB_URL
+          old_required=os.environ.get("SYNPORA_REQUIRE_DATABASE")
+          saas.DB_URL=""
+          os.environ["SYNPORA_REQUIRE_DATABASE"]="1"
+          try:
+              saas._conn()
+              raise AssertionError("Production without DATABASE_URL must fail closed")
+          except RuntimeError as exc:
+              assert "DATABASE_URL is required" in str(exc), str(exc)
+          finally:
+              saas.DB_URL=old_db_url
+              if old_required is None: os.environ.pop("SYNPORA_REQUIRE_DATABASE",None)
+              else: os.environ["SYNPORA_REQUIRE_DATABASE"]=old_required
           print("SYNPORA API end-to-end smoke test: OK")
           PY
 
@@ -224,6 +239,8 @@ jobs:
           assert '/api/v1/system/production-readiness' in s
           assert 'security' in s
           assert 'SYNPORA_REQUIRE_DATABASE' in s
+          assert 'SQLite fallback is disabled in production' in s
+          assert 'def _database_required()' in s
           assert 'hardware_write":False' in s
           print("SYNPORA release invariants: OK")
           PY
