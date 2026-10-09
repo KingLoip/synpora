@@ -26,14 +26,20 @@ class _DBCompat:
     def close(self):
         return self._conn.close()
 
+def _database_required():
+    # Railway deployments must fail closed rather than silently using ephemeral SQLite.
+    return os.getenv("SYNPORA_REQUIRE_DATABASE","0")=="1" or bool(os.getenv("RAILWAY_ENVIRONMENT","").strip())
+
 def _conn():
     if DB_URL:
         try:
             import psycopg
             return _DBCompat(psycopg.connect(DB_URL, autocommit=True), postgres=True)
         except Exception as e:
-            if os.getenv("SYNPORA_REQUIRE_DATABASE","0")=="1":
+            if _database_required():
                 raise RuntimeError("PostgreSQL connection required but unavailable") from e
+    elif _database_required():
+        raise RuntimeError("DATABASE_URL is required; SQLite fallback is disabled in production")
     conn=sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory=sqlite3.Row
     return _DBCompat(conn, postgres=False)
