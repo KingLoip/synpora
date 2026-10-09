@@ -457,7 +457,8 @@ def install(app):
         return {"decision_id":did,"chosen":chosen,"predicted_value_eur_kwh":round(vals[chosen],6),"confidence":0.80,"status":"open"}
 
     @app.post("/api/v1/market/snapshot")
-    def market_snapshot():
+    def market_snapshot(x_market_token:str|None=Header(default=None,alias="X-SYNPORA-MARKET-TOKEN")):
+        require_market_admin(x_market_token)
         c=init_db()
         snap={"timestamp":time.time(),"btc_hashprice_usd_ph_day":39.6395,"eur_usd":1.1205,
               "gpu_l40s_usd_hour":1.09,"gpu_l40s_power_kw":0.35}
