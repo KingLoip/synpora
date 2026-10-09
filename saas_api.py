@@ -816,6 +816,7 @@ def install(app):
             "risk_gate":{"status":risk_gate,"basis":"simulated_p05_and_probability_positive",
                 "note":"A scenario gate is a warning, not a guarantee; input assumptions and external data quality still matter."},
             "method":"deterministic_seeded_monte_carlo_lognormal_shocks_with_stress_tests",
+            "cost_model":_economic_cost_model(x),
             "recommendation_only":True,"hardware_write":False
         }
 
