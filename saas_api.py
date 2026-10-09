@@ -1100,4 +1100,13 @@ def install(app):
     def database():
         return {"persistent_database":"postgresql" if DB_URL else "sqlite_fallback","configured":bool(DB_URL)}
 
+    # Keep the frontend root mount after API routes. Otherwise Starlette may
+    # return 405 for POST /api/... before reaching the routes installed here.
+    try:
+        from starlette.routing import Mount
+        root_mounts=[r for r in app.router.routes if isinstance(r,Mount) and r.path in ("", "/")]
+        if root_mounts:
+            app.router.routes=[r for r in app.router.routes if r not in root_mounts]+root_mounts
+    except Exception:
+        pass
     return app
