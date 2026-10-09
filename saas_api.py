@@ -360,7 +360,7 @@ def install(app):
         except Exception:
             return False
 
-    def _open_market_feed(feed_url, timeout=5):
+    def _open_market_feed(feed_url, timeout=5, headers=None):
         # Reject private DNS targets and redirects to prevent internal-service SSRF.
         import socket, ipaddress, urllib.request
         host=urlparse(feed_url).hostname
@@ -373,7 +373,8 @@ def install(app):
             def redirect_request(self, req, fp, code, msg, headers, newurl):
                 return None
         opener=urllib.request.build_opener(NoRedirect)
-        return opener.open(feed_url,timeout=timeout)
+        request=urllib.request.Request(feed_url,headers=headers or {"Accept":"application/json"})
+        return opener.open(request,timeout=timeout)
 
     def _external_market():
         import urllib.request
@@ -398,7 +399,7 @@ def install(app):
                     if api_key:
                         headers["Authorization"]="Bearer "+api_key
                     req=urllib.request.Request(feed_url,headers=headers)
-                    with _open_market_feed(feed_url,timeout=5) as r:
+                    with _open_market_feed(feed_url,timeout=5,headers=headers) as r:
                         feed=json.loads(r.read(262145).decode())
                     if len(json.dumps(feed))>262144:
                         raise ValueError("Market feed response is too large")
