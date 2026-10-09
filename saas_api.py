@@ -996,7 +996,13 @@ def install(app):
         c=init_db(); uid=secrets.token_hex(12)
         try:
             c.execute("INSERT INTO users VALUES(?,?,?,?)",(uid,email,_hash(x.password),time.time()))
-        except Exception: raise HTTPException(409,"Email already registered")
+        except Exception as e:
+            try: c.close()
+            except Exception: pass
+            message=str(e).lower()
+            if "unique" in message or "duplicate key" in message or "users.email" in message:
+                raise HTTPException(409,"Email already registered")
+            raise HTTPException(503,"Registration temporarily unavailable")
         farm_id=secrets.token_hex(12); c.execute("INSERT INTO farms VALUES(?,?,?,?)",(farm_id,uid,"My first farm",time.time()))
         try: c.commit()
         except Exception: pass
