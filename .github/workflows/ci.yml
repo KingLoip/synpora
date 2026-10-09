@@ -76,7 +76,11 @@ jobs:
           assert rb["recommendation_only"] is True and rb["hardware_write"] is False, rb
           assert set(rb["strategies"]) == {"AI Compute","BTC Mining","Battery","Grid"}, rb["strategies"]
           for name,metrics in rb["strategies"].items():
-              assert all(k in metrics for k in ("mean","p10","p50","p90","downside","volatility","probability_positive")), (name,metrics)
+              assert all(k in metrics for k in ("mean","p05","p10","p50","p90","expected_shortfall_p05","downside","volatility","probability_positive","probability_negative")), (name,metrics)
+              assert metrics["expected_shortfall_p05"] <= metrics["p05"] <= metrics["p10"] <= metrics["p50"] <= metrics["p90"], (name,metrics)
+              assert 0 <= metrics["probability_negative"] <= 1, (name,metrics)
+          assert len(rb["stress_scenarios"]) == 4, rb
+          assert rb["risk_gate"]["status"] in {"loss_exposure","high_uncertainty","within_simulated_limits"}, rb
               assert metrics["p10"] <= metrics["p50"] <= metrics["p90"], (name,metrics)
               assert metrics["downside"] >= 0 and metrics["volatility"] >= 0, (name,metrics)
               assert 0 <= metrics["probability_positive"] <= 1, (name,metrics)
