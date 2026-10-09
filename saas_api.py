@@ -79,6 +79,8 @@ def _uid(token):
 def install(app):
     from fastapi import Header, HTTPException
     from pydantic import BaseModel
+    routes_before=list(app.router.routes)
+    original_route_ids={id(r) for r in routes_before}
     init_db()
     @app.get("/api/v1/system/status")
     def status():
@@ -1104,13 +1106,15 @@ def install(app):
     def database():
         return {"persistent_database":"postgresql" if DB_URL else "sqlite_fallback","configured":bool(DB_URL)}
 
-    # Keep the frontend root mount after API routes. Otherwise Starlette may
-    # return 405 for POST /api/... before reaching the routes installed here.
+    # Prefer these explicit SaaS API handlers over legacy duplicate routes,
+    # and keep the frontend root mount last so it cannot shadow API methods.
     try:
         from starlette.routing import Mount
-        root_mounts=[r for r in app.router.routes if isinstance(r,Mount) and r.path in ("", "/")]
-        if root_mounts:
-            app.router.routes=[r for r in app.router.routes if r not in root_mounts]+root_mounts
+        all_routes=list(app.router.routes)
+        root_mounts=[r for r in all_routes if isinstance(r,Mount) and r.path in ("", "/")]
+        new_routes=[r for r in all_routes if id(r) not in original_route_ids and r not in root_mounts]
+        existing_routes=[r for r in all_routes if id(r) in original_route_ids and r not in root_mounts]
+        app.router.routes=new_routes+existing_routes+root_mounts
     except Exception:
         pass
     return app
