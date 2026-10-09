@@ -43,7 +43,7 @@ jobs:
           PY
       - name: API end-to-end smoke test
         run: |
-          SYNPORA_JWT_SECRET=ci-test-secret python - <<'PY'
+          SYNPORA_JWT_SECRET=ci-test-secret SYNPORA_DISABLE_BUILTIN_MARKET_SOURCES=1 python - <<'PY'
           from fastapi.testclient import TestClient
           from backend.app.main import app
           from backend.app.saas_api import install
@@ -233,6 +233,49 @@ jobs:
           assert mq["details"]["fields"]["eur_usd"]["source"]=="reference", mq
           assert mq["details"]["fields"]["austria_spot_eur_kwh"]["source"]=="reference", mq
           assert mq["details"]["fields"]["gpu_l40s_usd_hour"]["source"]=="reference", mq
+          # Built-in provider adapters validate provider timestamps, energy units and GPU offers.
+          import urllib.request, datetime
+          old_urlopen_builtin=urllib.request.urlopen
+          old_disabled=os.environ.pop("SYNPORA_DISABLE_BUILTIN_MARKET_SOURCES",None)
+          old_vast_key=os.environ.get("SYNPORA_VAST_API_KEY")
+          os.environ["SYNPORA_VAST_API_KEY"]="ci-vast-test-key"
+          class BuiltinResponse:
+              def __init__(self,payload): self.payload=payload
+              def __enter__(self): return self
+              def __exit__(self,*args): return False
+              def read(self,size=-1): return json.dumps(self.payload).encode()
+          def builtin_urlopen(request,timeout=5):
+              url=request.full_url if hasattr(request,"full_url") else str(request)
+              now=time.time()
+              if "pro.startmining.io" in url:
+                  return BuiltinResponse({"hashpriceUsd":41.0,"btcPrice":82000.0,"difficulty":100.0,"networkHashrate":900.0})
+              if "frankfurter.dev" in url:
+                  return BuiltinResponse({"date":datetime.datetime.now(datetime.timezone.utc).date().isoformat(),"base":"EUR","quote":"USD","rate":1.12})
+              if "energy-charts.info" in url:
+                  return BuiltinResponse({"series":[{"id":"price","name":"Price","unit":"EUR/MWh"}],
+                      "data":[{"timestamp":datetime.datetime.fromtimestamp(now-300,datetime.timezone.utc).isoformat(),"values":{"price":75.0}}],
+                      "attributes":{"valid_until":datetime.datetime.fromtimestamp(now+1800,datetime.timezone.utc).isoformat()}})
+              if "cloud.vast.ai" in url:
+                  return BuiltinResponse({"offers":[{"gpu_name":"NVIDIA L40S","dph_total":1.20,"num_gpus":1},
+                      {"gpu_name":"NVIDIA L40S","dph_total":1.40,"num_gpus":1}]})
+              raise OSError("Unexpected network request in provider adapter test")
+          urllib.request.urlopen=builtin_urlopen
+          try:
+              builtins=c.get("/api/v1/market/live")
+              assert builtins.status_code==200, builtins.text
+              bm=builtins.json()
+              assert bm["data_quality"]["overall"]=="live", bm["data_quality"]
+              assert bm["data_quality"]["details"]["fields"]["eur_usd"]["source"]=="external", bm["data_quality"]
+              assert bm["data_quality"]["details"]["fields"]["eur_usd"]["provider"].startswith("Frankfurter"), bm["data_quality"]
+              assert bm["data_quality"]["details"]["fields"]["austria_spot_eur_kwh"]["source"]=="external", bm["data_quality"]
+              assert abs(bm["austria_spot_eur_kwh"]-0.075)<0.00001, bm["austria_spot_eur_kwh"]
+              assert bm["data_quality"]["details"]["fields"]["gpu_l40s_usd_hour"]["source"]=="external", bm["data_quality"]
+              assert abs(bm["gpu"]["hourly_usd"]-1.30)<0.00001, bm["gpu"]
+          finally:
+              urllib.request.urlopen=old_urlopen_builtin
+              if old_disabled is not None: os.environ["SYNPORA_DISABLE_BUILTIN_MARKET_SOURCES"]=old_disabled
+              if old_vast_key is None: os.environ.pop("SYNPORA_VAST_API_KEY",None)
+              else: os.environ["SYNPORA_VAST_API_KEY"]=old_vast_key
           # Configured feed must be HTTPS, timestamp-fresh and field-validated before provenance is external.
           import urllib.request, socket
           original_urlopen=urllib.request.urlopen
