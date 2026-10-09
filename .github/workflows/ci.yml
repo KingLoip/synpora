@@ -161,6 +161,7 @@ jobs:
           assert learning_status.json()["open"]>=1, learning_status.json()
           # A later valid market snapshot must settle the pending decision exactly once.
           import os
+          import backend.app.saas_api as saas
           os.environ["SYNPORA_MARKET_ADMIN_TOKEN"]="ci-market-secret"
           snap=c.post("/api/v1/market/snapshot",headers={"X-SYNPORA-MARKET-TOKEN":"ci-market-secret"})
           assert snap.status_code==200, snap.text
