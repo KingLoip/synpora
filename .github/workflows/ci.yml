@@ -96,6 +96,10 @@ jobs:
           btc_value=next(row["value_eur_kwh"] for row in scenario.json()["ranking"] if row["option"]=="BTC Mining")
           assert 0.01 < btc_value < 0.10, btc_value
           assert "cost_model" in scenario.json(), scenario.json()
+          negative_spot=c.post(f"/api/v1/farms/{farm}/scenario",headers=h,json={"energy_cost_eur_kwh":-0.05})
+          assert negative_spot.status_code==200, negative_spot.text
+          negative_values={row["option"]:row["value_eur_kwh"] for row in negative_spot.json()["ranking"]}
+          assert negative_values["BTC Mining"]>btc_value, (negative_values,btc_value)
           costed=c.post(f"/api/v1/farms/{farm}/scenario",headers=h,json={
               "energy_kwh":100,"energy_cost_eur_kwh":0.05,
               "btc_hashprice_usd_ph_day":39.64,"asic_efficiency_j_th":20,
