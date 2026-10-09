@@ -274,6 +274,12 @@ jobs:
           assert bt["status"]=="evaluated" and bt["evaluated_pairs"]>=2, bt
           assert bt["metrics"]["mean_regret_eur_kwh"] is not None, bt
           assert bt["recommendation_only"] is True and bt["hardware_write"] is False, bt
+          benchmark=c.get(f"/api/v1/farms/{farm}/benchmark",headers=h)
+          assert benchmark.status_code==200, benchmark.text
+          bm=benchmark.json()
+          assert bm["method"]=="provenance_gated_snapshot_benchmark", bm
+          assert bm["samples"]>=3 and bm["excluded_snapshots"]>=2, bm
+          assert "Grid" in bm["mean_net_eur_per_100_kwh"], bm
           data_health=c.get("/api/v1/market/data-health")
           assert data_health.status_code==200, data_health.text
           dh=data_health.json()
