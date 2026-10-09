@@ -67,6 +67,7 @@ jobs:
           assert body["hardware_write"] is False
           assert body["method"] == "unified_forecast_risk_regret_v1"
           assert body["recommendation_only"] is True
+          assert "cost_model" in body, body
           risk_payload={"scenarios":50,"seed":42,"risk_aversion":0.5}
           risk=c.post(f"/api/v1/farms/{farm}/risk-analysis",headers=h,json=risk_payload)
           assert risk.status_code==200, risk.text
@@ -456,6 +457,12 @@ jobs:
           assert 'SYNPORA_MARKET_DATA_URL' in s
           assert 'SYNPORA_MARKET_DATA_ALLOWED_HOSTS' in s
           assert 'SYNPORA_MARKET_DATA_API_KEY' in s
+          assert 'SYNPORA_VAST_API_KEY' in s
+          assert 'api.frankfurter.dev/v2/providers/ecb/rate/eur/usd' in s
+          assert 'api.energy-charts.info/v2/price_current?bzn=AT' in s
+          assert 'cloud.vast.ai/api/v0/bundles/' in s
+          assert 'gpu_capex_eur' in s and 'btc_capex_eur' in s
+          assert 'depreciation_and_maintenance_eur_kwh' in s
           assert 'def _market_feed_host_allowed' in s
           assert 'def _open_market_feed' in s
           assert 'HTTPRedirectHandler' in s
