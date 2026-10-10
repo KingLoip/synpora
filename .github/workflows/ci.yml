@@ -285,6 +285,9 @@ jobs:
               now=time.time()
               if "pro.startmining.io" in url:
                   return BuiltinResponse({"hashpriceUsd":41.0,"btcPrice":82000.0,"difficulty":100.0,"networkHashrate":900.0})
+              if "stratumv2.com" in url:
+                  return BuiltinResponse({"pricePerPH":40.5,"btcPrice":81900.0,"difficulty":101.0,
+                      "timestamp":datetime.datetime.fromtimestamp(now,datetime.timezone.utc).isoformat()})
               if "frankfurter.dev" in url:
                   return BuiltinResponse({"date":datetime.datetime.now(datetime.timezone.utc).date().isoformat(),"base":"EUR","quote":"USD","rate":1.12})
               if "energy-charts.info" in url:
@@ -666,6 +669,8 @@ jobs:
           assert 'api.frankfurter.dev/v2/providers/ecb/rate/eur/usd' in s
           assert 'api.energy-charts.info/v2/price_current?bzn=AT' in s
           assert 'api.zarobit.com/api/v1/prices/current?gpu_model=L40S' in s
+          assert 'stratumv2.com/api/hashprice' in s
+          assert 'Stratum V2 hashprice API' in s
           assert 'attribute Zarobit' in s
           assert 'cloud.vast.ai/api/v0/bundles/' in s
           assert '"source_url"' in s and '"license":"CC BY 4.0; attribute Energy-Charts.info"' in s

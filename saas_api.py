@@ -652,6 +652,42 @@ def install(app):
         meta=out.setdefault("_fieldMeta",{})
         if os.getenv("SYNPORA_DISABLE_BUILTIN_MARKET_SOURCES","").strip().lower() in ("1","true","yes"):
             return out
+        # Timestamped public fallback for BTC hashprice if Startmining is unavailable or stale.
+        try:
+            hp_meta=meta.get("hashpriceUsd",{})
+            hp_stamp=hp_meta.get("observed_at")
+            hp_age=now-float(hp_stamp) if hp_stamp is not None else float("inf")
+            hp_value=float(out.get("hashpriceUsd"))
+            hp_fresh=hp_meta.get("source")=="external" and hp_meta.get("valid",False) and math.isfinite(hp_value) and hp_value>0 and -60<=hp_age<=900
+        except (TypeError,ValueError):
+            hp_fresh=False
+        if not hp_fresh:
+            try:
+                raw=_provider_json("https://stratumv2.com/api/hashprice",headers={"User-Agent":"SYNPORA/1.3.0","Accept":"application/json"},ttl_seconds=60)
+                observed_at=_parse_provider_timestamp(raw.get("timestamp"))
+                age=now-observed_at
+                hashprice=float(raw.get("pricePerPH"))
+                btc_price=float(raw.get("btcPrice"))
+                if -60<=age<=300 and math.isfinite(hashprice) and hashprice>0 and math.isfinite(btc_price) and btc_price>0:
+                    out["hashpriceUsd"]=hashprice
+                    out["btcPrice"]=btc_price
+                    meta["hashpriceUsd"]={"source":"external","provider":"Stratum V2 hashprice API",
+                        "source_url":"https://stratumv2.com/api/hashprice","observed_at":observed_at,
+                        "age_seconds":round(age,1),"valid":True}
+                    meta["btcPrice"]={"source":"external","provider":"Stratum V2 hashprice API",
+                        "source_url":"https://stratumv2.com/api/hashprice","observed_at":observed_at,
+                        "age_seconds":round(age,1),"valid":True}
+                    try:
+                        difficulty=float(raw.get("difficulty"))
+                        if math.isfinite(difficulty) and difficulty>0:
+                            out["difficulty"]=difficulty
+                            meta["difficulty"]={"source":"external","provider":"Stratum V2 hashprice API",
+                                "source_url":"https://stratumv2.com/api/hashprice","observed_at":observed_at,
+                                "age_seconds":round(age,1),"valid":True}
+                    except (TypeError,ValueError):
+                        pass
+            except Exception:
+                pass
         # Frankfurter's daily EUR/USD rate; the rate's own date, not fetch time, controls freshness.
         try:
             raw=_provider_json("https://api.frankfurter.dev/v2/providers/ecb/rate/eur/usd",ttl_seconds=3600)
@@ -771,8 +807,25 @@ def install(app):
         import urllib.request
         out={}
         try:
-            raw=_provider_json("https://pro.startmining.io/api/market-summary",headers={"User-Agent":"SYNPORA/1.2.0","Accept":"application/json"},ttl_seconds=60)
-            if isinstance(raw,dict): out.update(raw)
+            raw=_provider_json("https://pro.startmining.io/api/market-summary",headers={"User-Agent":"SYNPORA/1.3.0","Accept":"application/json"},ttl_seconds=60)
+            if isinstance(raw,dict):
+                out.update(raw)
+                # The public endpoint is cached for 1–5 minutes. Use a provider timestamp
+                # when supplied; otherwise record the successful fetch time and its bounded cache TTL.
+                stamp_value=raw.get("timestamp",raw.get("updatedAt",raw.get("updated_at")))
+                try: observed_at=_parse_provider_timestamp(stamp_value) if stamp_value is not None else time.time()
+                except Exception: observed_at=time.time()
+                age=time.time()-observed_at
+                if -60<=age<=900:
+                    field_meta=out.setdefault("_fieldMeta",{})
+                    for key in ("btcPrice","hashpriceUsd","difficulty","networkHashrate"):
+                        value=raw.get(key)
+                        try: valid_value=value is not None and __import__("math").isfinite(float(value)) and float(value)>0
+                        except (TypeError,ValueError): valid_value=False
+                        if valid_value:
+                            field_meta[key]={"source":"external","provider":"Startmining API",
+                                "source_url":"https://pro.startmining.io/api/market-summary",
+                                "observed_at":observed_at,"age_seconds":round(age,1),"valid":True}
         except Exception:
             pass
         out=_fetch_builtin_market_sources(out)
@@ -842,13 +895,23 @@ def install(app):
         # A field is external only when a validated provider returned a finite value.
         now=time.time() if now is None else float(now)
         observed={}
+        field_meta=ext.get("_fieldMeta",{}) if isinstance(ext.get("_fieldMeta",{}),dict) else {}
         for name,key in (("btc_price_usd","btcPrice"),("btc_hashprice_usd_ph_day","hashpriceUsd"),
                          ("btc_difficulty","difficulty"),("network_hashrate_eh","networkHashrate")):
-            value=ext.get(key)
-            try: ok=value is not None and __import__("math").isfinite(float(value)) and float(value)>0
-            except (TypeError,ValueError): ok=False
-            observed[name]={"available":bool(ok),"source":"external" if ok else "missing","value":float(value) if ok else None,
-                **({"provider":"Startmining API","source_url":"https://pro.startmining.io/api/market-summary"} if ok else {})}
+            value=ext.get(key); meta=field_meta.get(key,{})
+            try:
+                number=float(value)
+                age=now-float(meta.get("observed_at")) if meta.get("observed_at") is not None else None
+                provider=str(meta.get("provider","unknown"))
+                max_age=300 if provider.startswith("Stratum V2") else 900
+                ok=(math.isfinite(number) and number>0 and meta.get("source")=="external" and meta.get("valid",False)
+                    and age is not None and -60<=age<=max_age)
+            except (TypeError,ValueError):
+                ok=False; number=None; age=None; provider="unknown"; meta={}
+            field={"available":bool(ok),"source":"external" if ok else "missing","value":number if ok else None}
+            if ok:
+                field.update({"provider":provider,"age_seconds":round(max(0.0,age),1),"source_url":meta.get("source_url")})
+            observed[name]=field
         configured=bool(ext.get("_configuredFeedConfigured") or ext.get("_configuredFeedAccepted"))
         accepted=bool(ext.get("_configuredFeedAccepted"))
         feed_age=(now-float(ext.get("_configuredFeedObservedAt",0))) if accepted else None
@@ -858,7 +921,6 @@ def install(app):
             "austria_spot_eur_kwh":("austriaSpotEurKwh",0.2055,lambda v:-1.0<=float(v)<=10.0),
             "gpu_l40s_usd_hour":("gpuHourlyUsd",1.09,lambda v:float(v)>0),
         }
-        field_meta=ext.get("_fieldMeta",{}) if isinstance(ext.get("_fieldMeta",{}),dict) else {}
         for name,(key,fallback,valid) in refs.items():
             value=ext.get(key)
             meta=field_meta.get(key,{})
