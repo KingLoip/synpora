@@ -779,3 +779,48 @@ jobs:
               assert snapshots>=2, snapshots
           print("SYNPORA PostgreSQL persistence and idempotent migration test: OK")
           PY
+
+
+  production-smoke:
+    name: Live production smoke test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [syntax, postgres-integration]
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Wait for this release to reach Railway
+        env:
+          BASE_URL: https://synpora-production.up.railway.app
+        run: |
+          set -euo pipefail
+          found=0
+          for attempt in $(seq 1 60); do
+            release=$(curl --silent --show-error --max-time 8 --fail "$BASE_URL/api/v1/system/release" 2>/dev/null || true)
+            if printf '%s' "$release" | jq -e '.release == "1.3.0" and .hardware_write == false and .autonomous_control == false and (.features | index("password_recovery") != null)' >/dev/null 2>&1; then
+              found=1
+              break
+            fi
+            sleep 10
+          done
+          if [ "$found" -ne 1 ]; then
+            echo "The expected SYNPORA release did not become live within 10 minutes."
+            exit 1
+          fi
+          printf '%s' "$release" | jq '{release,mode,hardware_write,autonomous_control,status}'
+      - name: Check live health, readiness and data-health contracts
+        env:
+          BASE_URL: https://synpora-production.up.railway.app
+        run: |
+          set -euo pipefail
+          health=$(curl --silent --show-error --max-time 10 --fail "$BASE_URL/health")
+          printf '%s' "$health" | jq -e '.status == "ok" and .service == "synpora"' >/dev/null
+          readiness=$(curl --silent --show-error --max-time 15 --fail "$BASE_URL/api/v1/system/production-readiness")
+          printf '%s' "$readiness" | jq -e '.database_configured and .database_reachable and .database_schema_ready and .jwt_secret_strong and .market_admin_token_strong and .hardware_write_enabled == false and .autonomous_control_enabled == false' >/dev/null
+          market=$(curl --silent --show-error --max-time 15 --fail "$BASE_URL/api/v1/market/data-health")
+          printf '%s' "$market" | jq -e '.recommendation_only == true and .hardware_write == false and has("latest_eligible_age_seconds")' >/dev/null
+          curl --silent --show-error --max-time 10 --fail "$BASE_URL/ops" | grep -q 'SYNPORA – Betriebsstatus'
+          printf '%s' "$readiness" | jq '{status,market_data_ready,market_data_latest_eligible_age_seconds,smtp_configured,email_verification_required,database_backend}'
+          if [ "$(printf '%s' "$readiness" | jq -r '.status')" != "ready" ]; then
+            echo "LIVE READINESS BLOCKERS:"
+            printf '%s' "$readiness" | jq -r 'to_entries | map(select((.key == "smtp_configured" and .value == false) or (.key == "market_data_ready" and .value == false) or (.key == "public_url_https" and .value == false) or (.key == "email_verification_required" and .value == false))) | .[] | "\(.key)=\(.value)"'
+          fi
