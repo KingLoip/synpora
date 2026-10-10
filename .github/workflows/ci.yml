@@ -52,7 +52,7 @@ jobs:
           email="ci-smoke@example.com"
           reg=c.post("/api/v1/auth/register",json={"email":email,"password":"ci-password-123"})
           assert reg.status_code==200, reg.text
-          duplicate=client.post("/api/v1/auth/register",json={"email":email,"password":"ci-postgres-password-123"})
+          duplicate=c.post("/api/v1/auth/register",json={"email":email,"password":"ci-password-123"})
           assert duplicate.status_code==409, duplicate.text
           token=reg.json()["token"]
           farm=reg.json()["farm"]["id"]
@@ -599,6 +599,8 @@ jobs:
           email="ci-postgres-persistence@example.com"
           reg=client.post("/api/v1/auth/register",json={"email":email,"password":"ci-postgres-password-123"})
           assert reg.status_code==200, reg.text
+          duplicate=client.post("/api/v1/auth/register",json={"email":email,"password":"ci-postgres-password-123"})
+          assert duplicate.status_code==409, duplicate.text
           token=reg.json()["token"]
           farm_id=reg.json()["farm"]["id"]
           headers={"Authorization":"Bearer "+token}
