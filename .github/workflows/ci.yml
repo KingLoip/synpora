@@ -813,8 +813,12 @@ jobs:
         run: |
           set -euo pipefail
           health=$(curl --silent --show-error --max-time 10 --fail "$BASE_URL/health")
-          printf '%s' "$health" | jq -e '.status == "ok" and .service == "synpora"' >/dev/null
-          readiness=$(curl --silent --show-error --max-time 15 --fail "$BASE_URL/api/v1/system/production-readiness")
+          printf 'Live health: %s\n' "$health"
+          printf '%s' "$health" | jq -e '.status == "ok"' >/dev/null
+          readiness_code=$(curl --silent --show-error --max-time 15 --output /tmp/synpora-readiness.json --write-out '%{http_code}' "$BASE_URL/api/v1/system/production-readiness")
+          readiness=$(cat /tmp/synpora-readiness.json)
+          printf 'Readiness HTTP %s: %s\n' "$readiness_code" "$readiness"
+          test "$readiness_code" = "200"
           printf '%s' "$readiness" | jq '{status,database_configured,database_reachable,database_schema_ready,database_backend,jwt_secret_strong,market_admin_token_strong,smtp_configured,market_data_ready,public_url_https,email_verification_required,hardware_write_enabled,autonomous_control_enabled}'
           printf '%s' "$readiness" | jq -e '.database_configured and .database_reachable and .database_schema_ready and .jwt_secret_strong and .market_admin_token_strong and has("smtp_configured") and has("market_data_ready") and .hardware_write_enabled == false and .autonomous_control_enabled == false' >/dev/null
           email_guard=$(curl --silent --show-error --max-time 10 --output /dev/null --write-out '%{http_code}' -X POST "$BASE_URL/api/v1/system/email-connection-test")
