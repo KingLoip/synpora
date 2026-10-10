@@ -13,6 +13,30 @@ async def security_headers(request, call_next):
     response.headers.setdefault("Content-Security-Policy", "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'")
     return response
 
+MARKET_COLLECTION_INTERVAL_SECONDS=900
+_market_status_lock=threading.Lock()
+app.state.market_collector_status={
+    "enabled":bool(__import__("os").getenv("SYNPORA_MARKET_ADMIN_TOKEN","").strip()),
+    "interval_seconds":MARKET_COLLECTION_INTERVAL_SECONDS,
+    "last_attempt_at":None,"last_success_at":None,"last_failure_at":None,
+    "last_error_class":None,"last_source":None,"last_quality":None,
+    "last_attempt_result":"not_started","consecutive_failures":0
+}
+
+def _market_status_update(**values):
+    with _market_status_lock:
+        app.state.market_collector_status.update(values)
+
+@app.get("/api/v1/system/collector-status", include_in_schema=False)
+def market_collector_status():
+    with _market_status_lock:
+        status=dict(app.state.market_collector_status)
+    token_configured=bool(__import__("os").getenv("SYNPORA_MARKET_ADMIN_TOKEN","").strip())
+    status["enabled"]=token_configured
+    if not token_configured and status["last_attempt_result"]=="not_started":
+        status["last_attempt_result"]="disabled_missing_token"
+    return status
+
 def _market_loop():
     # Collect a fresh market snapshot every 15 minutes. Never log credentials.
     import logging
@@ -20,6 +44,8 @@ def _market_loop():
     time.sleep(10)  # Let the ASGI server begin accepting requests before the first collection.
     missing_token_warned=False
     while True:
+        attempt_at=time.time()
+        _market_status_update(last_attempt_at=attempt_at,last_attempt_result="running")
         try:
             import urllib.request, json, os
             token=os.getenv("SYNPORA_MARKET_ADMIN_TOKEN","").strip()
@@ -27,6 +53,7 @@ def _market_loop():
                 if not missing_token_warned:
                     logger.warning("Market collection is disabled: SYNPORA_MARKET_ADMIN_TOKEN is not configured.")
                     missing_token_warned=True
+                _market_status_update(last_attempt_result="disabled_missing_token",last_error_class=None)
             else:
                 url="http://127.0.0.1:"+os.getenv("PORT","8000")+"/api/v1/market/collect"
                 req=urllib.request.Request(url,headers={"X-SYNPORA-MARKET-TOKEN":token,"Accept":"application/json"},method="POST")
@@ -36,9 +63,17 @@ def _market_loop():
                 logger.info("Market snapshot collected; source=%s quality=%s external_fields=%s reference_fields=%s",
                     payload.get("source","unknown"),quality.get("status","unknown"),
                     quality.get("external_fields",0),quality.get("reference_fields",0))
+                _market_status_update(last_success_at=time.time(),last_attempt_result="success",
+                    last_error_class=None,last_source=payload.get("source","unknown"),
+                    last_quality=quality.get("status","unknown"),consecutive_failures=0)
         except Exception as exc:
             logger.warning("Market snapshot collection failed (%s).",type(exc).__name__)
-        time.sleep(900)
+            with _market_status_lock:
+                failures=int(app.state.market_collector_status.get("consecutive_failures",0))+1
+                app.state.market_collector_status.update(last_failure_at=time.time(),
+                    last_attempt_result="failure",last_error_class=type(exc).__name__,
+                    consecutive_failures=failures)
+        time.sleep(MARKET_COLLECTION_INTERVAL_SECONDS)
 
 threading.Thread(target=_market_loop,daemon=True).start()
 
