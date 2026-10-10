@@ -98,6 +98,7 @@ footer{margin-top:24px}.small{font-size:.9rem}
 <div class="grid">
 <section class="card"><h2>Produktionsbereitschaft</h2><div id="ready" class="status">Lade…</div><pre id="ready-detail"></pre></section>
 <section class="card"><h2>Marktdaten</h2><div id="market" class="status">Lade…</div><pre id="market-detail"></pre></section>
+<section class="card"><h2>Datensammlung</h2><div id="collector" class="status">Lade…</div><pre id="collector-detail"></pre></section>
 <section class="card"><h2>Lern-Datensatz</h2><div id="learning" class="status">Lade…</div><pre id="learning-detail"></pre></section>
 <section class="card"><h2>Release & Sicherheitsmodus</h2><div id="release" class="status">Lade…</div><pre id="release-detail"></pre></section>
 </div>
@@ -112,15 +113,21 @@ async function refresh(){
     const results=await Promise.all([
       fetch('/api/v1/system/production-readiness',{cache:'no-store'}),
       fetch('/api/v1/market/data-health',{cache:'no-store'}),
-      fetch('/api/v1/system/release',{cache:'no-store'})
+      fetch('/api/v1/system/release',{cache:'no-store'}),
+      fetch('/api/v1/system/collector-status',{cache:'no-store'})
     ]);
     if(results.some(r=>!r.ok))throw new Error('Ein Status-Endpunkt ist nicht erreichbar.');
-    const [r,m,v]=await Promise.all(results.map(x=>x.json()));
+    const [r,m,v,k]=await Promise.all(results.map(x=>x.json()));
     show('ready',r.status==='ready'?'Bereit':'Konfiguration prüfen',r.status==='ready'?'ok':'warn',JSON.stringify(r,null,2));
     const eligible=m.eligible_snapshots||0,excluded=m.excluded_or_invalid_snapshots||0;
     const marketKind=(m.latest_eligible_age_seconds!==null&&m.latest_eligible_age_seconds!==undefined&&m.latest_eligible_age_seconds<=1200&&eligible>0)?'ok':'warn';
     show('market',marketKind==='ok'?'Externe Daten vorhanden':'Datenqualität prüfen',marketKind,JSON.stringify(m,null,2));
     show('learning',eligible>0?'Geeignete Snapshots: '+eligible:'Noch keine geeigneten Snapshots',eligible>0?'ok':'warn','Ausgeschlossen: '+excluded+'\nLetzter geeigneter Snapshot (Alter Sekunden): '+(m.latest_eligible_age_seconds??'—')+'\nWarnungen: '+JSON.stringify(m.warnings||[]));
+    const successAge=k.last_success_at?Math.max(0,Date.now()/1000-k.last_success_at):null;
+    const collectorOk=k.enabled&&k.last_attempt_result==='success'&&successAge!==null&&successAge<=1200&&k.last_quality==='live';
+    const collectorKind=!k.enabled?'warn':collectorOk?'ok':k.last_attempt_result==='failure'?'bad':'warn';
+    const collectorTitle=!k.enabled?'Sammlung deaktiviert':collectorOk?'Sammlung läuft · externe Daten':'Sammlung prüfen';
+    show('collector',collectorTitle,collectorKind,'Letzter Versuch: '+(k.last_attempt_at?new Date(k.last_attempt_at*1000).toLocaleString():'noch keiner')+'\nLetzter Erfolg: '+(k.last_success_at?new Date(k.last_success_at*1000).toLocaleString():'noch keiner')+'\nLetzte Qualität: '+(k.last_quality||'—')+'\nFehler in Folge: '+k.consecutive_failures+'\nLetzter Fehlertyp: '+(k.last_error_class||'—')+'\nQuelle: '+(k.last_source||'—'));
     show('release',(v.mode||'Unbekannt')+' · '+(v.release||''),v.hardware_write===false&&v.autonomous_control===false?'ok':'bad',JSON.stringify(v,null,2));
     el('updated').textContent=' Zuletzt aktualisiert: '+new Date().toLocaleTimeString();
   }catch(e){
