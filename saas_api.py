@@ -1,4 +1,5 @@
 import os, sqlite3, hashlib, hmac, secrets, json, time, threading, contextvars
+from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -31,6 +32,19 @@ class _DBCompat:
             return self._conn.executescript(sql)
     def commit(self):
         return self._conn.commit()
+    @contextmanager
+    def transaction(self):
+        if self.is_postgres:
+            with self._conn.transaction():
+                yield
+        else:
+            self._conn.execute("BEGIN")
+            try:
+                yield
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
     def close(self):
         if self._closed:
             return None
@@ -1919,19 +1933,17 @@ def install(app):
         email=x.email.strip().lower()
         if len(email)<3 or "@" not in email or len(email)>254: raise HTTPException(400,"Valid email required")
         if len(x.password)<8: raise HTTPException(400,"Password must be at least 8 characters")
-        c=init_db(); uid=secrets.token_hex(12)
+        c=init_db(); uid=secrets.token_hex(12); farm_id=secrets.token_hex(12)
         try:
-            c.execute("INSERT INTO users VALUES(?,?,?,?)",(uid,email,_hash(x.password),time.time()))
+            # Account and initial farm must be created atomically; never leave a half-created account.
+            with c.transaction():
+                c.execute("INSERT INTO users VALUES(?,?,?,?)",(uid,email,_hash(x.password),time.time()))
+                c.execute("INSERT INTO farms VALUES(?,?,?,?)",(farm_id,uid,"My first farm",time.time()))
         except Exception as e:
-            try: c.close()
-            except Exception: pass
             message=str(e).lower()
             if "unique" in message or "duplicate key" in message or "users.email" in message:
                 raise HTTPException(409,"Email already registered")
             raise HTTPException(503,"Registration temporarily unavailable")
-        farm_id=secrets.token_hex(12); c.execute("INSERT INTO farms VALUES(?,?,?,?)",(farm_id,uid,"My first farm",time.time()))
-        try: c.commit()
-        except Exception: pass
         return {"token":_token(uid),"user":{"id":uid,"email":email},"farm":{"id":farm_id,"name":"My first farm"}}
 
     @app.post("/api/v1/auth/login")
