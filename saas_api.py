@@ -1814,9 +1814,9 @@ def install(app):
 
     @app.get("/api/v1/system/release")
     def release_status():
-        return {"product":"SYNPORA","release":"1.3.0","ai_core":"risk_aware_walk_forward_v3_economic_costs",
+        return {"product":"SYNPORA","release":"1.3.1","ai_core":"risk_aware_walk_forward_v3_economic_costs",
                 "mode":"recommendation_only","hardware_write":False,"autonomous_control":False,
-                "features":["market_intelligence","adaptive_forecast","model_selection","decision_ledger","self_learning","calibrated_confidence","provenance_gated_walk_forward_backtest","paper_trading_observability","tail_risk_metrics","deterministic_stress_tests","secure_allowlisted_market_feed","operations_dashboard","equipment_depreciation_uptime_maintenance_tax","email_verification","password_recovery","shared_database_login_rate_limit","password_reset_session_revocation"],
+                "features":["market_intelligence","adaptive_forecast","model_selection","decision_ledger","self_learning","calibrated_confidence","provenance_gated_walk_forward_backtest","paper_trading_observability","tail_risk_metrics","deterministic_stress_tests","secure_allowlisted_market_feed","operations_dashboard","equipment_depreciation_uptime_maintenance_tax","email_verification","password_recovery","shared_database_login_rate_limit","password_reset_session_revocation","public_gpu_market_data","timestamped_hashprice_fallback"],
                 "status":"production_candidate"}
 
     @app.get("/api/v1/system/production-readiness")

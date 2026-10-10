@@ -813,7 +813,7 @@ jobs:
           found=0
           for attempt in $(seq 1 60); do
             release=$(curl --silent --show-error --max-time 8 --fail "$BASE_URL/api/v1/system/release" 2>/dev/null || true)
-            if printf '%s' "$release" | jq -e '.release == "1.3.0" and .hardware_write == false and .autonomous_control == false and (.features | index("password_recovery") != null)' >/dev/null 2>&1; then
+            if printf '%s' "$release" | jq -e ' .release == "1.3.1" and .hardware_write == false and .autonomous_control == false and (.features | index("password_recovery") != null)' >/dev/null 2>&1; then
               found=1
               break
             fi
