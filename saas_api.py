@@ -476,6 +476,7 @@ def install(app):
             if math.isfinite(rate) and rate>0 and -86400<=age<=96*3600:
                 out["eurUsd"]=rate
                 meta["eurUsd"]={"source":"external","provider":"Frankfurter ECB daily EUR/USD",
+                    "source_url":"https://api.frankfurter.dev/v2/providers/ecb/rate/eur/usd",
                     "observed_at":rate_ts,"age_seconds":round(age,1),"valid":True}
         except Exception:
             pass
@@ -511,7 +512,9 @@ def install(app):
                     raise ValueError("Unknown electricity price unit")
                 if -1.0<=price_value<=10.0:
                     out["austriaSpotEurKwh"]=price_value
-                    meta["austriaSpotEurKwh"]={"source":"external","provider":"Fraunhofer ISE Energy-Charts AT day-ahead",
+                    meta["austriaSpotEurKwh"]={"source":"external","provider":"Energy-Charts.info (Fraunhofer ISE), Austria day-ahead",
+                        "source_url":"https://api.energy-charts.info/v2/price_current?bzn=AT",
+                        "license":"CC BY 4.0; attribute Energy-Charts.info",
                         "observed_at":interval_ts,"valid_until":valid_until,"age_seconds":round(now-interval_ts,1),"valid":True}
         except Exception:
             pass
@@ -542,6 +545,7 @@ def install(app):
                     median=prices[len(prices)//2] if len(prices)%2 else (prices[len(prices)//2-1]+prices[len(prices)//2])/2
                     out["gpuHourlyUsd"]=median
                     meta["gpuHourlyUsd"]={"source":"external","provider":"Vast.ai L40S marketplace median",
+                        "source_url":"https://vast.ai/developers/api",
                         "observed_at":now,"age_seconds":0.0,"offer_count":len(prices),"valid":True}
             except Exception:
                 pass
@@ -628,7 +632,7 @@ def install(app):
             try: ok=value is not None and __import__("math").isfinite(float(value)) and float(value)>0
             except (TypeError,ValueError): ok=False
             observed[name]={"available":bool(ok),"source":"external" if ok else "missing","value":float(value) if ok else None,
-                **({"provider":"Startmining API"} if ok else {})}
+                **({"provider":"Startmining API","source_url":"https://pro.startmining.io/api/market-summary"} if ok else {})}
         configured=bool(ext.get("_configuredFeedConfigured") or ext.get("_configuredFeedAccepted"))
         accepted=bool(ext.get("_configuredFeedAccepted"))
         feed_age=(now-float(ext.get("_configuredFeedObservedAt",0))) if accepted else None
@@ -660,6 +664,12 @@ def install(app):
             if fresh:
                 observed[name]={"available":True,"source":"external","value":float(value),
                     "provider":provider,"age_seconds":round(max(0.0,age),1) if age is not None else None}
+                if meta.get("source_url"):
+                    observed[name]["source_url"]=meta["source_url"]
+                if meta.get("license"):
+                    observed[name]["license"]=meta["license"]
+                if meta.get("offer_count") is not None:
+                    observed[name]["offer_count"]=meta["offer_count"]
                 if meta.get("valid_until") is not None:
                     observed[name]["valid_until"]=meta.get("valid_until")
             else:
