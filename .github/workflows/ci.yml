@@ -384,6 +384,10 @@ jobs:
           assert data_health.status_code==200, data_health.text
           dh=data_health.json()
           assert dh["eligible_snapshots"]>=3 and dh["excluded_or_invalid_snapshots"]>=2, dh
+          assert dh["latest_snapshot_timestamp"] is not None, dh
+          assert dh["latest_snapshot_age_seconds"]>=0, dh
+          assert dh["collection_status"] in {"recent_snapshot","stale_snapshot","never_collected"}, dh
+          assert isinstance(dh["latest_snapshot_fields"],dict), dh
           assert dh["recommendation_only"] is True and dh["hardware_write"] is False, dh
           paper=c.get(f"/api/v1/farms/{farm}/paper-trading",headers=h)
           assert paper.status_code==200, paper.text
