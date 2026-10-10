@@ -815,7 +815,9 @@ jobs:
           health=$(curl --silent --show-error --max-time 10 --fail "$BASE_URL/health")
           printf '%s' "$health" | jq -e '.status == "ok" and .service == "synpora"' >/dev/null
           readiness=$(curl --silent --show-error --max-time 15 --fail "$BASE_URL/api/v1/system/production-readiness")
-          printf '%s' "$readiness" | jq -e '.database_configured and .database_reachable and .database_schema_ready and .jwt_secret_strong and .market_admin_token_strong and .hardware_write_enabled == false and .autonomous_control_enabled == false' >/dev/null
+          printf '%s' "$readiness" | jq -e '.database_configured and .database_reachable and .database_schema_ready and .jwt_secret_strong and .market_admin_token_strong and has("smtp_configured") and has("market_data_ready") and .hardware_write_enabled == false and .autonomous_control_enabled == false' >/dev/null
+          email_guard=$(curl --silent --show-error --max-time 10 --output /dev/null --write-out '%{http_code}' -X POST "$BASE_URL/api/v1/system/email-connection-test")
+          test "$email_guard" = "403"
           market=$(curl --silent --show-error --max-time 15 --fail "$BASE_URL/api/v1/market/data-health")
           printf '%s' "$market" | jq -e '.recommendation_only == true and .hardware_write == false and has("latest_eligible_age_seconds")' >/dev/null
           curl --silent --show-error --max-time 10 --fail "$BASE_URL/ops" | grep -q 'SYNPORA – Betriebsstatus'
