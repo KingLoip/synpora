@@ -768,38 +768,6 @@ def install(app):
         if not expected or not token or not hmac.compare_digest(token,expected):
             raise HTTPException(403,"Market maintenance endpoint disabled or unauthorized")
 
-    @app.post("/api/v1/market/collect")
-    def collect_market(x_market_token:str|None=Header(default=None,alias="X-SYNPORA-MARKET-TOKEN")):
-        require_market_admin(x_market_token)
-        ext=_external_market()
-        now=time.time()
-        ext_quality=_market_quality(ext,now)
-        snap={"timestamp":now,
-              "btc_price_usd":ext.get("btcPrice"),
-              "btc_hashprice_usd_ph_day":ext.get("hashpriceUsd"),
-              "btc_difficulty":ext.get("difficulty"),
-              "network_hashrate_eh":ext.get("networkHashrate"),
-              "eur_usd":1.1205,
-              "gpu_l40s_usd_hour":1.09,
-              "gpu_l40s_power_kw":0.35,
-              "gpu_utilization":0.70,
-              "gpu_platform_fee":0.15,
-              "source":"startmining_external_plus_reference_prices",
-              "data_quality":ext_quality}
-        c=init_db()
-        _ensure_market_table(c)
-        values=(secrets.token_hex(12),snap["timestamp"],json.dumps(snap),
-                snap["btc_price_usd"],snap["btc_hashprice_usd_ph_day"],snap["btc_difficulty"],snap["network_hashrate_eh"],
-                snap["eur_usd"],snap["gpu_l40s_usd_hour"],snap["gpu_l40s_power_kw"],snap["gpu_utilization"],
-                snap["gpu_platform_fee"],snap.get("austria_spot_eur_kwh"))
-        c.execute("""INSERT INTO market_snapshots
-            (id,ts,payload,btc_price_usd,btc_hashprice_usd_ph_day,btc_difficulty,network_hashrate_eh,eur_usd,
-             gpu_l40s_usd_hour,gpu_l40s_power_kw,gpu_utilization,gpu_platform_fee,austria_spot_eur_kwh)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",values)
-        try: c.commit()
-        except Exception: pass
-        return snap
-
     @app.post("/api/v1/market/backfill")
     def backfill_market(limit:int=365,x_market_token:str|None=Header(default=None,alias="X-SYNPORA-MARKET-TOKEN")):
         require_market_admin(x_market_token)
