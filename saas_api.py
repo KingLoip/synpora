@@ -703,6 +703,37 @@ def install(app):
                         "observed_at":interval_ts,"valid_until":valid_until,"age_seconds":round(now-interval_ts,1),"valid":True}
         except Exception:
             pass
+        # Zarobit publishes an anonymous, provenance-tagged GPU rental listing API.
+        # Poll at most every 15 minutes to stay within its documented anonymous daily quota.
+        try:
+            zarobit_url="https://api.zarobit.com/api/v1/prices/current?gpu_model=L40S&price_type=on_demand&limit=100"
+            raw=_provider_json(zarobit_url,headers={"User-Agent":"SYNPORA/1.3.0","Accept":"application/json"},ttl_seconds=900)
+            offers=raw.get("data",[]) if isinstance(raw,dict) else []
+            prices=[]; observed=[]
+            for offer in offers if isinstance(offers,list) else []:
+                if not isinstance(offer,dict) or "L40S" not in str(offer.get("gpu_model","")).upper():
+                    continue
+                if str(offer.get("price_type","on_demand")).lower()!="on_demand":
+                    continue
+                try:
+                    hourly=float(offer.get("price_usd_per_gpu_hour"))
+                    stamp=_parse_provider_timestamp(offer.get("collected_at"))
+                    age=now-stamp
+                    if math.isfinite(hourly) and hourly>0 and -60<=age<=900:
+                        prices.append(hourly); observed.append(stamp)
+                except (TypeError,ValueError):
+                    continue
+            if prices:
+                prices.sort()
+                median=prices[len(prices)//2] if len(prices)%2 else (prices[len(prices)//2-1]+prices[len(prices)//2])/2
+                observed_at=max(observed)
+                out["gpuHourlyUsd"]=median
+                meta["gpuHourlyUsd"]={"source":"external","provider":"Zarobit L40S on-demand listing median",
+                    "source_url":zarobit_url,"license":"CC BY 4.0; attribute Zarobit",
+                    "observed_at":observed_at,"age_seconds":round(now-observed_at,1),
+                    "offer_count":len(prices),"valid":True}
+        except Exception:
+            pass
         # Vast.ai offer sampling is optional and requires the operator's own API key.
         vast_key=os.getenv("SYNPORA_VAST_API_KEY","").strip()
         if vast_key:

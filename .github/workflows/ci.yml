@@ -291,6 +291,12 @@ jobs:
                   return BuiltinResponse({"series":[{"id":"price","name":"Price","unit":"EUR/MWh"}],
                       "data":[{"timestamp":datetime.datetime.fromtimestamp(now-300,datetime.timezone.utc).isoformat(),"values":{"price":75.0}}],
                       "attributes":{"valid_until":datetime.datetime.fromtimestamp(now+1800,datetime.timezone.utc).isoformat()}})
+              if "zarobit.com" in url:
+                  return BuiltinResponse({"data":[
+                      {"gpu_model":"L40S","price_type":"on_demand","price_usd_per_gpu_hour":"1.20","collected_at":datetime.datetime.fromtimestamp(now,datetime.timezone.utc).isoformat()},
+                      {"gpu_model":"L40S","price_type":"on_demand","price_usd_per_gpu_hour":"1.40","collected_at":datetime.datetime.fromtimestamp(now,datetime.timezone.utc).isoformat()},
+                      {"gpu_model":"L40S","price_type":"spot","price_usd_per_gpu_hour":"0.10","collected_at":datetime.datetime.fromtimestamp(now,datetime.timezone.utc).isoformat()},
+                      {"gpu_model":"A100","price_type":"on_demand","price_usd_per_gpu_hour":"0.80","collected_at":datetime.datetime.fromtimestamp(now,datetime.timezone.utc).isoformat()}]})
               if "cloud.vast.ai" in url:
                   return BuiltinResponse({"offers":[{"gpu_name":"NVIDIA L40S","dph_total":1.20,"num_gpus":1},
                       {"gpu_name":"NVIDIA L40S","dph_total":1.40,"num_gpus":1}]})
@@ -308,7 +314,11 @@ jobs:
               assert energy_field["source_url"].startswith("https://api.energy-charts.info/"), energy_field
               assert "CC BY 4.0" in energy_field["license"], energy_field
               assert abs(bm["austria_spot_eur_kwh"]-0.075)<0.00001, bm["austria_spot_eur_kwh"]
-              assert bm["data_quality"]["details"]["fields"]["gpu_l40s_usd_hour"]["source"]=="external", bm["data_quality"]
+              gpu_field=bm["data_quality"]["details"]["fields"]["gpu_l40s_usd_hour"]
+              assert gpu_field["source"]=="external", bm["data_quality"]
+              assert gpu_field["provider"].startswith("Zarobit"), gpu_field
+              assert gpu_field["offer_count"]==2, gpu_field
+              assert "CC BY 4.0" in gpu_field["license"], gpu_field
               assert abs(bm["gpu"]["hourly_usd"]-1.30)<0.00001, bm["gpu"]
           finally:
               urllib.request.urlopen=old_urlopen_builtin
@@ -655,6 +665,8 @@ jobs:
           assert 'SYNPORA_VAST_API_KEY' in s
           assert 'api.frankfurter.dev/v2/providers/ecb/rate/eur/usd' in s
           assert 'api.energy-charts.info/v2/price_current?bzn=AT' in s
+          assert 'api.zarobit.com/api/v1/prices/current?gpu_model=L40S' in s
+          assert 'attribute Zarobit' in s
           assert 'cloud.vast.ai/api/v0/bundles/' in s
           assert '"source_url"' in s and '"license":"CC BY 4.0; attribute Energy-Charts.info"' in s
           assert 'gpu_capex_eur' in s and 'btc_capex_eur' in s
