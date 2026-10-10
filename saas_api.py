@@ -34,7 +34,10 @@ def _conn():
     if DB_URL:
         try:
             import psycopg
-            return _DBCompat(psycopg.connect(DB_URL, autocommit=True), postgres=True)
+            from psycopg.rows import dict_row
+            # The API deliberately uses named row fields across SQLite and PostgreSQL.
+            # Match SQLite's sqlite3.Row behavior instead of psycopg's default tuples.
+            return _DBCompat(psycopg.connect(DB_URL, autocommit=True, row_factory=dict_row), postgres=True)
         except Exception as e:
             if _database_required():
                 raise RuntimeError("PostgreSQL connection required but unavailable") from e
