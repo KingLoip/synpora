@@ -66,3 +66,20 @@ A successful GitHub Actions run validates code and image build, but does not pro
 3. Open /health, /ops, /api/v1/system/production-readiness and /api/v1/market/data-health; readiness alone does not prove the live market feed is fresh or economically accurate.
 4. Confirm the collector has a recent successful attempt and that eligible snapshots show external provenance for all required market fields. Investigate repeated provider failures or stale data before using forecasts.
 5. Treat all rankings as recommendations, not guaranteed returns. Site installation/network costs and user-supplied tax/capex assumptions still need real-world review.
+
+
+## Email delivery, verification and password recovery
+
+The API now includes one-time email verification and password-reset token flows. Token values are never stored in plaintext; only SHA-256 digests are persisted. Verification links expire after 60 minutes; password-reset links expire after 30 minutes and are single-use. Reset-request and resend-verification responses do not disclose whether an account exists.
+
+Configure these Railway service variables before treating the SaaS authentication flow as production-ready:
+
+- `SYNPORA_SMTP_HOST`
+- `SYNPORA_SMTP_PORT` (587 for STARTTLS or 465 for implicit TLS)
+- `SYNPORA_SMTP_USERNAME`
+- `SYNPORA_SMTP_PASSWORD` (secret)
+- `SYNPORA_SMTP_FROM`
+- `SYNPORA_PUBLIC_URL` (the canonical HTTPS origin, e.g. the Railway domain)
+- `SYNPORA_REQUIRE_EMAIL_VERIFICATION=1`
+
+The production-readiness endpoint reports only whether required settings are present; it does not verify the provider credentials or send a test email. Complete a real delivery/verification/reset smoke test with a controlled mailbox after configuring the provider. If these variables are missing, readiness intentionally remains `configuration_required` rather than claiming full production readiness.

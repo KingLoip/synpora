@@ -493,7 +493,7 @@ jobs:
               saas.DB_URL=""
               saas.DB_PATH=str(Path(td)/"persistent.db")
               first=saas.init_db()
-              first.execute("INSERT INTO synpora_saas_users VALUES(?,?,?,?)",("persist-user","persist-ci@example.com","test-hash",time.time()))
+              first.execute("INSERT INTO synpora_saas_users(id,email,password_hash,created_at,email_verified) VALUES(?,?,?,?,?)",("persist-user","persist-ci@example.com","test-hash",time.time(),1))
               first.execute("INSERT INTO synpora_saas_farms VALUES(?,?,?,?)",("persist-farm","persist-user","Persistence CI",time.time()))
               first.commit()
               first.close()
