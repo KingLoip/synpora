@@ -142,7 +142,7 @@ jobs:
           # Invalid physical and financial inputs must fail clearly instead of being clamped silently.
           invalid_energy=c.post(f"/api/v1/farms/{farm}/scenario",headers=h,json={"energy_kwh":-1})
           assert invalid_energy.status_code==422, invalid_energy.text
-          excessive_samples=c.post(f"/api/v1/farms/{farm}/scenario",headers=h,json={"samples":1000000000})
+          excessive_samples=c.post(f"/api/v1/farms/{farm}/optimize",headers=h,json={"samples":1000000000})
           assert excessive_samples.status_code==422, excessive_samples.text
           invalid_seed=c.post(f"/api/v1/farms/{farm}/scenario",headers=h,json={"seed":999999999999})
           assert invalid_seed.status_code==422, invalid_seed.text
@@ -167,7 +167,7 @@ jobs:
               asset=c.post(f"/api/v1/farms/{farm}/assets",headers=h,json={"name":kind+" test asset","kind":kind,"power_kw":power})
               assert asset.status_code==200, asset.text
           saved_assets=c.get(f"/api/v1/farms/{farm}/assets",headers=h)
-          assert saved_assets.status_code==200 and len(saved_assets.json())==2, saved_assets.text
+          assert saved_assets.status_code==200 and len(saved_assets.json())==3, saved_assets.text
           charging=c.post(f"/api/v1/farms/{farm}/dispatch-plan",headers=h,json={
               "horizon_hours":24,"pv_kwh":20,"battery_capacity_kwh":100,
               "battery_soc_pct":20,"battery_reserve_pct":20,"battery_power_kw":10,
