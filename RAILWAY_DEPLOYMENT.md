@@ -38,7 +38,7 @@ Every source has its own freshness/provenance checks. If a provider is unavailab
 
 1. Confirm the service uses the repository's root `Dockerfile` and `railway.toml`.
 2. Wait for the deployment to complete and verify `/health` returns HTTP 200. This is a liveness check only.
-3. Open `/ops` and verify `/api/v1/system/production-readiness` reports `status: "ready"`, `database_backend: "postgresql"`, `database_reachable: true`, `jwt_secret_strong: true`, and `market_admin_token_strong: true`. A configured feed must also report `market_data_feed_host_allowlisted: true`; if the provider needs authentication, confirm `market_data_feed_api_key_configured: true`.
+3. Open `/ops` and verify `/api/v1/system/production-readiness` reports `status: "ready"`, `database_backend: "postgresql"`, `database_reachable: true`, `database_schema_ready: true`, `jwt_secret_strong: true`, and `market_admin_token_strong: true`. The SaaS account/farm/asset tables use a dedicated namespace so they cannot collide with legacy ORM tables. A configured feed must also report `market_data_feed_host_allowlisted: true`; if the provider needs authentication, confirm `market_data_feed_api_key_configured: true`.
 4. Register a test account, log in, create/read a farm, and verify data persists after a service restart.
 5. Confirm protected market maintenance endpoints reject requests without the admin token.
 6. Confirm decision, forecast, and dispatch responses remain recommendation-only and report hardware writes disabled.
