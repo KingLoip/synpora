@@ -538,6 +538,9 @@ jobs:
           assert 'combined_downside' in s
           assert 'def _database_required()' in s
           assert 'hardware_write":False' in s
+          assert 'row_factory=dict_row' in s
+          assert 'def transaction(self)' in s
+          assert 'close_request_database_connections' in s
           print("SYNPORA release invariants: OK")
           PY
 
