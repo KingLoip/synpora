@@ -417,10 +417,13 @@ jobs:
           malformed_id="ci-malformed-history"
           db.execute("DELETE FROM market_snapshots WHERE id=?",(malformed_id,))
           db.execute("INSERT INTO market_snapshots(id,ts,payload) VALUES(?,?,?)",(malformed_id,time.time()+1,"{invalid-json"))
+          db.commit()
           malformed_history=c.get("/api/v1/market/history?limit=1")
           assert malformed_history.status_code==200, malformed_history.text
           assert malformed_history.json()[0]["payload_valid"] is False, malformed_history.text
           db.execute("DELETE FROM market_snapshots WHERE id=?",(malformed_id,))
+          db.commit()
+          db.close()
           paper=c.get(f"/api/v1/farms/{farm}/paper-trading",headers=h)
           assert paper.status_code==200, paper.text
           pb=paper.json()
