@@ -461,6 +461,28 @@ jobs:
           print("SYNPORA API end-to-end smoke test: OK")
           PY
 
+      - name: JWT claim validation regression test
+        run: |
+          SYNPORA_JWT_SECRET=ci-test-secret python - <<'PY'
+          import base64, hashlib, hmac, json, time
+          from backend.app import saas_api as saas
+
+          def signed(claims):
+              body=json.dumps(claims,separators=(",",":"),allow_nan=True).encode()
+              encoded=base64.urlsafe_b64encode(body).decode().rstrip("=")
+              signature=hmac.new(saas.JWT_SECRET.encode(),encoded.encode(),hashlib.sha256).hexdigest()
+              return encoded+"."+signature
+
+          assert saas._uid(signed({"uid":"user-123","exp":time.time()+60}))=="user-123"
+          assert saas._uid(signed({"uid":["user-123"],"exp":time.time()+60})) is None
+          assert saas._uid(signed({"uid":"","exp":time.time()+60})) is None
+          assert saas._uid(signed({"uid":"user-123","exp":True})) is None
+          assert saas._uid(signed({"uid":"user-123","exp":float("nan")})) is None
+          assert saas._uid(signed({"uid":"user-123","exp":time.time()-60})) is None
+          assert saas._uid("not-a-token") is None
+          print("SYNPORA JWT claim validation regression test: OK")
+          PY
+
       - name: Operations dashboard smoke test
         run: |
           SYNPORA_JWT_SECRET=ci-test-secret python - <<'PY'
