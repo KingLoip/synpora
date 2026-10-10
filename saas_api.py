@@ -772,7 +772,13 @@ def install(app):
             pass
         # Vast.ai offer sampling is optional and requires the operator's own API key.
         vast_key=os.getenv("SYNPORA_VAST_API_KEY","").strip()
-        if vast_key:
+        # Prefer the fresh, timestamped public market median. Vast.ai is an operator-key
+        # fallback only when the public source did not yield a valid fresh observation.
+        public_gpu_meta=meta.get("gpuHourlyUsd",{})
+        public_gpu_available=(isinstance(public_gpu_meta,dict) and
+            str(public_gpu_meta.get("provider","")).startswith("Zarobit") and
+            public_gpu_meta.get("source")=="external" and public_gpu_meta.get("valid",False))
+        if vast_key and not public_gpu_available:
             try:
                 query=urllib.parse.urlencode({"q":json.dumps({"gpu_name":"L40S"})})
                 url="https://cloud.vast.ai/api/v0/bundles/?"+query
