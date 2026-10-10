@@ -284,7 +284,8 @@ jobs:
               url=request.full_url if hasattr(request,"full_url") else str(request)
               now=time.time()
               if "pro.startmining.io" in url:
-                  return BuiltinResponse({"hashpriceUsd":41.0,"btcPrice":82000.0,"difficulty":100.0,"networkHashrate":900.0})
+                  # Deliberately omit hashprice so the timestamped Stratum V2 fallback is exercised.
+                  return BuiltinResponse({"btcPrice":82000.0})
               if "stratumv2.com" in url:
                   return BuiltinResponse({"pricePerPH":40.5,"btcPrice":81900.0,"difficulty":101.0,
                       "timestamp":datetime.datetime.fromtimestamp(now,datetime.timezone.utc).isoformat()})
@@ -310,6 +311,9 @@ jobs:
               assert builtins.status_code==200, builtins.text
               bm=builtins.json()
               assert bm["data_quality"]["overall"]=="live", bm["data_quality"]
+              hashprice_field=bm["data_quality"]["details"]["fields"]["btc_hashprice_usd_ph_day"]
+              assert hashprice_field["source"]=="external" and hashprice_field["provider"].startswith("Stratum V2"), hashprice_field
+              assert abs(bm["btc_hashprice_usd_ph_day"]-40.5)<0.00001, bm
               assert bm["data_quality"]["details"]["fields"]["eur_usd"]["source"]=="external", bm["data_quality"]
               assert bm["data_quality"]["details"]["fields"]["eur_usd"]["provider"].startswith("Frankfurter"), bm["data_quality"]
               energy_field=bm["data_quality"]["details"]["fields"]["austria_spot_eur_kwh"]
