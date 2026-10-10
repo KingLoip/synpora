@@ -783,10 +783,11 @@ def install(app):
                 gpu_l40s_power_kw DOUBLE PRECISION, gpu_utilization DOUBLE PRECISION,
                 gpu_platform_fee DOUBLE PRECISION, austria_spot_eur_kwh DOUBLE PRECISION
             )""")
+            # Safe to run on every startup/collection cycle and across concurrent replicas.
+            # PostgreSQL handles already-present columns without raising duplicate-column errors.
             cols=["btc_price_usd","btc_hashprice_usd_ph_day","btc_difficulty","network_hashrate_eh","eur_usd","gpu_l40s_usd_hour","gpu_l40s_power_kw","gpu_utilization","gpu_platform_fee","austria_spot_eur_kwh"]
             for col in cols:
-                try: c.execute(f"ALTER TABLE market_snapshots ADD COLUMN {col} DOUBLE PRECISION")
-                except Exception: pass
+                c.execute(f"ALTER TABLE market_snapshots ADD COLUMN IF NOT EXISTS {col} DOUBLE PRECISION")
         else:
             c.execute("""CREATE TABLE IF NOT EXISTS market_snapshots(
                 id TEXT PRIMARY KEY, ts REAL NOT NULL, payload TEXT NOT NULL,
