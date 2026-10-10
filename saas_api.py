@@ -1706,9 +1706,9 @@ def install(app):
 
     @app.get("/api/v1/system/release")
     def release_status():
-        return {"product":"SYNPORA","release":"1.2.0","ai_core":"risk_aware_walk_forward_v3_economic_costs",
+        return {"product":"SYNPORA","release":"1.3.0","ai_core":"risk_aware_walk_forward_v3_economic_costs",
                 "mode":"recommendation_only","hardware_write":False,"autonomous_control":False,
-                "features":["market_intelligence","adaptive_forecast","model_selection","decision_ledger","self_learning","calibrated_confidence","provenance_gated_walk_forward_backtest","paper_trading_observability","tail_risk_metrics","deterministic_stress_tests","secure_allowlisted_market_feed","operations_dashboard","equipment_depreciation_uptime_maintenance_tax"],
+                "features":["market_intelligence","adaptive_forecast","model_selection","decision_ledger","self_learning","calibrated_confidence","provenance_gated_walk_forward_backtest","paper_trading_observability","tail_risk_metrics","deterministic_stress_tests","secure_allowlisted_market_feed","operations_dashboard","equipment_depreciation_uptime_maintenance_tax","email_verification","password_recovery","shared_database_login_rate_limit","password_reset_session_revocation"],
                 "status":"production_candidate"}
 
     @app.get("/api/v1/system/production-readiness")
@@ -1722,6 +1722,9 @@ def install(app):
         db_schema_ready=False
         db_backend="unavailable" if _database_required() else "sqlite_fallback"
         db_error=None
+        market_data_ready=False
+        market_data_latest_eligible_age_seconds=None
+        market_data_eligible_snapshots=0
         c=None
         try:
             c=init_db()
@@ -1730,6 +1733,21 @@ def install(app):
             db_backend="postgresql" if db_reachable else "sqlite_fallback"
             c.execute("SELECT COUNT(*) FROM market_snapshots").fetchone()
             db_schema_ready=True
+            # Production readiness requires at least one recent, fully provenance-verified
+            # snapshot; merely having a reachable database or configured feed is not enough.
+            market_rows=c.execute("SELECT ts,payload FROM market_snapshots ORDER BY ts DESC LIMIT 100").fetchall()
+            now=time.time()
+            for market_row in market_rows:
+                try:
+                    snap_ts=float(market_row["ts"] if hasattr(market_row,"keys") else market_row[0])
+                    payload=json.loads(market_row["payload"] if hasattr(market_row,"keys") else market_row[1])
+                    if isinstance(payload,dict) and _snapshot_is_learning_eligible(payload):
+                        market_data_eligible_snapshots+=1
+                        if market_data_latest_eligible_age_seconds is None:
+                            market_data_latest_eligible_age_seconds=max(0.0,now-snap_ts)
+                except Exception:
+                    continue
+            market_data_ready=bool(market_data_eligible_snapshots>0 and market_data_latest_eligible_age_seconds is not None and market_data_latest_eligible_age_seconds<=900)
         except Exception as e:
             db_error=type(e).__name__
             if _database_required() and not db_reachable:
@@ -1751,9 +1769,11 @@ def install(app):
             smtp_port_valid=False
         smtp_configured=bool(smtp_host and smtp_port_valid and smtp_username and smtp_password and smtp_from and public_url.startswith("https://"))
         email_verification_required=os.getenv("SYNPORA_REQUIRE_EMAIL_VERIFICATION","1" if _database_required() else "0").strip().lower() in ("1","true","yes")
-        ready=bool(db_configured and db_reachable and db_schema_ready and jwt_configured and jwt_secret_strong and market_token_configured and market_token_strong and smtp_configured and (not email_verification_required or smtp_configured))
+        ready=bool(db_configured and db_reachable and db_schema_ready and jwt_configured and jwt_secret_strong and market_token_configured and market_token_strong and smtp_configured and (not email_verification_required or smtp_configured) and market_data_ready)
         return {"database_configured":db_configured,"database_reachable":db_reachable,
                 "database_schema_ready":db_schema_ready,"database_backend":db_backend,"database_error":db_error,
+                "market_data_ready":market_data_ready,"market_data_eligible_snapshots_scanned":market_data_eligible_snapshots,
+                "market_data_latest_eligible_age_seconds":round(market_data_latest_eligible_age_seconds,1) if market_data_latest_eligible_age_seconds is not None else None,
                 "jwt_secret_configured":jwt_configured,"jwt_secret_strong":jwt_secret_strong,
                 "smtp_configured":smtp_configured,"smtp_host_configured":bool(smtp_host),
                 "smtp_auth_configured":bool(smtp_username and smtp_password),"smtp_from_configured":bool(smtp_from),

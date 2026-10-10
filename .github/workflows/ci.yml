@@ -455,6 +455,8 @@ jobs:
           assert readiness.status_code==200, readiness.text
           assert readiness.json()["hardware_write_enabled"] is False
           assert readiness.json()["database_schema_ready"] is True
+          assert "market_data_ready" in readiness.json()
+          assert "market_data_latest_eligible_age_seconds" in readiness.json()
           assert "smtp_configured" in readiness.json()
           assert c.post("/api/v1/auth/password-reset/request",json={"email":"missing-reset@example.com"}).json()["accepted"] is True
           assert c.post("/api/v1/auth/resend-verification",json={"email":"missing-verify@example.com"}).json()["accepted"] is True
