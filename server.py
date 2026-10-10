@@ -20,7 +20,8 @@ app.state.market_collector_status={
     "interval_seconds":MARKET_COLLECTION_INTERVAL_SECONDS,
     "last_attempt_at":None,"last_success_at":None,"last_failure_at":None,
     "last_error_class":None,"last_source":None,"last_quality":None,
-    "last_attempt_result":"not_started","consecutive_failures":0
+    "last_attempt_result":"not_started","consecutive_failures":0,
+    "last_attempt_duration_ms":None,"next_attempt_at":None,"retry_delay_seconds":0
 }
 
 def _market_status_update(**values):
@@ -38,14 +39,17 @@ def market_collector_status():
     return status
 
 def _market_loop():
-    # Collect a fresh market snapshot every 15 minutes. Never log credentials.
+    # Collect every 15 minutes on success; retry failures with bounded exponential backoff.
+    # Never log credentials or exception messages.
     import logging
     logger=logging.getLogger("synpora.market_collection")
     time.sleep(10)  # Let the ASGI server begin accepting requests before the first collection.
     missing_token_warned=False
+    retry_delay=60
     while True:
         attempt_at=time.time()
-        _market_status_update(last_attempt_at=attempt_at,last_attempt_result="running")
+        attempt_started=time.monotonic()
+        _market_status_update(last_attempt_at=attempt_at,last_attempt_result="running",next_attempt_at=None)
         try:
             import urllib.request, json, os
             token=os.getenv("SYNPORA_MARKET_ADMIN_TOKEN","").strip()
@@ -53,27 +57,39 @@ def _market_loop():
                 if not missing_token_warned:
                     logger.warning("Market collection is disabled: SYNPORA_MARKET_ADMIN_TOKEN is not configured.")
                     missing_token_warned=True
-                _market_status_update(last_attempt_result="disabled_missing_token",last_error_class=None)
+                next_attempt=attempt_at+MARKET_COLLECTION_INTERVAL_SECONDS
+                _market_status_update(last_attempt_result="disabled_missing_token",last_error_class=None,
+                    retry_delay_seconds=0,next_attempt_at=next_attempt,
+                    last_attempt_duration_ms=round((time.monotonic()-attempt_started)*1000))
             else:
                 url="http://127.0.0.1:"+os.getenv("PORT","8000")+"/api/v1/market/collect"
                 req=urllib.request.Request(url,headers={"X-SYNPORA-MARKET-TOKEN":token,"Accept":"application/json"},method="POST")
                 with urllib.request.urlopen(req,timeout=8) as response:
                     payload=json.loads(response.read().decode())
                 quality=payload.get("data_quality",{})
+                completed_at=time.time()
                 logger.info("Market snapshot collected; source=%s quality=%s external_fields=%s reference_fields=%s",
                     payload.get("source","unknown"),quality.get("status","unknown"),
                     quality.get("external_fields",0),quality.get("reference_fields",0))
-                _market_status_update(last_success_at=time.time(),last_attempt_result="success",
+                next_attempt=completed_at+MARKET_COLLECTION_INTERVAL_SECONDS
+                _market_status_update(last_success_at=completed_at,last_attempt_result="success",
                     last_error_class=None,last_source=payload.get("source","unknown"),
-                    last_quality=quality.get("status","unknown"),consecutive_failures=0)
+                    last_quality=quality.get("status","unknown"),consecutive_failures=0,
+                    retry_delay_seconds=0,next_attempt_at=next_attempt,
+                    last_attempt_duration_ms=round((time.monotonic()-attempt_started)*1000))
+                retry_delay=60
         except Exception as exc:
             logger.warning("Market snapshot collection failed (%s).",type(exc).__name__)
+            retry_delay=min(MARKET_COLLECTION_INTERVAL_SECONDS,max(60,retry_delay*2))
+            next_attempt=time.time()+retry_delay
             with _market_status_lock:
                 failures=int(app.state.market_collector_status.get("consecutive_failures",0))+1
                 app.state.market_collector_status.update(last_failure_at=time.time(),
                     last_attempt_result="failure",last_error_class=type(exc).__name__,
-                    consecutive_failures=failures)
-        time.sleep(MARKET_COLLECTION_INTERVAL_SECONDS)
+                    consecutive_failures=failures,retry_delay_seconds=retry_delay,
+                    next_attempt_at=next_attempt,
+                    last_attempt_duration_ms=round((time.monotonic()-attempt_started)*1000))
+        time.sleep(max(1, next_attempt-time.time()))
 
 threading.Thread(target=_market_loop,daemon=True).start()
 
