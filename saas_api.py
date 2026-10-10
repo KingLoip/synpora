@@ -95,12 +95,16 @@ def init_db():
         c.execute("""CREATE TABLE IF NOT EXISTS synpora_saas_assets(id TEXT PRIMARY KEY,farm_id TEXT NOT NULL,name TEXT NOT NULL,kind TEXT NOT NULL,power_kw DOUBLE PRECISION DEFAULT 0,created_at DOUBLE PRECISION NOT NULL)""")
         c.execute("""CREATE TABLE IF NOT EXISTS synpora_auth_tokens(id TEXT PRIMARY KEY,user_id TEXT NOT NULL,token_hash TEXT UNIQUE NOT NULL,purpose TEXT NOT NULL,expires_at DOUBLE PRECISION NOT NULL,created_at DOUBLE PRECISION NOT NULL,consumed_at DOUBLE PRECISION)""")
         c.execute("""CREATE TABLE IF NOT EXISTS synpora_auth_rate_limits(rate_key TEXT PRIMARY KEY,window_start DOUBLE PRECISION NOT NULL,failures INTEGER NOT NULL,locked_until DOUBLE PRECISION NOT NULL)""")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_synpora_auth_rate_limits_window ON synpora_auth_rate_limits(window_start)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_synpora_auth_tokens_expiry ON synpora_auth_tokens(expires_at)")
     else:
         c.executescript("""CREATE TABLE IF NOT EXISTS synpora_saas_users(id TEXT PRIMARY KEY,email TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL,created_at REAL NOT NULL,email_verified INTEGER NOT NULL DEFAULT 0,token_version INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS synpora_saas_farms(id TEXT PRIMARY KEY,user_id TEXT NOT NULL,name TEXT NOT NULL,created_at REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS synpora_saas_assets(id TEXT PRIMARY KEY,farm_id TEXT NOT NULL,name TEXT NOT NULL,kind TEXT NOT NULL,power_kw REAL DEFAULT 0,created_at REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS synpora_auth_tokens(id TEXT PRIMARY KEY,user_id TEXT NOT NULL,token_hash TEXT UNIQUE NOT NULL,purpose TEXT NOT NULL,expires_at REAL NOT NULL,created_at REAL NOT NULL,consumed_at REAL);
-CREATE TABLE IF NOT EXISTS synpora_auth_rate_limits(rate_key TEXT PRIMARY KEY,window_start REAL NOT NULL,failures INTEGER NOT NULL,locked_until REAL NOT NULL);""")
+CREATE TABLE IF NOT EXISTS synpora_auth_rate_limits(rate_key TEXT PRIMARY KEY,window_start REAL NOT NULL,failures INTEGER NOT NULL,locked_until REAL NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_synpora_auth_rate_limits_window ON synpora_auth_rate_limits(window_start);
+CREATE INDEX IF NOT EXISTS idx_synpora_auth_tokens_expiry ON synpora_auth_tokens(expires_at);""")
         try:
             c.execute("ALTER TABLE synpora_saas_users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0")
         except Exception:
@@ -218,6 +222,10 @@ def install(app):
                 elif action=="success":
                     failures=0; locked=0.0; start=now
                 c.execute("UPDATE synpora_auth_rate_limits SET window_start=?,failures=?,locked_until=? WHERE rate_key=?",(start,failures,locked,key))
+                # Opportunistically prune expired limiter rows so random-email abuse cannot
+                # grow this table without bound. Indexed cleanup runs at most once per 5 min bucket.
+                if int(now)%300==0:
+                    c.execute("DELETE FROM synpora_auth_rate_limits WHERE window_start<? AND locked_until<?",(now-7200,now))
             return allowed
         finally:
             c.close()
@@ -2062,7 +2070,7 @@ def install(app):
             "warnings":warnings,"recommendation_only":True,"hardware_write":False}
 
     class AuthIn(BaseModel):
-        email: str
+        email: str = __import__("pydantic").Field(..., max_length=254)
         password: str
 
     # Perform a real PBKDF2 verification for unknown accounts as well, reducing
@@ -2118,6 +2126,7 @@ def install(app):
         lifetime=3600 if purpose=="verify_email" else 1800
         token_id=secrets.token_hex(16)
         digest=hashlib.sha256(raw.encode()).hexdigest()
+        c.execute("DELETE FROM synpora_auth_tokens WHERE expires_at<? OR consumed_at<?",(now,now-86400))
         c.execute("UPDATE synpora_auth_tokens SET consumed_at=? WHERE user_id=? AND purpose=? AND consumed_at IS NULL",(now,user_id,purpose))
         c.execute("INSERT INTO synpora_auth_tokens(id,user_id,token_hash,purpose,expires_at,created_at,consumed_at) VALUES(?,?,?,?,?,?,NULL)",(token_id,user_id,digest,purpose,now+lifetime,now))
         base=os.getenv("SYNPORA_PUBLIC_URL","").strip().rstrip("/")
