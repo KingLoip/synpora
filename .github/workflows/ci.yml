@@ -73,6 +73,7 @@ jobs:
           assert c.post(f"/api/v1/farms/{farm}/assets",headers=other_headers,json={"name":"intrusion","kind":"GPU","power_kw":1}).status_code==404
           login=c.post("/api/v1/auth/login",json={"email":"  "+email+"  ","password":"ci-password-123"})
           assert login.status_code==200, login.text
+          assert login.headers.get("cache-control","").startswith("no-store"), login.headers
           # Repeated failed login attempts for one account key are throttled.
           for _ in range(5):
               denied=c.post("/api/v1/auth/login",json={"email":"rate-limit-ci@example.com","password":"wrong-password"})
@@ -575,7 +576,8 @@ jobs:
           assert "SYNPORA – Betriebsstatus" in ops.text
           assert "/api/v1/system/production-readiness" in ops.text
           assert "setInterval(refresh,30000)" in ops.text
-          assert ops.headers.get("content-security-policy")
+          assert "script-src 'self'" in ops.headers.get("content-security-policy",""), ops.headers
+          assert ops.headers.get("x-content-type-options")=="nosniff", ops.headers
           collector=c.get("/api/v1/system/collector-status")
           assert collector.status_code==200, collector.text
           ks=collector.json()
