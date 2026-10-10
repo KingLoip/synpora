@@ -538,7 +538,7 @@ jobs:
           assert 'combined_downside' in s
           assert 'def _database_required()' in s
           assert 'hardware_write":False' in s
-          assert 'row_factory=dict_row' in s
+          assert 'row_factory=_compat_dict_row' in s
           assert 'def transaction(self)' in s
           assert 'close_request_database_connections' in s
           print("SYNPORA release invariants: OK")
@@ -613,6 +613,9 @@ jobs:
           assert first.status_code==200, first.text
           second=client.post("/api/v1/market/collect",headers={"X-SYNPORA-MARKET-TOKEN":os.environ["SYNPORA_MARKET_ADMIN_TOKEN"]})
           assert second.status_code==200, second.text
+          health=client.get("/api/v1/market/data-health")
+          assert health.status_code==200, health.text
+          assert "latest_snapshot_timestamp" in health.json(), health.text
 
           # Verify records using a brand-new PostgreSQL connection, independent of API connection state.
           with psycopg.connect(os.environ["DATABASE_URL"]) as db:
