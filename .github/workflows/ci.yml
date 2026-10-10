@@ -9,7 +9,7 @@ jobs:
   syntax:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -706,7 +706,7 @@ jobs:
       SYNPORA_MARKET_ADMIN_TOKEN: ci-market-token-only
       SYNPORA_DISABLE_BUILTIN_MARKET_SOURCES: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
