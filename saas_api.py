@@ -1800,6 +1800,31 @@ def install(app):
                 "status":"ready" if ready else "configuration_required"}
 
 
+    @app.post("/api/v1/system/email-connection-test")
+    def email_connection_test(x_market_token:str|None=Header(default=None,alias="X-SYNPORA-MARKET-TOKEN")):
+        # Admin-only diagnostic: validates SMTP/TLS/auth without sending a message or
+        # exposing credentials/provider error text to callers.
+        require_market_admin(x_market_token)
+        try:
+            import smtplib, ssl
+            host,port,username,password,sender,public_url=_smtp_configuration()
+            if port==465:
+                with smtplib.SMTP_SSL(host,port,timeout=8,context=ssl.create_default_context()) as smtp:
+                    smtp.login(username,password)
+                    code,_=smtp.noop()
+            else:
+                with smtplib.SMTP(host,port,timeout=8) as smtp:
+                    smtp.ehlo()
+                    smtp.starttls(context=ssl.create_default_context())
+                    smtp.ehlo()
+                    smtp.login(username,password)
+                    code,_=smtp.noop()
+            if int(code)<200 or int(code)>=400:
+                raise RuntimeError("SMTP health check rejected")
+            return {"email_delivery":"connected","smtp_authenticated":True,"tls_required":True}
+        except Exception as exc:
+            raise HTTPException(503,{"email_delivery":"unavailable","error_class":type(exc).__name__})
+
     @app.get("/api/v1/farms/{farm_id}/ai-status")
     def ai_status(farm_id:str,authorization:str|None=Header(default=None)):
         uid=user(authorization); c=init_db()

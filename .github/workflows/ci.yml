@@ -744,6 +744,9 @@ jobs:
           assert "latest_snapshot_timestamp" in health.json(), health.text
           readiness=client.get("/api/v1/system/production-readiness").json()
           assert readiness["database_backend"]=="postgresql" and readiness["database_schema_ready"] is True, readiness
+          assert client.post("/api/v1/system/email-connection-test").status_code==403
+          email_diag=client.post("/api/v1/system/email-connection-test",headers={"X-SYNPORA-MARKET-TOKEN":os.environ["SYNPORA_MARKET_ADMIN_TOKEN"]})
+          assert email_diag.status_code==503 and email_diag.json()["detail"]["email_delivery"]=="unavailable", email_diag.text
 
           # Verify records using a brand-new PostgreSQL connection, independent of API connection state.
           with psycopg.connect(os.environ["DATABASE_URL"]) as db:
