@@ -19,7 +19,7 @@ Use distinct values for the JWT secret and market admin token. Do not paste eith
 
 ## Operations dashboard
 
-Open `/ops` on the deployed service for a live operational overview of production readiness, data freshness/eligibility, warnings, and release safety flags. It refreshes every 30 seconds and never displays secret values. The dashboard is diagnostic, not proof of profitability; the raw JSON is available at `/api/v1/system/production-readiness` and `/api/v1/market/data-health`.
+Open `/ops` on the deployed service for a live operational overview of production readiness, data freshness/eligibility, warnings, release safety flags, and the background collector's latest attempt/success/failure. It refreshes every 30 seconds and never displays secret values. The collector's in-memory status resets on service restart; the latest stored snapshot timestamp remains in the database-backed `/api/v1/market/data-health`. The raw JSON is available at `/api/v1/system/production-readiness`, `/api/v1/market/data-health`, and `/api/v1/system/collector-status`.
 
 ## Built-in market sources
 
