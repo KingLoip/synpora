@@ -1263,12 +1263,22 @@ def install(app):
 
     @app.get("/api/v1/market/history")
     def market_history(limit:int=100):
+        # Bound query cost and avoid a malformed historical payload taking down the
+        # entire diagnostics endpoint. Negative SQLite LIMIT values mean "no limit".
+        bounded_limit=max(1,min(int(limit),500))
         c=init_db()
         try:
-            rows=c.execute("SELECT ts,payload FROM market_snapshots ORDER BY ts DESC LIMIT ?",(min(limit,500),)).fetchall()
+            rows=c.execute("SELECT ts,payload FROM market_snapshots ORDER BY ts DESC LIMIT ?",(bounded_limit,)).fetchall()
         except Exception:
             rows=[]
-        return [{"timestamp":r[0],"data":json.loads(r[1])} for r in rows]
+        result=[]
+        for row in rows:
+            try:
+                payload=json.loads(row[1]) if row[1] else None
+            except (TypeError,ValueError,json.JSONDecodeError):
+                payload=None
+            result.append({"timestamp":row[0],"data":payload,"payload_valid":isinstance(payload,dict)})
+        return result
 
     class PortfolioIn(BaseModel):
         energy_kwh: float=100
