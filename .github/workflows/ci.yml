@@ -443,13 +443,13 @@ jobs:
               saas.DB_URL=""
               saas.DB_PATH=str(Path(td)/"persistent.db")
               first=saas.init_db()
-              first.execute("INSERT INTO users VALUES(?,?,?,?)",("persist-user","persist-ci@example.com","test-hash",time.time()))
-              first.execute("INSERT INTO farms VALUES(?,?,?,?)",("persist-farm","persist-user","Persistence CI",time.time()))
+              first.execute("INSERT INTO synpora_saas_users VALUES(?,?,?,?)",("persist-user","persist-ci@example.com","test-hash",time.time()))
+              first.execute("INSERT INTO synpora_saas_farms VALUES(?,?,?,?)",("persist-farm","persist-user","Persistence CI",time.time()))
               first.commit()
               first.close()
               reopened=saas.init_db()
-              persisted_user=reopened.execute("SELECT email FROM users WHERE id=?",("persist-user",)).fetchone()
-              persisted_farm=reopened.execute("SELECT name FROM farms WHERE id=?",("persist-farm",)).fetchone()
+              persisted_user=reopened.execute("SELECT email FROM synpora_saas_users WHERE id=?",("persist-user",)).fetchone()
+              persisted_farm=reopened.execute("SELECT name FROM synpora_saas_farms WHERE id=?",("persist-farm",)).fetchone()
               assert persisted_user and persisted_user["email"]=="persist-ci@example.com", persisted_user
               assert persisted_farm and persisted_farm["name"]=="Persistence CI", persisted_farm
               reopened.close()
@@ -621,9 +621,9 @@ jobs:
 
           # Verify records using a brand-new PostgreSQL connection, independent of API connection state.
           with psycopg.connect(os.environ["DATABASE_URL"]) as db:
-              user_row=db.execute("SELECT id,email FROM users WHERE email=%s",(email,)).fetchone()
+              user_row=db.execute("SELECT id,email FROM synpora_saas_users WHERE email=%s",(email,)).fetchone()
               assert user_row and user_row[1]==email, user_row
-              farms=db.execute("SELECT id,name FROM farms WHERE user_id=%s",(user_row[0],)).fetchall()
+              farms=db.execute("SELECT id,name FROM synpora_saas_farms WHERE user_id=%s",(user_row[0],)).fetchall()
               assert len(farms)>=2, farms
               snapshots=db.execute("SELECT COUNT(*) FROM market_snapshots").fetchone()[0]
               assert snapshots>=2, snapshots
