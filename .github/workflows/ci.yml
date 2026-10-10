@@ -429,7 +429,7 @@ jobs:
               readiness_required=c.get("/api/v1/system/production-readiness")
               assert readiness_required.status_code==200, readiness_required.text
               assert readiness_required.json()["database_backend"]=="unavailable", readiness_required.json()
-          assert readiness_required.json()["database_schema_ready"] is False, readiness_required.json()
+              assert readiness_required.json()["database_schema_ready"] is False, readiness_required.json()
               assert readiness_required.json()["jwt_secret_strong"] is False, readiness_required.json()
               assert "market_admin_token_strong" in readiness_required.json(), readiness_required.json()
           finally:
