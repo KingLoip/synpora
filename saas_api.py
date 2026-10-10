@@ -14,6 +14,20 @@ def _track_connection(conn):
         active.append(conn)
     return conn
 
+class _CompatRow(dict):
+    """Mapping row with SQLite-compatible integer indexing for legacy query code."""
+    def __getitem__(self, key):
+        if isinstance(key, int):
+            return tuple(self.values())[key]
+        return super().__getitem__(key)
+
+def _compat_dict_row(cursor):
+    from psycopg.rows import dict_row
+    make_dict=dict_row(cursor)
+    def make_row(values):
+        return _CompatRow(make_dict(values))
+    return make_row
+
 class _DBCompat:
     def __init__(self, conn, postgres=False):
         self._conn=conn
@@ -59,10 +73,8 @@ def _conn():
     if DB_URL:
         try:
             import psycopg
-            from psycopg.rows import dict_row
-            # The API deliberately uses named row fields across SQLite and PostgreSQL.
-            # Match SQLite's sqlite3.Row behavior instead of psycopg's default tuples.
-            wrapped=_DBCompat(psycopg.connect(DB_URL, autocommit=True, row_factory=dict_row), postgres=True)
+            # Preserve both named lookups and legacy integer indexing across drivers.
+            wrapped=_DBCompat(psycopg.connect(DB_URL, autocommit=True, row_factory=_compat_dict_row), postgres=True)
             return _track_connection(wrapped)
         except Exception as e:
             if _database_required():
