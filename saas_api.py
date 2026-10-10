@@ -1958,6 +1958,10 @@ def install(app):
     class AuthIn(BaseModel):
         email: str
         password: str
+
+    # Perform a real PBKDF2 verification for unknown accounts as well, reducing
+    # timing differences that could reveal whether an email is registered.
+    _DUMMY_PASSWORD_HASH=_hash("synpora-invalid-login-dummy-password")
     class FarmIn(BaseModel):
         name: str
     class AssetIn(BaseModel):
@@ -1974,8 +1978,10 @@ def install(app):
     @app.post("/api/v1/auth/register")
     def register(x:AuthIn):
         email=x.email.strip().lower()
-        if len(email)<3 or "@" not in email or len(email)>254: raise HTTPException(400,"Valid email required")
+        if len(email)<3 or "@" not in email or len(email)>254 or email.startswith("@") or email.endswith("@") or email.count("@")!=1:
+            raise HTTPException(400,"Valid email required")
         if len(x.password)<8: raise HTTPException(400,"Password must be at least 8 characters")
+        if len(x.password)>1024: raise HTTPException(400,"Password must be at most 1024 characters")
         c=init_db(); uid=secrets.token_hex(12); farm_id=secrets.token_hex(12)
         try:
             # Account and initial farm must be created atomically; never leave a half-created account.
@@ -1992,12 +1998,16 @@ def install(app):
     @app.post("/api/v1/auth/login")
     def login(x:AuthIn):
         email=x.email.strip().lower()
+        if len(x.password)>1024:
+            raise HTTPException(400,"Password must be at most 1024 characters")
         # Hash the key so the limiter's in-memory index is not a list of raw email addresses.
         key=hashlib.sha256(email.encode("utf-8")).hexdigest()
         if not _login_allowed(key):
             raise HTTPException(429,"Too many login attempts. Try again in a few minutes.",headers={"Retry-After":str(_LOGIN_LOCKOUT_SECONDS)})
         c=init_db(); row=c.execute("SELECT * FROM synpora_saas_users WHERE email=?",(email,)).fetchone()
-        if not row or not _verify(x.password,row["password_hash"]):
+        stored_hash=row["password_hash"] if row else _DUMMY_PASSWORD_HASH
+        password_ok=_verify(x.password,stored_hash)
+        if not row or not password_ok:
             _login_failed(key)
             raise HTTPException(401,"Invalid credentials")
         with _login_limit_lock:
