@@ -43,3 +43,15 @@ A mixed snapshot is not partially used for training/backtesting. Reference-only 
 - Backtesting measures historical simulated strategy values using standard variable-margin assumptions; historical market snapshots do not contain each user's own capex, maintenance, tax, contract availability or site constraints. Backtests therefore do not automatically represent full owner-specific lifetime profitability.
 - One-off installation costs, network/site import limits, provider contract availability and Austrian tax treatment are not inferred automatically. They must be checked separately before making an investment decision.
 - Keep `hardware_write=false` and `autonomous_control=false`. These APIs are recommendation and observation tools only.
+
+
+## Additional hardening (2026-10-10)
+
+- JWT payload claims are type-checked; malformed, expired, non-finite-expiry, empty, and oversized user identifiers are rejected.
+- Login uses a dummy PBKDF2 verification for unknown accounts to reduce account-enumeration timing differences. Failed login throttling is process-local (five failures per normalized email in a 15-minute window trigger a five-minute lockout); it resets on restart and is not a distributed rate limiter.
+- Registration validates basic email structure and limits passwords to 8–1024 characters. This is input hardening, not email ownership verification or a password-reset workflow.
+- Numeric calculations reject non-finite values and magnitudes above 1e12. Monte Carlo sample/scenario counts are limited to 1–10,000 and seeds to signed 32-bit integers to cap work per request.
+- Asset writes accept only GPU, BTC, or ASIC kinds, require a non-empty name of at most 120 characters, reject negative or extreme power values, and verify farm ownership before reading or writing assets.
+- Market history limits are clamped to 1–500 and invalid historical JSON payloads are returned as marked invalid records rather than crashing the endpoint.
+
+These controls reduce common abuse and robustness risks but do not replace distributed rate limiting, email verification, password reset, a formal penetration test, or monitoring of real traffic.
