@@ -538,7 +538,28 @@ jobs:
               reopened.close()
           saas.DB_PATH=old_db_path
           saas.DB_URL=old_db_url_persistence
-          print("SYNPORA file-backed persistence smoke test: OK")
+          # Upgrade a pre-existing four-column SaaS users table without dropping user data.
+          import sqlite3
+          old_path=saas.DB_PATH
+          old_url=saas.DB_URL
+          with tempfile.TemporaryDirectory() as td:
+              legacy_path=str(Path(td)/"legacy.db")
+              legacy=sqlite3.connect(legacy_path)
+              legacy.execute("CREATE TABLE synpora_saas_users(id TEXT PRIMARY KEY,email TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL,created_at REAL NOT NULL)")
+              legacy.execute("INSERT INTO synpora_saas_users VALUES(?,?,?,?)",("legacy-user","legacy@example.test","hash",time.time()))
+              legacy.commit()
+              legacy.close()
+              saas.DB_URL=""
+              saas.DB_PATH=legacy_path
+              migrated=saas.init_db()
+              columns={row["name"] for row in migrated.execute("PRAGMA table_info(synpora_saas_users)").fetchall()}
+              assert {"email_verified","token_version"}.issubset(columns), columns
+              legacy_user=migrated.execute("SELECT email,token_version FROM synpora_saas_users WHERE id=?",( "legacy-user",)).fetchone()
+              assert legacy_user and legacy_user["email"]=="legacy@example.test" and legacy_user["token_version"]==0, legacy_user
+              migrated.close()
+          saas.DB_PATH=old_path
+          saas.DB_URL=old_url
+          print("SYNPORA file-backed persistence and legacy schema migration smoke tests: OK")
           print("SYNPORA API end-to-end smoke test: OK")
           PY
 
