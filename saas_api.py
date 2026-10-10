@@ -1426,6 +1426,16 @@ def install(app):
         c=init_db(); _ensure_market_table(c)
         rows=c.execute("SELECT ts,payload FROM market_snapshots ORDER BY ts DESC LIMIT ?",(500,)).fetchall()
         now=time.time(); eligible=[]; excluded=0; latest_quality=None; latest_source=None
+        latest_snapshot_ts=float(rows[0][0]) if rows else None
+        latest_snapshot_age=max(0.0,now-latest_snapshot_ts) if latest_snapshot_ts is not None else None
+        latest_snapshot_payload={}
+        if rows:
+            try:
+                parsed_latest=json.loads(rows[0][1] or "{}")
+                if isinstance(parsed_latest,dict):
+                    latest_snapshot_payload=parsed_latest
+            except (TypeError,ValueError,json.JSONDecodeError):
+                latest_snapshot_payload={}
         for row in rows:
             try:
                 payload=json.loads(row[1] or "{}")
@@ -1447,9 +1457,18 @@ def install(app):
         if not newest: warnings.append("No snapshot has verified external provenance for every learning-critical field.")
         elif age>900: warnings.append("The latest eligible external snapshot is older than 15 minutes.")
         if excluded: warnings.append("Reference, mixed, incomplete, and unknown-provenance snapshots are excluded from learning and backtesting.")
+        collection_status=("never_collected" if latest_snapshot_ts is None else
+            "recent_snapshot" if latest_snapshot_age is not None and latest_snapshot_age<=1200 else "stale_snapshot")
+        latest_quality_fields=(latest_snapshot_payload.get("data_quality",{}).get("fields",{})
+            if isinstance(latest_snapshot_payload.get("data_quality",{}),dict) else {})
         return {"status":status,"snapshots_scanned":len(rows),"eligible_snapshots":len(eligible),
             "excluded_or_invalid_snapshots":excluded,"latest_snapshot_source":latest_source,
-            "latest_snapshot_quality":latest_quality,"latest_eligible_timestamp":newest["ts"] if newest else None,
+            "latest_snapshot_quality":latest_quality,"latest_snapshot_timestamp":latest_snapshot_ts,
+            "latest_snapshot_age_seconds":round(latest_snapshot_age,1) if latest_snapshot_age is not None else None,
+            "collection_status":collection_status,
+            "latest_snapshot_providers":latest_snapshot_payload.get("providers",[]),
+            "latest_snapshot_fields":latest_quality_fields,
+            "latest_eligible_timestamp":newest["ts"] if newest else None,
             "latest_eligible_age_seconds":round(age,1) if age is not None else None,
             "learning_fields_required":["btc_hashprice_usd_ph_day","gpu_l40s_usd_hour","eur_usd","austria_spot_eur_kwh"],
             "warnings":warnings,"recommendation_only":True,"hardware_write":False}
