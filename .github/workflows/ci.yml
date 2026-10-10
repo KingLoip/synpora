@@ -579,6 +579,7 @@ jobs:
           for name in ("backend","frontend"):
               shutil.copytree(root/name,name)
           PY
+          cp "$GITHUB_WORKSPACE/saas_api.py" backend/app/saas_api.py
       - name: Install PostgreSQL test dependencies
         run: |
           pip install -q -r backend/requirements.txt "psycopg[binary]" httpx
