@@ -1,15 +1,23 @@
-import os, sqlite3, hashlib, hmac, secrets, json, time, threading
+import os, sqlite3, hashlib, hmac, secrets, json, time, threading, contextvars
 from pathlib import Path
 from urllib.parse import urlparse
 
 DB_URL = os.getenv("DATABASE_URL","").strip() or os.getenv("POSTGRES_URL","").strip()
 JWT_SECRET = os.getenv("SYNPORA_JWT_SECRET","").strip()
 DB_PATH = os.getenv("SYNPORA_SQLITE_PATH","/tmp/synpora.db")
+_REQUEST_CONNECTIONS = contextvars.ContextVar("synpora_request_db_connections", default=None)
+
+def _track_connection(conn):
+    active=_REQUEST_CONNECTIONS.get()
+    if active is not None:
+        active.append(conn)
+    return conn
 
 class _DBCompat:
     def __init__(self, conn, postgres=False):
         self._conn=conn
         self.is_postgres=postgres
+        self._closed=False
     def execute(self, sql, params=None):
         if self.is_postgres and "?" in sql:
             sql=sql.replace("?", "%s")
@@ -24,6 +32,9 @@ class _DBCompat:
     def commit(self):
         return self._conn.commit()
     def close(self):
+        if self._closed:
+            return None
+        self._closed=True
         return self._conn.close()
 
 def _database_required():
@@ -37,7 +48,8 @@ def _conn():
             from psycopg.rows import dict_row
             # The API deliberately uses named row fields across SQLite and PostgreSQL.
             # Match SQLite's sqlite3.Row behavior instead of psycopg's default tuples.
-            return _DBCompat(psycopg.connect(DB_URL, autocommit=True, row_factory=dict_row), postgres=True)
+            wrapped=_DBCompat(psycopg.connect(DB_URL, autocommit=True, row_factory=dict_row), postgres=True)
+            return _track_connection(wrapped)
         except Exception as e:
             if _database_required():
                 raise RuntimeError("PostgreSQL connection required but unavailable") from e
@@ -45,7 +57,7 @@ def _conn():
         raise RuntimeError("DATABASE_URL is required; SQLite fallback is disabled in production")
     conn=sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory=sqlite3.Row
-    return _DBCompat(conn, postgres=False)
+    return _track_connection(_DBCompat(conn, postgres=False))
 
 def init_db():
     c=_conn()
@@ -92,7 +104,26 @@ def install(app):
     original_route_ids={id(r) for r in routes_before}
     if _database_required() and len(JWT_SECRET)<32:
         raise RuntimeError("SYNPORA_JWT_SECRET must contain at least 32 characters in production")
-    init_db()
+    startup_connection=init_db()
+    startup_connection.close()
+
+    # Close every database connection created while handling an HTTP request.
+    # A per-request list is shared with synchronous FastAPI handlers through ContextVar
+    # propagation, preventing slow connection leaks under repeated API traffic.
+    @app.middleware("http")
+    async def close_request_database_connections(request, call_next):
+        opened=[]
+        token=_REQUEST_CONNECTIONS.set(opened)
+        try:
+            return await call_next(request)
+        finally:
+            for connection in reversed(opened):
+                try:
+                    connection.close()
+                except Exception:
+                    pass
+            _REQUEST_CONNECTIONS.reset(token)
+
     # Best-effort per-account login throttling. This is process-local and intentionally
     # does not log emails, passwords, tokens, or client-supplied forwarding headers.
     _login_limit_lock=threading.Lock()
