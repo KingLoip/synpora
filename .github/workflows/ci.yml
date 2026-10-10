@@ -651,6 +651,12 @@ jobs:
           assert 'def transaction(self)' in s
           assert 'close_request_database_connections' in s
           assert 'database_schema_ready' in s
+          assert 'synpora_auth_rate_limits' in s
+          assert '/api/v1/auth/verify-email' in s
+          assert '/api/v1/auth/password-reset/request' in s
+          assert '/api/v1/auth/password-reset/confirm' in s
+          assert 'token_version=token_version+1' in s
+          assert 'market_data_latest_eligible_age_seconds' in s
           assert 'schema_connection=init_db()' in s
           print("SYNPORA release invariants: OK")
           PY
@@ -717,6 +723,12 @@ jobs:
           farm_id=reg.json()["farm"]["id"]
           headers={"Authorization":"Bearer "+token}
           assert client.get("/api/v1/auth/me",headers=headers).status_code==200
+          # Shared PostgreSQL rate limits must throttle across worker processes/restarts.
+          for _ in range(5):
+              failed=client.post("/api/v1/auth/login",json={"email":"pg-rate-limit@example.test","password":"incorrect-password"})
+              assert failed.status_code==401, failed.text
+          throttled=client.post("/api/v1/auth/login",json={"email":"pg-rate-limit@example.test","password":"incorrect-password"})
+          assert throttled.status_code==429 and int(throttled.headers.get("Retry-After","0"))>0, throttled.text
           created=client.post("/api/v1/farms",headers=headers,json={"name":"Postgres persistence check"})
           assert created.status_code==200, created.text
           farm_id_2=created.json()["id"]
