@@ -2,7 +2,8 @@
 
 ## What is implemented
 
-- `GET /api/v1/market/data-health` reports stored snapshot counts, latest source/provenance, age of the latest eligible observation, and why data is excluded.
+- `GET /api/v1/market/data-health` reports stored snapshot counts, latest source/provenance, age of the latest eligible observation, last stored snapshot age, per-field provenance, and why data is excluded.
+- `GET /api/v1/system/collector-status` reports the background collector's last attempt, last successful collection, last error class, last data-quality status and consecutive failures. The in-memory heartbeat resets on restart; use the database-backed snapshot timestamp in `data-health` to confirm persisted history.
 - `POST /api/v1/farms/{farm_id}/backtest` performs strict walk-forward evaluation. At time t it chooses the highest modeled value using snapshot t, then scores that choice against the next later eligible snapshot. It never trains or scores on a snapshot that was not fully externally sourced.
 - `GET /api/v1/farms/{farm_id}/paper-trading` summarizes recommendation-ledger outcomes, prediction error, regret, open decisions and per-strategy results. It does not place orders or control equipment.
 - `GET /ops` is a browser-based operations dashboard showing readiness, feed freshness, eligible/excluded snapshots, and recommendation-only release flags.
