@@ -120,7 +120,16 @@ def _uid(token):
         b,sig=token.split(".",1)
         if not hmac.compare_digest(sig,hmac.new(JWT_SECRET.encode(),b.encode(),hashlib.sha256).hexdigest()): return None
         raw=base64.urlsafe_b64decode(b+"="*((4-len(b)%4)%4)); d=json.loads(raw)
-        return d["uid"] if d["exp"]>time.time() else None
+        if not isinstance(d,dict):
+            return None
+        uid=d.get("uid")
+        exp=d.get("exp")
+        # Reject malformed or ambiguous claims instead of accepting any truthy identifier.
+        if not isinstance(uid,str) or not uid or len(uid)>128:
+            return None
+        if isinstance(exp,bool) or not isinstance(exp,(int,float)) or not __import__("math").isfinite(exp):
+            return None
+        return uid if exp>time.time() else None
     except Exception: return None
 
 def install(app):
