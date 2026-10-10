@@ -52,7 +52,7 @@ class _DBCompat:
             with self._conn.transaction():
                 yield
         else:
-            self._conn.execute("BEGIN")
+            self._conn.execute("BEGIN IMMEDIATE")
             try:
                 yield
                 self._conn.commit()
@@ -93,11 +93,13 @@ def init_db():
         c.execute("""CREATE TABLE IF NOT EXISTS synpora_saas_farms(id TEXT PRIMARY KEY,user_id TEXT NOT NULL,name TEXT NOT NULL,created_at DOUBLE PRECISION NOT NULL)""")
         c.execute("""CREATE TABLE IF NOT EXISTS synpora_saas_assets(id TEXT PRIMARY KEY,farm_id TEXT NOT NULL,name TEXT NOT NULL,kind TEXT NOT NULL,power_kw DOUBLE PRECISION DEFAULT 0,created_at DOUBLE PRECISION NOT NULL)""")
         c.execute("""CREATE TABLE IF NOT EXISTS synpora_auth_tokens(id TEXT PRIMARY KEY,user_id TEXT NOT NULL,token_hash TEXT UNIQUE NOT NULL,purpose TEXT NOT NULL,expires_at DOUBLE PRECISION NOT NULL,created_at DOUBLE PRECISION NOT NULL,consumed_at DOUBLE PRECISION)""")
+        c.execute("""CREATE TABLE IF NOT EXISTS synpora_auth_rate_limits(rate_key TEXT PRIMARY KEY,window_start DOUBLE PRECISION NOT NULL,failures INTEGER NOT NULL,locked_until DOUBLE PRECISION NOT NULL)""")
     else:
         c.executescript("""CREATE TABLE IF NOT EXISTS synpora_saas_users(id TEXT PRIMARY KEY,email TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL,created_at REAL NOT NULL,email_verified INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS synpora_saas_farms(id TEXT PRIMARY KEY,user_id TEXT NOT NULL,name TEXT NOT NULL,created_at REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS synpora_saas_assets(id TEXT PRIMARY KEY,farm_id TEXT NOT NULL,name TEXT NOT NULL,kind TEXT NOT NULL,power_kw REAL DEFAULT 0,created_at REAL NOT NULL);
-CREATE TABLE IF NOT EXISTS synpora_auth_tokens(id TEXT PRIMARY KEY,user_id TEXT NOT NULL,token_hash TEXT UNIQUE NOT NULL,purpose TEXT NOT NULL,expires_at REAL NOT NULL,created_at REAL NOT NULL,consumed_at REAL);""")
+CREATE TABLE IF NOT EXISTS synpora_auth_tokens(id TEXT PRIMARY KEY,user_id TEXT NOT NULL,token_hash TEXT UNIQUE NOT NULL,purpose TEXT NOT NULL,expires_at REAL NOT NULL,created_at REAL NOT NULL,consumed_at REAL);
+CREATE TABLE IF NOT EXISTS synpora_auth_rate_limits(rate_key TEXT PRIMARY KEY,window_start REAL NOT NULL,failures INTEGER NOT NULL,locked_until REAL NOT NULL);""")
         try:
             c.execute("ALTER TABLE synpora_saas_users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0")
         except Exception:
@@ -174,16 +176,43 @@ def install(app):
     _LOGIN_MAX_FAILURES=5
     _LOGIN_LOCKOUT_SECONDS=300
 
+    def _shared_login_state(key, action, now=None):
+        # Database-backed limit is shared by all app replicas; key is a SHA-256 digest,
+        # never a raw email address. Row locking serializes concurrent failures.
+        now=time.time() if now is None else now
+        c=init_db()
+        try:
+            with c.transaction():
+                c.execute("INSERT INTO synpora_auth_rate_limits(rate_key,window_start,failures,locked_until) VALUES(?,?,0,0) ON CONFLICT(rate_key) DO NOTHING",(key,now))
+                sql="SELECT window_start,failures,locked_until FROM synpora_auth_rate_limits WHERE rate_key=?"
+                if c.is_postgres: sql+=" FOR UPDATE"
+                row=c.execute(sql,(key,)).fetchone()
+                start=float(row["window_start"]); failures=int(row["failures"]); locked=float(row["locked_until"])
+                if now-start>=_LOGIN_WINDOW_SECONDS:
+                    start=now; failures=0; locked=0.0
+                allowed=now>=locked and failures<_LOGIN_MAX_FAILURES
+                if action=="failed":
+                    failures+=1
+                    if failures>=_LOGIN_MAX_FAILURES: locked=now+_LOGIN_LOCKOUT_SECONDS
+                elif action=="success":
+                    failures=0; locked=0.0; start=now
+                c.execute("UPDATE synpora_auth_rate_limits SET window_start=?,failures=?,locked_until=? WHERE rate_key=?",(start,failures,locked,key))
+            return allowed
+        finally:
+            c.close()
+
     def _login_allowed(key, now=None):
         now=time.time() if now is None else now
         with _login_limit_lock:
             state=_login_failures.get(key,{"attempts":[],"locked_until":0.0})
             state["attempts"]=[t for t in state["attempts"] if now-t < _LOGIN_WINDOW_SECONDS]
             _login_failures[key]=state
-            return now >= state["locked_until"]
+            local_allowed=now>=state["locked_until"] and len(state["attempts"])<_LOGIN_MAX_FAILURES
+        return local_allowed and _shared_login_state(key,"check",now)
 
     def _login_failed(key, now=None):
         now=time.time() if now is None else now
+        _shared_login_state(key,"failed",now)
         with _login_limit_lock:
             state=_login_failures.get(key,{"attempts":[],"locked_until":0.0})
             state["attempts"]=[t for t in state["attempts"] if now-t < _LOGIN_WINDOW_SECONDS]
@@ -191,7 +220,6 @@ def install(app):
             if len(state["attempts"]) >= _LOGIN_MAX_FAILURES:
                 state["locked_until"]=now+_LOGIN_LOCKOUT_SECONDS
             _login_failures[key]=state
-            # Bound memory growth under random-email abuse; expired entries are disposable.
             if len(_login_failures)>10000:
                 cutoff=now-_LOGIN_WINDOW_SECONDS
                 for old_key,old_state in list(_login_failures.items()):
@@ -2108,6 +2136,7 @@ def install(app):
             raise HTTPException(401,"Invalid credentials")
         if os.getenv("SYNPORA_REQUIRE_EMAIL_VERIFICATION","1" if _database_required() else "0").strip().lower() in ("1","true","yes") and not bool(row["email_verified"]):
             raise HTTPException(403,"Email verification required")
+        _shared_login_state(key,"success")
         with _login_limit_lock:
             _login_failures.pop(key,None)
         try: c.close()
