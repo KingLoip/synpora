@@ -18,7 +18,7 @@ COPY synpora_enhancement.py /tmp/synpora_enhancement.py
 RUN python /tmp/synpora_enhancement.py
 COPY saas_api.py /app/backend/app/saas_api.py
 COPY server.py /app/server.py
-RUN pip install --no-cache-dir -r backend/requirements.txt psycopg[binary]
+RUN pip install --no-cache-dir -r backend/requirements.txt psycopg[binary] psycopg2-binary
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=5 CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"
 CMD ["python","server.py"]
