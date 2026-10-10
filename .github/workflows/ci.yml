@@ -60,6 +60,17 @@ jobs:
           token=reg.json()["token"]
           farm=reg.json()["farm"]["id"]
           assert reg.json()["user"]["email"] == email
+          owner_headers={"Authorization":"Bearer "+token}
+          asset=c.post(f"/api/v1/farms/{farm}/assets",headers=owner_headers,json={"name":"GPU test","kind":"gpu","power_kw":1.2})
+          assert asset.status_code==200, asset.text
+          assert asset.json()["kind"]=="GPU", asset.json()
+          assert c.post(f"/api/v1/farms/{farm}/assets",headers=owner_headers,json={"name":"bad","kind":"unknown","power_kw":1}).status_code==422
+          assert c.post(f"/api/v1/farms/{farm}/assets",headers=owner_headers,json={"name":"bad","kind":"GPU","power_kw":-1}).status_code==422
+          other=c.post("/api/v1/auth/register",json={"email":"ci-other-owner@example.com","password":"ci-password-123"})
+          assert other.status_code==200, other.text
+          other_headers={"Authorization":"Bearer "+other.json()["token"]}
+          assert c.get(f"/api/v1/farms/{farm}/assets",headers=other_headers).status_code==404
+          assert c.post(f"/api/v1/farms/{farm}/assets",headers=other_headers,json={"name":"intrusion","kind":"GPU","power_kw":1}).status_code==404
           login=c.post("/api/v1/auth/login",json={"email":"  "+email+"  ","password":"ci-password-123"})
           assert login.status_code==200, login.text
           # Repeated failed login attempts for one account key are throttled.

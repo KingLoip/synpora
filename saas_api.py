@@ -2049,13 +2049,23 @@ def install(app):
 
     @app.post("/api/v1/farms/{farm_id}/assets")
     def create_asset(farm_id:str,x:AssetIn,authorization:str|None=Header(default=None)):
-        uid=user(authorization); c=init_db()
+        uid=user(authorization)
+        name=x.name.strip()
+        kind=x.kind.strip().upper()
+        if not name or len(name)>120:
+            raise HTTPException(422,"Asset name must contain 1 to 120 characters")
+        if kind not in {"GPU","BTC","ASIC"}:
+            raise HTTPException(422,"Asset kind must be GPU, BTC, or ASIC")
+        _validate_numeric_inputs(x)
+        if x.power_kw<0:
+            raise HTTPException(422,"power_kw must be zero or greater")
+        c=init_db()
         ok=c.execute("SELECT 1 FROM synpora_saas_farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone()
         if not ok: raise HTTPException(404,"Farm not found")
-        aid=secrets.token_hex(12); c.execute("INSERT INTO synpora_saas_assets VALUES(?,?,?,?,?,?)",(aid,farm_id,x.name.strip()[:120],x.kind.strip()[:50],x.power_kw,time.time()))
+        aid=secrets.token_hex(12); c.execute("INSERT INTO synpora_saas_assets VALUES(?,?,?,?,?,?)",(aid,farm_id,name,kind,x.power_kw,time.time()))
         try: c.commit()
         except Exception: pass
-        return {"id":aid,"name":x.name.strip()[:120],"kind":x.kind.strip()[:50],"power_kw":x.power_kw}
+        return {"id":aid,"name":name,"kind":kind,"power_kw":x.power_kw}
 
     @app.get("/api/v1/system/database")
     def database():
