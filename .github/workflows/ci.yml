@@ -476,7 +476,10 @@ jobs:
                   verify_token=re.search(r"token=([A-Za-z0-9_-]+)",verify_msg.get_content()).group(1)
                   assert c.post("/api/v1/auth/verify-email",json={"token":verify_token}).status_code==200
                   assert c.post("/api/v1/auth/verify-email",json={"token":verify_token}).status_code==400
-                  assert c.post("/api/v1/auth/login",json={"email":verify_email,"password":"ci-password-123"}).status_code==200
+                  verified_login=c.post("/api/v1/auth/login",json={"email":verify_email,"password":"ci-password-123"})
+                  assert verified_login.status_code==200, verified_login.text
+                  old_auth={"Authorization":"Bearer "+verified_login.json()["token"]}
+                  assert c.get("/api/v1/farms",headers=old_auth).status_code==200
                   reset_request=c.post("/api/v1/auth/password-reset/request",json={"email":verify_email})
                   assert reset_request.status_code==200
                   reset_msg=smtp_mock.return_value.__enter__.return_value.send_message.call_args.args[0]
@@ -484,6 +487,7 @@ jobs:
                   reset=c.post("/api/v1/auth/password-reset/confirm",json={"token":reset_token,"new_password":"ci-new-password-456"})
                   assert reset.status_code==200, reset.text
                   assert c.post("/api/v1/auth/password-reset/confirm",json={"token":reset_token,"new_password":"ci-other-password-789"}).status_code==400
+                  assert c.get("/api/v1/farms",headers=old_auth).status_code==401
                   assert c.post("/api/v1/auth/login",json={"email":verify_email,"password":"ci-new-password-456"}).status_code==200
           finally:
               for key,value in saved_env.items():

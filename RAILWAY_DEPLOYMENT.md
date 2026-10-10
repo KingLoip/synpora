@@ -54,17 +54,17 @@ A successful GitHub Actions run validates code and image build, but does not pro
 ## Security and load guardrails
 
 - Authentication rejects malformed/expired JWT claims, enforces an 8–1024 character password range, and performs a dummy password-hash check for unknown login accounts.
-- Login throttling is per process and normalized email; it is intentionally best-effort and resets on deployment/restart. For multiple replicas, add a shared rate-limit store before public high-volume use.
+- Login throttling and recovery-email request limits use PostgreSQL-backed counters, so limits persist across restarts and are shared by replicas; local in-process login throttling is an additional guard.
 - Calculation inputs reject non-finite/extreme numbers, cap Monte Carlo work to 10,000 samples/scenarios, and constrain random seeds to signed 32-bit integers.
 - Asset creation validates name, kind (GPU, BTC, ASIC) and nonnegative bounded power; access is scoped to the owning farm. Market history requests are capped at 500 rows.
-- Keep hardware_write=false and autonomous_control=false; no API in this deployment is authorized to send hardware commands.
+- Password-reset increments a per-user token version, revoking previously issued JWTs. Keep hardware_write=false and autonomous_control=false; no API in this deployment is authorized to send hardware commands.
 
 ## Release acceptance checks
 
-1. GitHub Actions SYNPORA CI passes both the syntax/API/Docker job and the PostgreSQL integration job.
+1. GitHub Actions SYNPORA CI passes both the syntax/API/Docker job and the PostgreSQL integration job, including email verification, single-use password reset, and session revocation.
 2. Railway reports the newest synpora deployment as SUCCESS, one running replica, and no unresolved critical issues; PostgreSQL is online with its persistent volume attached.
 3. Open /health, /ops, /api/v1/system/production-readiness and /api/v1/market/data-health; readiness alone does not prove the live market feed is fresh or economically accurate.
-4. Confirm the collector has a recent successful attempt and that eligible snapshots show external provenance for all required market fields. Investigate repeated provider failures or stale data before using forecasts.
+4. Confirm `market_data_ready: true`, a recent successful collector attempt, and eligible snapshots with external provenance for all required market fields. The readiness endpoint now remains blocked when no fully verified snapshot younger than 15 minutes exists. Investigate repeated provider failures or stale data before using forecasts.
 5. Treat all rankings as recommendations, not guaranteed returns. Site installation/network costs and user-supplied tax/capex assumptions still need real-world review.
 
 
