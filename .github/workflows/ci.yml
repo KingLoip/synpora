@@ -411,6 +411,7 @@ jobs:
           readiness=c.get("/api/v1/system/production-readiness")
           assert readiness.status_code==200, readiness.text
           assert readiness.json()["hardware_write_enabled"] is False
+          assert readiness.json()["database_schema_ready"] is True
           for path in ("/api/v1/market/collect", "/api/v1/market/backfill", "/api/v1/market/snapshot"):
               protected=c.post(path)
               assert protected.status_code==403, (path, protected.status_code, protected.text)
@@ -428,6 +429,7 @@ jobs:
               readiness_required=c.get("/api/v1/system/production-readiness")
               assert readiness_required.status_code==200, readiness_required.text
               assert readiness_required.json()["database_backend"]=="unavailable", readiness_required.json()
+          assert readiness_required.json()["database_schema_ready"] is False, readiness_required.json()
               assert readiness_required.json()["jwt_secret_strong"] is False, readiness_required.json()
               assert "market_admin_token_strong" in readiness_required.json(), readiness_required.json()
           finally:
@@ -541,6 +543,8 @@ jobs:
           assert 'row_factory=_compat_dict_row' in s
           assert 'def transaction(self)' in s
           assert 'close_request_database_connections' in s
+          assert 'database_schema_ready' in s
+          assert 'schema_connection=init_db()' in s
           print("SYNPORA release invariants: OK")
           PY
 
@@ -618,6 +622,8 @@ jobs:
           health=client.get("/api/v1/market/data-health")
           assert health.status_code==200, health.text
           assert "latest_snapshot_timestamp" in health.json(), health.text
+          readiness=client.get("/api/v1/system/production-readiness").json()
+          assert readiness["database_backend"]=="postgresql" and readiness["database_schema_ready"] is True, readiness
 
           # Verify records using a brand-new PostgreSQL connection, independent of API connection state.
           with psycopg.connect(os.environ["DATABASE_URL"]) as db:
