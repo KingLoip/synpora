@@ -433,9 +433,18 @@ jobs:
           assert "/api/v1/system/production-readiness" in ops.text
           assert "setInterval(refresh,30000)" in ops.text
           assert ops.headers.get("content-security-policy")
+          collector=c.get("/api/v1/system/collector-status")
+          assert collector.status_code==200, collector.text
+          ks=collector.json()
+          assert "last_attempt_result" in ks and "consecutive_failures" in ks, ks
+          assert "SYNPORA_MARKET_ADMIN_TOKEN" not in collector.text, collector.text
+          market_health=c.get("/api/v1/market/data-health")
+          assert market_health.status_code==200, market_health.text
+          mh=market_health.json()
+          assert "latest_snapshot_age_seconds" in mh and "latest_snapshot_fields" in mh, mh
           health=c.get("/health")
           assert health.status_code==200 and health.json()["status"]=="ok", health.text
-          print("SYNPORA operations dashboard smoke test: OK")
+          print("SYNPORA operations dashboard and collector status smoke test: OK")
           PY
 
       - name: Docker build smoke test
@@ -466,6 +475,10 @@ jobs:
           assert '/api/v1/farms/{farm_id}/backtest' in s
           assert 'strict_walk_forward_next_snapshot_v1' in s
           assert '/api/v1/market/data-health' in s
+          assert s.count('@app.post("/api/v1/market/collect")') == 1
+          assert '/api/v1/system/collector-status' in Path("server.py").read_text()
+          assert 'last_attempt_result' in Path("server.py").read_text()
+          assert 'latest_snapshot_age_seconds' in s
           assert '/api/v1/farms/{farm_id}/paper-trading' in s
           assert 'SYNPORA_MARKET_DATA_URL' in s
           assert 'SYNPORA_MARKET_DATA_ALLOWED_HOSTS' in s
