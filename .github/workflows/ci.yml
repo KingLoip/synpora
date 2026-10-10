@@ -538,3 +538,83 @@ jobs:
           assert 'hardware_write":False' in s
           print("SYNPORA release invariants: OK")
           PY
+
+  postgres-integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: synpora
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d synpora"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/synpora
+      SYNPORA_REQUIRE_DATABASE: "1"
+      SYNPORA_JWT_SECRET: ci-postgres-integration-secret-at-least-32-chars
+      SYNPORA_MARKET_ADMIN_TOKEN: ci-market-token-only
+      SYNPORA_DISABLE_BUILTIN_MARKET_SOURCES: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Extract application package
+        run: |
+          python - <<'PY'
+          import shutil, zipfile
+          from pathlib import Path
+          z=zipfile.ZipFile("SYNPORA_1_0_1_DEPLOY_READY.zip")
+          z.extractall("/tmp/pkg")
+          root=Path("/tmp/pkg/synpora_deploy/synpora_v71_90_work")
+          for name in ("backend","frontend"):
+              shutil.copytree(root/name,name)
+          PY
+      - name: Install PostgreSQL test dependencies
+        run: |
+          pip install -q -r backend/requirements.txt "psycopg[binary]" httpx
+      - name: Verify PostgreSQL persistence and repeatable market migrations
+        run: |
+          python - <<'PY'
+          import os, psycopg
+          from fastapi.testclient import TestClient
+          from backend.app.main import app
+          from backend.app.saas_api import install
+
+          install(app)
+          client=TestClient(app)
+          email="ci-postgres-persistence@example.com"
+          reg=client.post("/api/v1/auth/register",json={"email":email,"password":"ci-postgres-password-123"})
+          assert reg.status_code==200, reg.text
+          token=reg.json()["token"]
+          farm_id=reg.json()["farm"]["id"]
+          headers={"Authorization":"Bearer "+token}
+          assert client.get("/api/v1/auth/me",headers=headers).status_code==200
+          created=client.post("/api/v1/farms",headers=headers,json={"name":"Postgres persistence check"})
+          assert created.status_code==200, created.text
+          farm_id_2=created.json()["id"]
+          assert any(x["id"]==farm_id_2 for x in client.get("/api/v1/farms",headers=headers).json())
+
+          # Collect twice: the second request reruns the schema ensure path against existing columns.
+          first=client.post("/api/v1/market/collect",headers={"X-SYNPORA-MARKET-TOKEN":os.environ["SYNPORA_MARKET_ADMIN_TOKEN"]})
+          assert first.status_code==200, first.text
+          second=client.post("/api/v1/market/collect",headers={"X-SYNPORA-MARKET-TOKEN":os.environ["SYNPORA_MARKET_ADMIN_TOKEN"]})
+          assert second.status_code==200, second.text
+
+          # Verify records using a brand-new PostgreSQL connection, independent of API connection state.
+          with psycopg.connect(os.environ["DATABASE_URL"]) as db:
+              user_row=db.execute("SELECT id,email FROM users WHERE email=%s",(email,)).fetchone()
+              assert user_row and user_row[1]==email, user_row
+              farms=db.execute("SELECT id,name FROM farms WHERE user_id=%s",(user_row[0],)).fetchall()
+              assert len(farms)>=2, farms
+              snapshots=db.execute("SELECT COUNT(*) FROM market_snapshots").fetchone()[0]
+              assert snapshots>=2, snapshots
+          print("SYNPORA PostgreSQL persistence and idempotent migration test: OK")
+          PY
