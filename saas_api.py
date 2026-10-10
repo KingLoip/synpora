@@ -893,6 +893,7 @@ def install(app):
 
     def _market_quality(ext, now=None):
         # A field is external only when a validated provider returned a finite value.
+        import math
         now=time.time() if now is None else float(now)
         observed={}
         field_meta=ext.get("_fieldMeta",{}) if isinstance(ext.get("_fieldMeta",{}),dict) else {}
