@@ -585,7 +585,7 @@ jobs:
           cp "$GITHUB_WORKSPACE/saas_api.py" backend/app/saas_api.py
       - name: Install PostgreSQL test dependencies
         run: |
-          pip install -q -r backend/requirements.txt "psycopg[binary]" httpx
+          pip install -q -r backend/requirements.txt "psycopg[binary]" psycopg2-binary httpx
       - name: Verify PostgreSQL persistence and repeatable market migrations
         run: |
           python - <<'PY'
