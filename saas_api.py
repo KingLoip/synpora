@@ -88,13 +88,20 @@ def _conn():
 def init_db():
     c=_conn()
     if c.is_postgres:
-        c.execute("""CREATE TABLE IF NOT EXISTS synpora_saas_users(id TEXT PRIMARY KEY,email TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL,created_at DOUBLE PRECISION NOT NULL)""")
+        c.execute("""CREATE TABLE IF NOT EXISTS synpora_saas_users(id TEXT PRIMARY KEY,email TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL,created_at DOUBLE PRECISION NOT NULL,email_verified BOOLEAN NOT NULL DEFAULT FALSE)""")
+        c.execute("""ALTER TABLE synpora_saas_users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT FALSE""")
         c.execute("""CREATE TABLE IF NOT EXISTS synpora_saas_farms(id TEXT PRIMARY KEY,user_id TEXT NOT NULL,name TEXT NOT NULL,created_at DOUBLE PRECISION NOT NULL)""")
         c.execute("""CREATE TABLE IF NOT EXISTS synpora_saas_assets(id TEXT PRIMARY KEY,farm_id TEXT NOT NULL,name TEXT NOT NULL,kind TEXT NOT NULL,power_kw DOUBLE PRECISION DEFAULT 0,created_at DOUBLE PRECISION NOT NULL)""")
+        c.execute("""CREATE TABLE IF NOT EXISTS synpora_auth_tokens(id TEXT PRIMARY KEY,user_id TEXT NOT NULL,token_hash TEXT UNIQUE NOT NULL,purpose TEXT NOT NULL,expires_at DOUBLE PRECISION NOT NULL,created_at DOUBLE PRECISION NOT NULL,consumed_at DOUBLE PRECISION)""")
     else:
-        c.executescript("""CREATE TABLE IF NOT EXISTS synpora_saas_users(id TEXT PRIMARY KEY,email TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL,created_at REAL NOT NULL);
+        c.executescript("""CREATE TABLE IF NOT EXISTS synpora_saas_users(id TEXT PRIMARY KEY,email TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL,created_at REAL NOT NULL,email_verified INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS synpora_saas_farms(id TEXT PRIMARY KEY,user_id TEXT NOT NULL,name TEXT NOT NULL,created_at REAL NOT NULL);
-CREATE TABLE IF NOT EXISTS synpora_saas_assets(id TEXT PRIMARY KEY,farm_id TEXT NOT NULL,name TEXT NOT NULL,kind TEXT NOT NULL,power_kw REAL DEFAULT 0,created_at REAL NOT NULL);""")
+CREATE TABLE IF NOT EXISTS synpora_saas_assets(id TEXT PRIMARY KEY,farm_id TEXT NOT NULL,name TEXT NOT NULL,kind TEXT NOT NULL,power_kw REAL DEFAULT 0,created_at REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS synpora_auth_tokens(id TEXT PRIMARY KEY,user_id TEXT NOT NULL,token_hash TEXT UNIQUE NOT NULL,purpose TEXT NOT NULL,expires_at REAL NOT NULL,created_at REAL NOT NULL,consumed_at REAL);""")
+        try:
+            c.execute("ALTER TABLE synpora_saas_users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0")
+        except Exception:
+            pass  # Existing SQLite installations already have the column.
         c.commit()
     return c
 
@@ -1674,10 +1681,26 @@ def install(app):
             if c is not None:
                 try: c.close()
                 except Exception: pass
-        ready=bool(db_configured and db_reachable and db_schema_ready and jwt_configured and jwt_secret_strong and market_token_configured and market_token_strong)
+        smtp_host=os.getenv("SYNPORA_SMTP_HOST","").strip()
+        smtp_port_raw=os.getenv("SYNPORA_SMTP_PORT","587").strip()
+        smtp_username=os.getenv("SYNPORA_SMTP_USERNAME","").strip()
+        smtp_password=os.getenv("SYNPORA_SMTP_PASSWORD","")
+        smtp_from=os.getenv("SYNPORA_SMTP_FROM","").strip()
+        public_url=os.getenv("SYNPORA_PUBLIC_URL","").strip()
+        try:
+            smtp_port=int(smtp_port_raw)
+            smtp_port_valid=1<=smtp_port<=65535
+        except Exception:
+            smtp_port_valid=False
+        smtp_configured=bool(smtp_host and smtp_port_valid and smtp_username and smtp_password and smtp_from and public_url.startswith("https://"))
+        email_verification_required=os.getenv("SYNPORA_REQUIRE_EMAIL_VERIFICATION","1" if _database_required() else "0").strip().lower() in ("1","true","yes")
+        ready=bool(db_configured and db_reachable and db_schema_ready and jwt_configured and jwt_secret_strong and market_token_configured and market_token_strong and smtp_configured and (not email_verification_required or smtp_configured))
         return {"database_configured":db_configured,"database_reachable":db_reachable,
                 "database_schema_ready":db_schema_ready,"database_backend":db_backend,"database_error":db_error,
                 "jwt_secret_configured":jwt_configured,"jwt_secret_strong":jwt_secret_strong,
+                "smtp_configured":smtp_configured,"smtp_host_configured":bool(smtp_host),
+                "smtp_auth_configured":bool(smtp_username and smtp_password),"smtp_from_configured":bool(smtp_from),
+                "public_url_https":public_url.startswith("https://"),"email_verification_required":email_verification_required,
                 "market_admin_token_configured":market_token_configured,"market_admin_token_strong":market_token_strong,
                 "market_data_feed_configured":bool(os.getenv("SYNPORA_MARKET_DATA_URL","").strip()),
                 "market_data_feed_https":bool(urlparse(os.getenv("SYNPORA_MARKET_DATA_URL","").strip()).scheme=="https" and urlparse(os.getenv("SYNPORA_MARKET_DATA_URL","").strip()).hostname) if os.getenv("SYNPORA_MARKET_DATA_URL","").strip() else False,
@@ -1968,6 +1991,61 @@ def install(app):
     # Perform a real PBKDF2 verification for unknown accounts as well, reducing
     # timing differences that could reveal whether an email is registered.
     _DUMMY_PASSWORD_HASH=_hash("synpora-invalid-login-dummy-password")
+    class EmailTokenIn(BaseModel):
+        token: str
+
+    class PasswordResetRequestIn(BaseModel):
+        email: str
+
+    class PasswordResetConfirmIn(BaseModel):
+        token: str
+        new_password: str
+
+    def _smtp_configuration():
+        import smtplib
+        host=os.getenv("SYNPORA_SMTP_HOST","").strip()
+        username=os.getenv("SYNPORA_SMTP_USERNAME","").strip()
+        password=os.getenv("SYNPORA_SMTP_PASSWORD","")
+        sender=os.getenv("SYNPORA_SMTP_FROM","").strip()
+        public_url=os.getenv("SYNPORA_PUBLIC_URL","").strip().rstrip("/")
+        try: port=int(os.getenv("SYNPORA_SMTP_PORT","587"))
+        except Exception: port=0
+        if not (host and username and password and sender and public_url.startswith("https://") and 1<=port<=65535):
+            raise RuntimeError("Email delivery is not configured")
+        return host,port,username,password,sender,public_url
+
+    def _send_security_email(recipient,subject,body):
+        import smtplib, ssl
+        from email.message import EmailMessage
+        host,port,username,password,sender,public_url=_smtp_configuration()
+        message=EmailMessage()
+        message["Subject"]=subject
+        message["From"]=sender
+        message["To"]=recipient
+        message.set_content(body)
+        if port==465:
+            with smtplib.SMTP_SSL(host,port,timeout=10,context=ssl.create_default_context()) as smtp:
+                smtp.login(username,password)
+                smtp.send_message(message)
+        else:
+            with smtplib.SMTP(host,port,timeout=10) as smtp:
+                smtp.ehlo()
+                smtp.starttls(context=ssl.create_default_context())
+                smtp.ehlo()
+                smtp.login(username,password)
+                smtp.send_message(message)
+
+    def _issue_email_token(c,user_id,purpose,recipient):
+        raw=secrets.token_urlsafe(32)
+        now=time.time()
+        lifetime=3600 if purpose=="verify_email" else 1800
+        token_id=secrets.token_hex(16)
+        digest=hashlib.sha256(raw.encode()).hexdigest()
+        c.execute("UPDATE synpora_auth_tokens SET consumed_at=? WHERE user_id=? AND purpose=? AND consumed_at IS NULL",(now,user_id,purpose))
+        c.execute("INSERT INTO synpora_auth_tokens(id,user_id,token_hash,purpose,expires_at,created_at,consumed_at) VALUES(?,?,?,?,?,?,NULL)",(token_id,user_id,digest,purpose,now+lifetime,now))
+        base=os.getenv("SYNPORA_PUBLIC_URL","").strip().rstrip("/")
+        return raw,base
+
     class FarmIn(BaseModel):
         name: str
     class AssetIn(BaseModel):
@@ -1992,13 +2070,25 @@ def install(app):
         try:
             # Account and initial farm must be created atomically; never leave a half-created account.
             with c.transaction():
-                c.execute("INSERT INTO synpora_saas_users VALUES(?,?,?,?)",(uid,email,_hash(x.password),time.time()))
+                c.execute("INSERT INTO synpora_saas_users(id,email,password_hash,created_at,email_verified) VALUES(?,?,?,?,?)",(uid,email,_hash(x.password),time.time(),not (os.getenv("SYNPORA_REQUIRE_EMAIL_VERIFICATION","1" if _database_required() else "0").strip().lower() in ("1","true","yes"))))
                 c.execute("INSERT INTO synpora_saas_farms VALUES(?,?,?,?)",(farm_id,uid,"My first farm",time.time()))
         except Exception as e:
             message=str(e).lower()
             if "unique" in message or "duplicate key" in message or "synpora_saas_users.email" in message:
                 raise HTTPException(409,"Email already registered")
             raise HTTPException(503,"Registration temporarily unavailable")
+        verification_required=os.getenv("SYNPORA_REQUIRE_EMAIL_VERIFICATION","1" if _database_required() else "0").strip().lower() in ("1","true","yes")
+        if verification_required:
+            try:
+                token_row=init_db()
+                try:
+                    raw,base=_issue_email_token(token_row,uid,"verify_email",email)
+                    token_row.commit()
+                finally: token_row.close()
+                _send_security_email(email,"Verify your SYNPORA email",f"Verify your SYNPORA account using this one-time link: {base}/verify-email?token={raw}\nThe link expires in 60 minutes. If you did not create this account, ignore this message.")
+            except Exception:
+                raise HTTPException(503,"Account created but verification email could not be sent. Use the resend-verification endpoint after email delivery is configured.")
+            return {"verification_required":True,"message":"Check your email to verify your account.","user":{"id":uid,"email":email},"farm":{"id":farm_id,"name":"My first farm"}}
         return {"token":_token(uid),"user":{"id":uid,"email":email},"farm":{"id":farm_id,"name":"My first farm"}}
 
     @app.post("/api/v1/auth/login")
@@ -2016,11 +2106,79 @@ def install(app):
         if not row or not password_ok:
             _login_failed(key)
             raise HTTPException(401,"Invalid credentials")
+        if os.getenv("SYNPORA_REQUIRE_EMAIL_VERIFICATION","1" if _database_required() else "0").strip().lower() in ("1","true","yes") and not bool(row["email_verified"]):
+            raise HTTPException(403,"Email verification required")
         with _login_limit_lock:
             _login_failures.pop(key,None)
         try: c.close()
         except Exception: pass
         return {"token":_token(row["id"]),"user":{"id":row["id"],"email":row["email"]}}
+
+    @app.post("/api/v1/auth/verify-email")
+    def verify_email(x:EmailTokenIn):
+        if not x.token or len(x.token)>512: raise HTTPException(400,"Invalid or expired token")
+        c=init_db()
+        try:
+            digest=hashlib.sha256(x.token.encode()).hexdigest()
+            row=c.execute("SELECT id,user_id,expires_at FROM synpora_auth_tokens WHERE token_hash=? AND purpose='verify_email' AND consumed_at IS NULL",(digest,)).fetchone()
+            if not row or float(row["expires_at"])<=time.time(): raise HTTPException(400,"Invalid or expired token")
+            with c.transaction():
+                c.execute("UPDATE synpora_auth_tokens SET consumed_at=? WHERE id=? AND consumed_at IS NULL",(time.time(),row["id"]))
+                c.execute("UPDATE synpora_saas_users SET email_verified=? WHERE id=?",(True,row["user_id"]))
+            return {"verified":True,"message":"Email verified. You can now sign in."}
+        finally: c.close()
+
+    @app.post("/api/v1/auth/resend-verification")
+    def resend_verification(x:PasswordResetRequestIn):
+        email=x.email.strip().lower()
+        # Deliberately return the same response regardless of whether the account exists.
+        try:
+            c=init_db()
+            try:
+                row=c.execute("SELECT id,email_verified FROM synpora_saas_users WHERE email=?",(email,)).fetchone()
+                if row and not bool(row["email_verified"]):
+                    raw,base=_issue_email_token(c,row["id"],"verify_email",email)
+                    c.commit()
+                    _send_security_email(email,"Verify your SYNPORA email",f"Verify your account: {base}/verify-email?token={raw}\nThe link expires in 60 minutes.")
+            finally: c.close()
+        except Exception:
+            # Do not leak account existence or provider details.
+            pass
+        return {"accepted":True,"message":"If the account needs verification, instructions will be sent."}
+
+    @app.post("/api/v1/auth/password-reset/request")
+    def request_password_reset(x:PasswordResetRequestIn):
+        email=x.email.strip().lower()
+        try:
+            c=init_db()
+            try:
+                row=c.execute("SELECT id FROM synpora_saas_users WHERE email=?",(email,)).fetchone()
+                if row:
+                    raw,base=_issue_email_token(c,row["id"],"reset_password",email)
+                    c.commit()
+                    _send_security_email(email,"Reset your SYNPORA password",f"Reset your password using this one-time link: {base}/reset-password?token={raw}\nThe link expires in 30 minutes. If you did not request this, ignore this message.")
+            finally: c.close()
+        except Exception:
+            pass
+        return {"accepted":True,"message":"If the account exists, reset instructions will be sent."}
+
+    @app.post("/api/v1/auth/password-reset/confirm")
+    def confirm_password_reset(x:PasswordResetConfirmIn):
+        if len(x.new_password)<8 or len(x.new_password)>1024:
+            raise HTTPException(400,"Password must be 8–1024 characters")
+        if not x.token or len(x.token)>512: raise HTTPException(400,"Invalid or expired token")
+        digest=hashlib.sha256(x.token.encode()).hexdigest()
+        c=init_db()
+        try:
+            row=c.execute("SELECT id,user_id,expires_at FROM synpora_auth_tokens WHERE token_hash=? AND purpose='reset_password' AND consumed_at IS NULL",(digest,)).fetchone()
+            if not row or float(row["expires_at"])<=time.time(): raise HTTPException(400,"Invalid or expired token")
+            now=time.time()
+            with c.transaction():
+                c.execute("UPDATE synpora_auth_tokens SET consumed_at=? WHERE id=? AND consumed_at IS NULL",(now,row["id"]))
+                c.execute("UPDATE synpora_saas_users SET password_hash=? WHERE id=?",(_hash(x.new_password),row["user_id"]))
+                c.execute("UPDATE synpora_auth_tokens SET consumed_at=? WHERE user_id=? AND purpose='reset_password' AND consumed_at IS NULL",(now,row["user_id"]))
+            return {"password_reset":True,"message":"Password updated. Sign in with your new password."}
+        finally: c.close()
 
     @app.get("/api/v1/auth/me")
     def me(authorization:str|None=Header(default=None)):

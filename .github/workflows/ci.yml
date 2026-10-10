@@ -455,6 +455,11 @@ jobs:
           assert readiness.status_code==200, readiness.text
           assert readiness.json()["hardware_write_enabled"] is False
           assert readiness.json()["database_schema_ready"] is True
+          assert "smtp_configured" in readiness.json()
+          assert c.post("/api/v1/auth/password-reset/request",json={"email":"missing-reset@example.com"}).json()["accepted"] is True
+          assert c.post("/api/v1/auth/resend-verification",json={"email":"missing-verify@example.com"}).json()["accepted"] is True
+          assert c.post("/api/v1/auth/password-reset/confirm",json={"token":"bad-token","new_password":"ci-password-123"}).status_code==400
+          assert c.post("/api/v1/auth/verify-email",json={"token":"bad-token"}).status_code==400
           for path in ("/api/v1/market/collect", "/api/v1/market/backfill", "/api/v1/market/snapshot"):
               protected=c.post(path)
               assert protected.status_code==403, (path, protected.status_code, protected.text)
