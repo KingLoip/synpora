@@ -422,6 +422,11 @@ def install(app):
         for key in positive:
             if key in values and float(values[key]) <= 0:
                 raise HTTPException(422, f"{key} must be greater than zero")
+        # Bound work factors that control Monte Carlo / simulation cost.
+        if "samples" in values and not 1 <= int(values["samples"]) <= 10000:
+            raise HTTPException(422, "samples must be between 1 and 10000")
+        if "seed" in values and not -(2**31) <= int(values["seed"]) <= 2**31-1:
+            raise HTTPException(422, "seed must fit a signed 32-bit integer")
         for key in nonnegative:
             if key in values and float(values[key]) < 0:
                 raise HTTPException(422, f"{key} must be zero or greater")
