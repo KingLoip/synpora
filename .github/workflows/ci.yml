@@ -514,6 +514,7 @@ jobs:
           assert s.count('@app.post("/api/v1/market/collect")') == 1
           assert '/api/v1/system/collector-status' in Path("server.py").read_text()
           assert 'last_attempt_result' in Path("server.py").read_text()
+          assert 'ALTER TABLE market_snapshots ADD COLUMN IF NOT EXISTS {col} DOUBLE PRECISION' in s
           assert 'latest_snapshot_age_seconds' in s
           assert '/api/v1/farms/{farm_id}/paper-trading' in s
           assert 'SYNPORA_MARKET_DATA_URL' in s
