@@ -194,10 +194,13 @@ def install(app):
     _LOGIN_MAX_FAILURES=5
     _LOGIN_LOCKOUT_SECONDS=300
 
-    def _shared_login_state(key, action, now=None):
-        # Database-backed limit is shared by all app replicas; key is a SHA-256 digest,
-        # never a raw email address. Row locking serializes concurrent failures.
+    def _shared_login_state(key, action, now=None, window_seconds=None, max_attempts=None, lockout_seconds=None):
+        # Database-backed limits are shared by all app replicas; keys are SHA-256 digests,
+        # never raw email addresses. Row locking serializes concurrent updates.
         now=time.time() if now is None else now
+        window_seconds=_LOGIN_WINDOW_SECONDS if window_seconds is None else window_seconds
+        max_attempts=_LOGIN_MAX_FAILURES if max_attempts is None else max_attempts
+        lockout_seconds=_LOGIN_LOCKOUT_SECONDS if lockout_seconds is None else lockout_seconds
         c=init_db()
         try:
             with c.transaction():
@@ -206,12 +209,12 @@ def install(app):
                 if c.is_postgres: sql+=" FOR UPDATE"
                 row=c.execute(sql,(key,)).fetchone()
                 start=float(row["window_start"]); failures=int(row["failures"]); locked=float(row["locked_until"])
-                if now-start>=_LOGIN_WINDOW_SECONDS:
+                if now-start>=window_seconds:
                     start=now; failures=0; locked=0.0
-                allowed=now>=locked and failures<_LOGIN_MAX_FAILURES
+                allowed=now>=locked and failures<max_attempts
                 if action=="failed":
                     failures+=1
-                    if failures>=_LOGIN_MAX_FAILURES: locked=now+_LOGIN_LOCKOUT_SECONDS
+                    if failures>=max_attempts: locked=now+lockout_seconds
                 elif action=="success":
                     failures=0; locked=0.0; start=now
                 c.execute("UPDATE synpora_auth_rate_limits SET window_start=?,failures=?,locked_until=? WHERE rate_key=?",(start,failures,locked,key))
@@ -227,6 +230,14 @@ def install(app):
             _login_failures[key]=state
             local_allowed=now>=state["locked_until"] and len(state["attempts"])<_LOGIN_MAX_FAILURES
         return local_allowed and _shared_login_state(key,"check",now)
+
+    def _email_action_allowed(email,purpose):
+        key=hashlib.sha256((purpose+":"+email).encode("utf-8")).hexdigest()
+        now=time.time()
+        if not _shared_login_state(key,"check",now,3600,3,3600):
+            return False
+        _shared_login_state(key,"failed",now,3600,3,3600)
+        return True
 
     def _login_failed(key, now=None):
         now=time.time() if now is None else now
@@ -2121,6 +2132,10 @@ def install(app):
             raise HTTPException(400,"Valid email required")
         if len(x.password)<8: raise HTTPException(400,"Password must be at least 8 characters")
         if len(x.password)>1024: raise HTTPException(400,"Password must be at most 1024 characters")
+        verification_required=os.getenv("SYNPORA_REQUIRE_EMAIL_VERIFICATION","1" if _database_required() else "0").strip().lower() in ("1","true","yes")
+        if verification_required:
+            try: _smtp_configuration()
+            except Exception: raise HTTPException(503,"Email delivery is not configured; registration is temporarily unavailable")
         c=init_db(); uid=secrets.token_hex(12); farm_id=secrets.token_hex(12)
         try:
             # Account and initial farm must be created atomically; never leave a half-created account.
@@ -2132,7 +2147,6 @@ def install(app):
             if "unique" in message or "duplicate key" in message or "synpora_saas_users.email" in message:
                 raise HTTPException(409,"Email already registered")
             raise HTTPException(503,"Registration temporarily unavailable")
-        verification_required=os.getenv("SYNPORA_REQUIRE_EMAIL_VERIFICATION","1" if _database_required() else "0").strip().lower() in ("1","true","yes")
         if verification_required:
             try:
                 token_row=init_db()
@@ -2189,6 +2203,8 @@ def install(app):
     def resend_verification(x:PasswordResetRequestIn):
         email=x.email.strip().lower()
         # Deliberately return the same response regardless of whether the account exists.
+        if not _email_action_allowed(email,"verify_resend"):
+            return {"accepted":True,"message":"If the account needs verification, instructions will be sent."}
         try:
             c=init_db()
             try:
@@ -2206,6 +2222,8 @@ def install(app):
     @app.post("/api/v1/auth/password-reset/request")
     def request_password_reset(x:PasswordResetRequestIn):
         email=x.email.strip().lower()
+        if not _email_action_allowed(email,"password_reset"):
+            return {"accepted":True,"message":"If the account exists, reset instructions will be sent."}
         try:
             c=init_db()
             try:
