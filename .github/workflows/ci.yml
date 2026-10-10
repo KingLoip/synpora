@@ -401,6 +401,24 @@ jobs:
           assert dh["collection_status"] in {"recent_snapshot","stale_snapshot","never_collected"}, dh
           assert isinstance(dh["latest_snapshot_fields"],dict), dh
           assert dh["recommendation_only"] is True and dh["hardware_write"] is False, dh
+          # Market history clamps negative/oversized limits and remains available
+          # when one historical JSON payload is malformed.
+          history_default=c.get("/api/v1/market/history")
+          assert history_default.status_code==200 and len(history_default.json())<=100, history_default.text
+          history_negative=c.get("/api/v1/market/history?limit=-1")
+          assert history_negative.status_code==200 and 1<=len(history_negative.json())<=500, history_negative.text
+          history_large=c.get("/api/v1/market/history?limit=999999")
+          assert history_large.status_code==200 and len(history_large.json())<=500, history_large.text
+          from backend.app import saas_api as saas
+          import time
+          db=saas.init_db()
+          malformed_id="ci-malformed-history"
+          db.execute("DELETE FROM market_snapshots WHERE id=?",(malformed_id,))
+          db.execute("INSERT INTO market_snapshots(id,ts,payload) VALUES(?,?,?)",(malformed_id,time.time()+1,"{invalid-json"))
+          malformed_history=c.get("/api/v1/market/history?limit=1")
+          assert malformed_history.status_code==200, malformed_history.text
+          assert malformed_history.json()[0]["payload_valid"] is False, malformed_history.text
+          db.execute("DELETE FROM market_snapshots WHERE id=?",(malformed_id,))
           paper=c.get(f"/api/v1/farms/{farm}/paper-trading",headers=h)
           assert paper.status_code==200, paper.text
           pb=paper.json()
