@@ -400,8 +400,14 @@ def install(app):
         import math
         values=getattr(x,"__dict__",{})
         for key,value in values.items():
-            if isinstance(value,(int,float)) and not isinstance(value,bool) and not math.isfinite(float(value)):
-                raise HTTPException(422, f"{key} must be a finite number")
+            if isinstance(value,(int,float)) and not isinstance(value,bool):
+                number=float(value)
+                if not math.isfinite(number):
+                    raise HTTPException(422, f"{key} must be a finite number")
+                # Finite IEEE-754 values can still overflow downstream multiplications.
+                # Keep user-controlled magnitudes within a generous, explicit bound.
+                if abs(number)>1e12:
+                    raise HTTPException(422, f"{key} exceeds the supported numeric range")
         positive=("energy_kwh","eur_usd","gpu_power_kw","asic_efficiency_j_th",
                   "btc_device_power_kw","interval_hours","gpu_lifetime_years","btc_lifetime_years")
         nonnegative=("btc_hashprice_usd_ph_day","gpu_hourly_usd",
