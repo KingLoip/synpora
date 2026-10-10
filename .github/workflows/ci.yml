@@ -128,6 +128,8 @@ jobs:
           # Invalid physical and financial inputs must fail clearly instead of being clamped silently.
           invalid_energy=c.post(f"/api/v1/farms/{farm}/scenario",headers=h,json={"energy_kwh":-1})
           assert invalid_energy.status_code==422, invalid_energy.text
+          extreme_energy=c.post(f"/api/v1/farms/{farm}/scenario",headers=h,json={"energy_kwh":1e308})
+          assert extreme_energy.status_code==422, extreme_energy.text
           invalid_shock=c.post(f"/api/v1/farms/{farm}/risk-analysis",headers=h,json={"shock_pct":1.0})
           assert invalid_shock.status_code==422, invalid_shock.text
           invalid_soc=c.post(f"/api/v1/farms/{farm}/dispatch-plan",headers=h,json={"battery_soc_pct":101})
