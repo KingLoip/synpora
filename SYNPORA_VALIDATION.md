@@ -55,3 +55,12 @@ A mixed snapshot is not partially used for training/backtesting. Reference-only 
 - Market history limits are clamped to 1–500 and invalid historical JSON payloads are returned as marked invalid records rather than crashing the endpoint.
 
 These controls reduce common abuse and robustness risks but do not replace distributed rate limiting, email verification, password reset, a formal penetration test, or monitoring of real traffic.
+
+
+## Account security and production email
+
+- Production deployments require email verification by default; registration fails closed before creating an account if SMTP is not configured.
+- Configure SMTP host, port, username, password, sender, and the canonical HTTPS public URL. Password-reset requests and verification resends return generic responses to avoid account enumeration and are rate-limited using PostgreSQL-backed counters.
+- Use the admin-only `POST /api/v1/system/email-connection-test` endpoint with the market-maintenance token to test SMTP connectivity and authentication. It does not send email.
+- Verification and password-reset tokens are random, stored only as SHA-256 digests, expire, and are single-use. A successful password reset increments the user's token version and invalidates previously issued JWTs.
+- The production-readiness endpoint requires a recent fully provenance-verified market snapshot, persistent PostgreSQL, strong secrets, and configured email delivery. `ready` does not imply independent security certification or proven economic forecast performance.
