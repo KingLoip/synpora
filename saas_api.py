@@ -88,13 +88,13 @@ def _conn():
 def init_db():
     c=_conn()
     if c.is_postgres:
-        c.execute("""CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,email TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL,created_at DOUBLE PRECISION NOT NULL)""")
-        c.execute("""CREATE TABLE IF NOT EXISTS farms(id TEXT PRIMARY KEY,user_id TEXT NOT NULL,name TEXT NOT NULL,created_at DOUBLE PRECISION NOT NULL)""")
-        c.execute("""CREATE TABLE IF NOT EXISTS assets(id TEXT PRIMARY KEY,farm_id TEXT NOT NULL,name TEXT NOT NULL,kind TEXT NOT NULL,power_kw DOUBLE PRECISION DEFAULT 0,created_at DOUBLE PRECISION NOT NULL)""")
+        c.execute("""CREATE TABLE IF NOT EXISTS synpora_saas_users(id TEXT PRIMARY KEY,email TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL,created_at DOUBLE PRECISION NOT NULL)""")
+        c.execute("""CREATE TABLE IF NOT EXISTS synpora_saas_farms(id TEXT PRIMARY KEY,user_id TEXT NOT NULL,name TEXT NOT NULL,created_at DOUBLE PRECISION NOT NULL)""")
+        c.execute("""CREATE TABLE IF NOT EXISTS synpora_saas_assets(id TEXT PRIMARY KEY,farm_id TEXT NOT NULL,name TEXT NOT NULL,kind TEXT NOT NULL,power_kw DOUBLE PRECISION DEFAULT 0,created_at DOUBLE PRECISION NOT NULL)""")
     else:
-        c.executescript("""CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,email TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL,created_at REAL NOT NULL);
-CREATE TABLE IF NOT EXISTS farms(id TEXT PRIMARY KEY,user_id TEXT NOT NULL,name TEXT NOT NULL,created_at REAL NOT NULL);
-CREATE TABLE IF NOT EXISTS assets(id TEXT PRIMARY KEY,farm_id TEXT NOT NULL,name TEXT NOT NULL,kind TEXT NOT NULL,power_kw REAL DEFAULT 0,created_at REAL NOT NULL);""")
+        c.executescript("""CREATE TABLE IF NOT EXISTS synpora_saas_users(id TEXT PRIMARY KEY,email TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL,created_at REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS synpora_saas_farms(id TEXT PRIMARY KEY,user_id TEXT NOT NULL,name TEXT NOT NULL,created_at REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS synpora_saas_assets(id TEXT PRIMARY KEY,farm_id TEXT NOT NULL,name TEXT NOT NULL,kind TEXT NOT NULL,power_kw REAL DEFAULT 0,created_at REAL NOT NULL);""")
         c.commit()
     return c
 
@@ -289,7 +289,7 @@ def install(app):
     def optimize(farm_id:str,x:OptimizeIn,authorization:str|None=Header(default=None)):
         _validate_numeric_inputs(x)
         uid=user(authorization); c=init_db()
-        ok=c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone()
+        ok=c.execute("SELECT 1 FROM synpora_saas_farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone()
         if not ok: raise HTTPException(404,"Farm not found")
         # BTC gross revenue per kWh = hashprice / (J/TH × 24), adjusted for uptime/pool fee.
         energy_cost=max(0.0,x.energy_cost_eur_kwh)
@@ -983,7 +983,7 @@ def install(app):
     @app.post("/api/v1/farms/{farm_id}/risk-analysis")
     def risk_analysis(farm_id:str,x:RiskScenarioIn,authorization:str|None=Header(default=None)):
         uid=user(authorization); c=init_db()
-        if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone():
+        if not c.execute("SELECT 1 FROM synpora_saas_farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone():
             raise HTTPException(404,"Farm not found")
         import random
         rng=random.Random(int(x.seed))
@@ -1047,7 +1047,7 @@ def install(app):
     @app.post("/api/v1/farms/{farm_id}/decision-engine")
     def decision_engine(farm_id:str,x:RiskScenarioIn,authorization:str|None=Header(default=None)):
         uid=user(authorization); c=init_db()
-        if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone():
+        if not c.execute("SELECT 1 FROM synpora_saas_farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone():
             raise HTTPException(404,"Farm not found")
         # Unified decision layer: net economics + Monte-Carlo risk and regret.
         base=_economics(x)
@@ -1089,7 +1089,7 @@ def install(app):
     def record_decision(farm_id:str,x:ScenarioIn,authorization:str|None=Header(default=None)):
         _validate_numeric_inputs(x)
         uid=user(authorization); c=init_db()
-        if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
+        if not c.execute("SELECT 1 FROM synpora_saas_farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
         _ensure_learning_tables(c)
         vals=_economics(x); chosen=max(vals,key=vals.get); did=secrets.token_hex(12)
         c.execute("INSERT INTO decision_ledger (id,farm_id,ts,chosen,predicted_value,confidence,status,actual_value,settled_at) VALUES(?,?,?,?,?,?,?,?,?)",(did,farm_id,time.time(),chosen,vals[chosen],0.80,"open",None,None))
@@ -1121,7 +1121,7 @@ def install(app):
     @app.get("/api/v1/farms/{farm_id}/benchmark")
     def benchmark(farm_id:str,limit:int=500,authorization:str|None=Header(default=None)):
         uid=user(authorization); c=init_db()
-        if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone():
+        if not c.execute("SELECT 1 FROM synpora_saas_farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone():
             raise HTTPException(404,"Farm not found")
         _ensure_market_table(c)
         try:
@@ -1179,7 +1179,7 @@ def install(app):
     @app.post("/api/v1/farms/{farm_id}/learning/settle")
     def settle_learning(farm_id:str,authorization:str|None=Header(default=None)):
         uid=user(authorization); c=init_db()
-        if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
+        if not c.execute("SELECT 1 FROM synpora_saas_farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
         settlement=_online_learning_update(c,farm_id)
         stats=_forecast_learning(c,farm_id)
         return {"farm_id":farm_id,**settlement,"learning":stats,"recommendation_only":True,"hardware_write":False}
@@ -1187,7 +1187,7 @@ def install(app):
     @app.get("/api/v1/farms/{farm_id}/learning/calibration")
     def learning_calibration(farm_id:str,authorization:str|None=Header(default=None)):
         uid=user(authorization); c=init_db()
-        if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
+        if not c.execute("SELECT 1 FROM synpora_saas_farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
         _ensure_learning_tables(c)
         rows=c.execute("SELECT chosen,predicted_value,actual_value,confidence FROM decision_ledger WHERE farm_id=? AND status='settled' AND actual_value IS NOT NULL ORDER BY ts DESC LIMIT 500",(farm_id,)).fetchall()
         by={}
@@ -1208,7 +1208,7 @@ def install(app):
     @app.get("/api/v1/farms/{farm_id}/decision-quality")
     def decision_quality(farm_id:str,authorization:str|None=Header(default=None)):
         uid=user(authorization); c=init_db()
-        if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone():
+        if not c.execute("SELECT 1 FROM synpora_saas_farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone():
             raise HTTPException(404,"Farm not found")
         _ensure_learning_tables(c)
         rows=c.execute("SELECT chosen,predicted_value,actual_value,actual_best_value,regret_eur_kwh,confidence FROM decision_ledger WHERE farm_id=? AND status='settled' AND actual_value IS NOT NULL ORDER BY ts",(farm_id,)).fetchall()
@@ -1233,7 +1233,7 @@ def install(app):
     @app.get("/api/v1/farms/{farm_id}/model-score")
     def model_score(farm_id:str,authorization:str|None=Header(default=None)):
         uid=user(authorization); c=init_db()
-        if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
+        if not c.execute("SELECT 1 FROM synpora_saas_farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
         _ensure_learning_tables(c)
         rows=c.execute("SELECT chosen,predicted_value,actual_value FROM decision_ledger WHERE farm_id=? AND status='settled' AND actual_value IS NOT NULL",(farm_id,)).fetchall()
         if not rows: return {"samples":0,"score":0.0,"status":"cold_start"}
@@ -1245,7 +1245,7 @@ def install(app):
     @app.get("/api/v1/farms/{farm_id}/learning")
     def learning_status(farm_id:str,authorization:str|None=Header(default=None)):
         uid=user(authorization); c=init_db()
-        if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
+        if not c.execute("SELECT 1 FROM synpora_saas_farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
         _ensure_learning_tables(c)
         rows=c.execute("SELECT status,predicted_value,actual_value,confidence FROM decision_ledger WHERE farm_id=? ORDER BY ts DESC LIMIT 500",(farm_id,)).fetchall()
         settled=[r for r in rows if r[0]=="settled" and r[2] is not None]
@@ -1276,8 +1276,8 @@ def install(app):
     @app.post("/api/v1/farms/{farm_id}/portfolio-optimize")
     def portfolio_optimize(farm_id:str,x:PortfolioIn,authorization:str|None=Header(default=None)):
         uid=user(authorization); c=init_db()
-        if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
-        assets=[dict(r) for r in c.execute("SELECT id,name,kind,power_kw FROM assets WHERE farm_id=? ORDER BY created_at",(farm_id,)).fetchall()]
+        if not c.execute("SELECT 1 FROM synpora_saas_farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
+        assets=[dict(r) for r in c.execute("SELECT id,name,kind,power_kw FROM synpora_saas_assets WHERE farm_id=? ORDER BY created_at",(farm_id,)).fetchall()]
         candidates=[]
         for a in assets:
             kind=a["kind"].upper(); power=max(float(a["power_kw"] or 0),0.01)
@@ -1579,7 +1579,7 @@ def install(app):
     @app.get("/api/v1/farms/{farm_id}/paper-trading")
     def paper_trading_status(farm_id:str,authorization:str|None=Header(default=None)):
         uid=user(authorization); c=init_db()
-        if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone():
+        if not c.execute("SELECT 1 FROM synpora_saas_farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone():
             raise HTTPException(404,"Farm not found")
         _ensure_learning_tables(c)
         rows=c.execute("SELECT chosen,predicted_value,confidence,status,actual_value,actual_best_value,regret_eur_kwh,ts,settled_at FROM decision_ledger WHERE farm_id=? ORDER BY ts DESC LIMIT 500",(farm_id,)).fetchall()
@@ -1658,7 +1658,7 @@ def install(app):
     @app.get("/api/v1/farms/{farm_id}/ai-status")
     def ai_status(farm_id:str,authorization:str|None=Header(default=None)):
         uid=user(authorization); c=init_db()
-        if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
+        if not c.execute("SELECT 1 FROM synpora_saas_farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
         stats={s:_settled_learning_stats(c,farm_id,s) for s in ("AI Compute","BTC Mining","Battery","Grid")}
         total=sum(v["samples"] for v in stats.values())
         readiness="cold_start" if total<8 else ("learning" if total<24 else "calibrated")
@@ -1668,13 +1668,13 @@ def install(app):
     @app.get("/api/v1/farms/{farm_id}/forecast-health")
     def forecast_health(farm_id:str,authorization:str|None=Header(default=None)):
         uid=user(authorization); c=init_db()
-        if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
+        if not c.execute("SELECT 1 FROM synpora_saas_farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
         return {"farm_id":farm_id,"btc":_settled_learning_stats(c,farm_id,"BTC Mining"),"gpu":_settled_learning_stats(c,farm_id,"AI Compute"),"mode":"self_calibrating","recommendation_only":True}
     
     @app.post("/api/v1/farms/{farm_id}/learning/update")
     def learning_update(farm_id:str,authorization:str|None=Header(default=None)):
         uid=user(authorization); c=init_db()
-        if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
+        if not c.execute("SELECT 1 FROM synpora_saas_farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
         settlement=_online_learning_update(c,farm_id)
         stats={}
         for strategy in ("AI Compute","BTC Mining","Battery","Grid"):
@@ -1686,7 +1686,7 @@ def install(app):
         _validate_numeric_inputs(x)
         uid=user(authorization); c=init_db()
         _ensure_market_table(c)
-        if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
+        if not c.execute("SELECT 1 FROM synpora_saas_farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
         learn=_forecast_learning(c,farm_id)
         models=_model_select(c)
         conf={"btc":_ensemble_confidence(c,"btc"),"gpu":_ensemble_confidence(c,"gpu"),"energy":_ensemble_confidence(c,"energy")}
@@ -1727,8 +1727,8 @@ def install(app):
         _validate_numeric_inputs(x)
         uid=user(authorization); c=init_db()
         _ensure_market_table(c)
-        if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
-        assets=[dict(r) for r in c.execute("SELECT id,name,kind,power_kw FROM assets WHERE farm_id=? ORDER BY created_at",(farm_id,)).fetchall()]
+        if not c.execute("SELECT 1 FROM synpora_saas_farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
+        assets=[dict(r) for r in c.execute("SELECT id,name,kind,power_kw FROM synpora_saas_assets WHERE farm_id=? ORDER BY created_at",(farm_id,)).fetchall()]
         hours=max(1,min(72,x.horizon_hours)); dt=max(0.25,x.interval_hours)
         try:
             btc_fc,_=_ensemble_forecast(c,"btc",hours,x.btc_hashprice_usd_ph_day); gpu_fc,_=_ensemble_forecast(c,"gpu",hours,x.gpu_hourly_usd); energy_fc,_=_ensemble_forecast(c,"energy",hours,x.energy_cost_eur_kwh)
@@ -1787,9 +1787,9 @@ def install(app):
     @app.post("/api/v1/farms/{farm_id}/scenario")
     def scenario(farm_id:str,x:ScenarioIn,authorization:str|None=Header(default=None)):
         uid=user(authorization); c=init_db()
-        if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
+        if not c.execute("SELECT 1 FROM synpora_saas_farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
         values=_economics(x)
-        assets=[dict(r) for r in c.execute("SELECT id,name,kind,power_kw FROM assets WHERE farm_id=? ORDER BY created_at",(farm_id,)).fetchall()]
+        assets=[dict(r) for r in c.execute("SELECT id,name,kind,power_kw FROM synpora_saas_assets WHERE farm_id=? ORDER BY created_at",(farm_id,)).fetchall()]
         asset_cost_models=[]
         for a in assets:
             kind=a["kind"].upper()
@@ -1818,7 +1818,7 @@ def install(app):
     @app.post("/api/v1/farms/{farm_id}/regret-analysis")
     def regret_analysis(farm_id:str,x:ScenarioIn,authorization:str|None=Header(default=None)):
         uid=user(authorization); c=init_db()
-        if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
+        if not c.execute("SELECT 1 FROM synpora_saas_farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
         import random
         n=max(100,min(5000,int(x.samples))); rng=random.Random(int(x.seed)); strategies=list(_economics(x).keys()); regret={k:[] for k in strategies}; winners={k:0 for k in strategies}
         for _ in range(n):
@@ -1838,7 +1838,7 @@ def install(app):
     @app.post("/api/v1/farms/{farm_id}/backtest")
     def backtest(farm_id:str,x:BacktestIn,authorization:str|None=Header(default=None)):
         uid=user(authorization); c=init_db()
-        if not c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone():
+        if not c.execute("SELECT 1 FROM synpora_saas_farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone():
             raise HTTPException(404,"Farm not found")
         _ensure_market_table(c)
         limit=max(2,min(5000,int(x.max_snapshots)))
@@ -1949,11 +1949,11 @@ def install(app):
         try:
             # Account and initial farm must be created atomically; never leave a half-created account.
             with c.transaction():
-                c.execute("INSERT INTO users VALUES(?,?,?,?)",(uid,email,_hash(x.password),time.time()))
-                c.execute("INSERT INTO farms VALUES(?,?,?,?)",(farm_id,uid,"My first farm",time.time()))
+                c.execute("INSERT INTO synpora_saas_users VALUES(?,?,?,?)",(uid,email,_hash(x.password),time.time()))
+                c.execute("INSERT INTO synpora_saas_farms VALUES(?,?,?,?)",(farm_id,uid,"My first farm",time.time()))
         except Exception as e:
             message=str(e).lower()
-            if "unique" in message or "duplicate key" in message or "users.email" in message:
+            if "unique" in message or "duplicate key" in message or "synpora_saas_users.email" in message:
                 raise HTTPException(409,"Email already registered")
             raise HTTPException(503,"Registration temporarily unavailable")
         return {"token":_token(uid),"user":{"id":uid,"email":email},"farm":{"id":farm_id,"name":"My first farm"}}
@@ -1965,7 +1965,7 @@ def install(app):
         key=hashlib.sha256(email.encode("utf-8")).hexdigest()
         if not _login_allowed(key):
             raise HTTPException(429,"Too many login attempts. Try again in a few minutes.",headers={"Retry-After":str(_LOGIN_LOCKOUT_SECONDS)})
-        c=init_db(); row=c.execute("SELECT * FROM users WHERE email=?",(email,)).fetchone()
+        c=init_db(); row=c.execute("SELECT * FROM synpora_saas_users WHERE email=?",(email,)).fetchone()
         if not row or not _verify(x.password,row["password_hash"]):
             _login_failed(key)
             raise HTTPException(401,"Invalid credentials")
@@ -1977,19 +1977,19 @@ def install(app):
 
     @app.get("/api/v1/auth/me")
     def me(authorization:str|None=Header(default=None)):
-        uid=user(authorization); c=init_db(); row=c.execute("SELECT id,email,created_at FROM users WHERE id=?",(uid,)).fetchone()
+        uid=user(authorization); c=init_db(); row=c.execute("SELECT id,email,created_at FROM synpora_saas_users WHERE id=?",(uid,)).fetchone()
         if not row: raise HTTPException(404,"User not found")
         return dict(row)
 
     @app.get("/api/v1/farms")
     def farms(authorization:str|None=Header(default=None)):
         uid=user(authorization); c=init_db()
-        return [dict(r) for r in c.execute("SELECT id,name,created_at FROM farms WHERE user_id=? ORDER BY created_at",(uid,)).fetchall()]
+        return [dict(r) for r in c.execute("SELECT id,name,created_at FROM synpora_saas_farms WHERE user_id=? ORDER BY created_at",(uid,)).fetchall()]
 
     @app.post("/api/v1/farms")
     def create_farm(x:FarmIn,authorization:str|None=Header(default=None)):
         uid=user(authorization); c=init_db(); fid=secrets.token_hex(12)
-        c.execute("INSERT INTO farms VALUES(?,?,?,?)",(fid,uid,x.name.strip()[:120] or "Farm",time.time()))
+        c.execute("INSERT INTO synpora_saas_farms VALUES(?,?,?,?)",(fid,uid,x.name.strip()[:120] or "Farm",time.time()))
         try: c.commit()
         except Exception: pass
         return {"id":fid,"name":x.name.strip()[:120] or "Farm"}
@@ -1997,16 +1997,16 @@ def install(app):
     @app.get("/api/v1/farms/{farm_id}/assets")
     def assets(farm_id:str,authorization:str|None=Header(default=None)):
         uid=user(authorization); c=init_db()
-        ok=c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone()
+        ok=c.execute("SELECT 1 FROM synpora_saas_farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone()
         if not ok: raise HTTPException(404,"Farm not found")
-        return [dict(r) for r in c.execute("SELECT id,name,kind,power_kw,created_at FROM assets WHERE farm_id=? ORDER BY created_at",(farm_id,)).fetchall()]
+        return [dict(r) for r in c.execute("SELECT id,name,kind,power_kw,created_at FROM synpora_saas_assets WHERE farm_id=? ORDER BY created_at",(farm_id,)).fetchall()]
 
     @app.post("/api/v1/farms/{farm_id}/assets")
     def create_asset(farm_id:str,x:AssetIn,authorization:str|None=Header(default=None)):
         uid=user(authorization); c=init_db()
-        ok=c.execute("SELECT 1 FROM farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone()
+        ok=c.execute("SELECT 1 FROM synpora_saas_farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone()
         if not ok: raise HTTPException(404,"Farm not found")
-        aid=secrets.token_hex(12); c.execute("INSERT INTO assets VALUES(?,?,?,?,?,?)",(aid,farm_id,x.name.strip()[:120],x.kind.strip()[:50],x.power_kw,time.time()))
+        aid=secrets.token_hex(12); c.execute("INSERT INTO synpora_saas_assets VALUES(?,?,?,?,?,?)",(aid,farm_id,x.name.strip()[:120],x.kind.strip()[:50],x.power_kw,time.time()))
         try: c.commit()
         except Exception: pass
         return {"id":aid,"name":x.name.strip()[:120],"kind":x.kind.strip()[:50],"power_kw":x.power_kw}
