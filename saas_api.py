@@ -1624,22 +1624,28 @@ def install(app):
         market_token_configured=bool(os.getenv("SYNPORA_MARKET_ADMIN_TOKEN","").strip())
         market_token_strong=len(os.getenv("SYNPORA_MARKET_ADMIN_TOKEN","").strip())>=32
         db_reachable=False
+        db_schema_ready=False
         db_backend="unavailable" if _database_required() else "sqlite_fallback"
         db_error=None
+        c=None
         try:
             c=init_db()
             c.execute("SELECT 1").fetchone()
             db_reachable=bool(DB_URL and c.is_postgres)
             db_backend="postgresql" if db_reachable else "sqlite_fallback"
-            try: c.close()
-            except Exception: pass
+            c.execute("SELECT COUNT(*) FROM market_snapshots").fetchone()
+            db_schema_ready=True
         except Exception as e:
             db_error=type(e).__name__
-            if _database_required():
+            if _database_required() and not db_reachable:
                 db_backend="unavailable"
-        ready=bool(db_configured and db_reachable and jwt_configured and jwt_secret_strong and market_token_configured and market_token_strong)
+        finally:
+            if c is not None:
+                try: c.close()
+                except Exception: pass
+        ready=bool(db_configured and db_reachable and db_schema_ready and jwt_configured and jwt_secret_strong and market_token_configured and market_token_strong)
         return {"database_configured":db_configured,"database_reachable":db_reachable,
-                "database_backend":db_backend,"database_error":db_error,
+                "database_schema_ready":db_schema_ready,"database_backend":db_backend,"database_error":db_error,
                 "jwt_secret_configured":jwt_configured,"jwt_secret_strong":jwt_secret_strong,
                 "market_admin_token_configured":market_token_configured,"market_admin_token_strong":market_token_strong,
                 "market_data_feed_configured":bool(os.getenv("SYNPORA_MARKET_DATA_URL","").strip()),
@@ -2026,4 +2032,12 @@ def install(app):
         app.router.routes=new_routes+existing_routes+root_mounts
     except Exception:
         pass
+
+    # Ensure the market schema exists before the service accepts traffic. Existing
+    # columns are preserved; PostgreSQL migration statements are idempotent.
+    schema_connection=init_db()
+    try:
+        _ensure_market_table(schema_connection)
+    finally:
+        schema_connection.close()
     return app
