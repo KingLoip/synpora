@@ -146,6 +146,8 @@ jobs:
           assert excessive_samples.status_code==422, excessive_samples.text
           invalid_seed=c.post(f"/api/v1/farms/{farm}/scenario",headers=h,json={"seed":999999999999})
           assert invalid_seed.status_code==422, invalid_seed.text
+          excessive_scenarios=c.post(f"/api/v1/farms/{farm}/risk-analysis",headers=h,json={"scenarios":1000000000})
+          assert excessive_scenarios.status_code==422, excessive_scenarios.text
           extreme_energy=c.post(f"/api/v1/farms/{farm}/scenario",headers=h,json={"energy_kwh":1e308})
           assert extreme_energy.status_code==422, extreme_energy.text
           invalid_shock=c.post(f"/api/v1/farms/{farm}/risk-analysis",headers=h,json={"shock_pct":1.0})
