@@ -43,7 +43,7 @@ jobs:
           PY
       - name: API end-to-end smoke test
         run: |
-          SYNPORA_JWT_SECRET=ci-test-secret SYNPORA_DISABLE_BUILTIN_MARKET_SOURCES=1 python - <<'PY'
+          SYNPORA_JWT_SECRET=ci-test-secret SYNPORA_DISABLE_BUILTIN_MARKET_SOURCES=1 SYNPORA_REQUIRE_EMAIL_VERIFICATION=0 python - <<'PY'
           from fastapi.testclient import TestClient
           from backend.app.main import app
           from backend.app.saas_api import install
@@ -460,6 +460,33 @@ jobs:
           assert c.post("/api/v1/auth/resend-verification",json={"email":"missing-verify@example.com"}).json()["accepted"] is True
           assert c.post("/api/v1/auth/password-reset/confirm",json={"token":"bad-token","new_password":"ci-password-123"}).status_code==400
           assert c.post("/api/v1/auth/verify-email",json={"token":"bad-token"}).status_code==400
+          # Exercise real one-time verification/reset logic with a mocked SMTP transport.
+          import re
+          from unittest.mock import patch
+          saved_env={k:os.environ.get(k) for k in ("SYNPORA_REQUIRE_EMAIL_VERIFICATION","SYNPORA_SMTP_HOST","SYNPORA_SMTP_PORT","SYNPORA_SMTP_USERNAME","SYNPORA_SMTP_PASSWORD","SYNPORA_SMTP_FROM","SYNPORA_PUBLIC_URL")}
+          os.environ.update({"SYNPORA_REQUIRE_EMAIL_VERIFICATION":"1","SYNPORA_SMTP_HOST":"smtp.ci.invalid","SYNPORA_SMTP_PORT":"587","SYNPORA_SMTP_USERNAME":"ci-user","SYNPORA_SMTP_PASSWORD":"ci-password","SYNPORA_SMTP_FROM":"no-reply@example.test","SYNPORA_PUBLIC_URL":"https://synpora.example.test"})
+          try:
+              with patch("smtplib.SMTP") as smtp_mock:
+                  verify_email="verify-"+str(int(time.time()))+"@example.test"
+                  pending=c.post("/api/v1/auth/register",json={"email":verify_email,"password":"ci-password-123"})
+                  assert pending.status_code==200 and pending.json()["verification_required"] is True, pending.text
+                  verify_msg=smtp_mock.return_value.__enter__.return_value.send_message.call_args.args[0]
+                  verify_token=re.search(r"token=([A-Za-z0-9_-]+)",verify_msg.get_content()).group(1)
+                  assert c.post("/api/v1/auth/verify-email",json={"token":verify_token}).status_code==200
+                  assert c.post("/api/v1/auth/verify-email",json={"token":verify_token}).status_code==400
+                  assert c.post("/api/v1/auth/login",json={"email":verify_email,"password":"ci-password-123"}).status_code==200
+                  reset_request=c.post("/api/v1/auth/password-reset/request",json={"email":verify_email})
+                  assert reset_request.status_code==200
+                  reset_msg=smtp_mock.return_value.__enter__.return_value.send_message.call_args.args[0]
+                  reset_token=re.search(r"token=([A-Za-z0-9_-]+)",reset_msg.get_content()).group(1)
+                  reset=c.post("/api/v1/auth/password-reset/confirm",json={"token":reset_token,"new_password":"ci-new-password-456"})
+                  assert reset.status_code==200, reset.text
+                  assert c.post("/api/v1/auth/password-reset/confirm",json={"token":reset_token,"new_password":"ci-other-password-789"}).status_code==400
+                  assert c.post("/api/v1/auth/login",json={"email":verify_email,"password":"ci-new-password-456"}).status_code==200
+          finally:
+              for key,value in saved_env.items():
+                  if value is None: os.environ.pop(key,None)
+                  else: os.environ[key]=value
           for path in ("/api/v1/market/collect", "/api/v1/market/backfill", "/api/v1/market/snapshot"):
               protected=c.post(path)
               assert protected.status_code==403, (path, protected.status_code, protected.text)
@@ -637,6 +664,7 @@ jobs:
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/synpora
       SYNPORA_REQUIRE_DATABASE: "1"
+      SYNPORA_REQUIRE_EMAIL_VERIFICATION: "0"
       SYNPORA_JWT_SECRET: ci-postgres-integration-secret-at-least-32-chars
       SYNPORA_MARKET_ADMIN_TOKEN: ci-market-token-only
       SYNPORA_DISABLE_BUILTIN_MARKET_SOURCES: "1"
