@@ -32,7 +32,7 @@ Every source has its own freshness/provenance checks. If a provider is unavailab
 
 ## Market collection
 
-`server.py` starts a background collector that attempts to store a market snapshot every 15 minutes when `SYNPORA_MARKET_ADMIN_TOKEN` is configured. It makes the request through the local API and does not need a separate scheduler. Collection failures must be diagnosed using service logs and `/api/v1/market/data-health`; a stored snapshot containing reference values is not eligible for learning or backtesting.
+`server.py` starts a background collector that attempts to store a market snapshot every 15 minutes when `SYNPORA_MARKET_ADMIN_TOKEN` is configured. It makes the request through the local API and does not need a separate scheduler. Failed attempts retry with bounded exponential backoff (starting at 60 seconds and capped at 15 minutes); the collector status exposes the last attempt duration, next attempt time, retry delay, and consecutive failure count without exposing exception messages or secrets. The in-memory heartbeat resets on restart; use `/api/v1/market/data-health` to verify persisted snapshots. A stored snapshot containing reference values is not eligible for learning or backtesting.
 
 ## Deployment checks
 
