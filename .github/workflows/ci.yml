@@ -272,7 +272,10 @@ jobs:
               assert bm["data_quality"]["overall"]=="live", bm["data_quality"]
               assert bm["data_quality"]["details"]["fields"]["eur_usd"]["source"]=="external", bm["data_quality"]
               assert bm["data_quality"]["details"]["fields"]["eur_usd"]["provider"].startswith("Frankfurter"), bm["data_quality"]
-              assert bm["data_quality"]["details"]["fields"]["austria_spot_eur_kwh"]["source"]=="external", bm["data_quality"]
+              energy_field=bm["data_quality"]["details"]["fields"]["austria_spot_eur_kwh"]
+              assert energy_field["source"]=="external", bm["data_quality"]
+              assert energy_field["source_url"].startswith("https://api.energy-charts.info/"), energy_field
+              assert "CC BY 4.0" in energy_field["license"], energy_field
               assert abs(bm["austria_spot_eur_kwh"]-0.075)<0.00001, bm["austria_spot_eur_kwh"]
               assert bm["data_quality"]["details"]["fields"]["gpu_l40s_usd_hour"]["source"]=="external", bm["data_quality"]
               assert abs(bm["gpu"]["hourly_usd"]-1.30)<0.00001, bm["gpu"]
@@ -491,6 +494,7 @@ jobs:
           assert 'api.frankfurter.dev/v2/providers/ecb/rate/eur/usd' in s
           assert 'api.energy-charts.info/v2/price_current?bzn=AT' in s
           assert 'cloud.vast.ai/api/v0/bundles/' in s
+          assert '"source_url"' in s and '"license":"CC BY 4.0; attribute Energy-Charts.info"' in s
           assert 'gpu_capex_eur' in s and 'btc_capex_eur' in s
           assert 'depreciation_and_maintenance_eur_kwh' in s
           assert 'def _market_feed_host_allowed' in s
