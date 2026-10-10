@@ -88,20 +88,25 @@ def _conn():
 def init_db():
     c=_conn()
     if c.is_postgres:
-        c.execute("""CREATE TABLE IF NOT EXISTS synpora_saas_users(id TEXT PRIMARY KEY,email TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL,created_at DOUBLE PRECISION NOT NULL,email_verified BOOLEAN NOT NULL DEFAULT FALSE)""")
+        c.execute("""CREATE TABLE IF NOT EXISTS synpora_saas_users(id TEXT PRIMARY KEY,email TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL,created_at DOUBLE PRECISION NOT NULL,email_verified BOOLEAN NOT NULL DEFAULT FALSE,token_version INTEGER NOT NULL DEFAULT 0)""")
         c.execute("""ALTER TABLE synpora_saas_users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT FALSE""")
+        c.execute("""ALTER TABLE synpora_saas_users ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 0""")
         c.execute("""CREATE TABLE IF NOT EXISTS synpora_saas_farms(id TEXT PRIMARY KEY,user_id TEXT NOT NULL,name TEXT NOT NULL,created_at DOUBLE PRECISION NOT NULL)""")
         c.execute("""CREATE TABLE IF NOT EXISTS synpora_saas_assets(id TEXT PRIMARY KEY,farm_id TEXT NOT NULL,name TEXT NOT NULL,kind TEXT NOT NULL,power_kw DOUBLE PRECISION DEFAULT 0,created_at DOUBLE PRECISION NOT NULL)""")
         c.execute("""CREATE TABLE IF NOT EXISTS synpora_auth_tokens(id TEXT PRIMARY KEY,user_id TEXT NOT NULL,token_hash TEXT UNIQUE NOT NULL,purpose TEXT NOT NULL,expires_at DOUBLE PRECISION NOT NULL,created_at DOUBLE PRECISION NOT NULL,consumed_at DOUBLE PRECISION)""")
         c.execute("""CREATE TABLE IF NOT EXISTS synpora_auth_rate_limits(rate_key TEXT PRIMARY KEY,window_start DOUBLE PRECISION NOT NULL,failures INTEGER NOT NULL,locked_until DOUBLE PRECISION NOT NULL)""")
     else:
-        c.executescript("""CREATE TABLE IF NOT EXISTS synpora_saas_users(id TEXT PRIMARY KEY,email TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL,created_at REAL NOT NULL,email_verified INTEGER NOT NULL DEFAULT 0);
+        c.executescript("""CREATE TABLE IF NOT EXISTS synpora_saas_users(id TEXT PRIMARY KEY,email TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL,created_at REAL NOT NULL,email_verified INTEGER NOT NULL DEFAULT 0,token_version INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS synpora_saas_farms(id TEXT PRIMARY KEY,user_id TEXT NOT NULL,name TEXT NOT NULL,created_at REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS synpora_saas_assets(id TEXT PRIMARY KEY,farm_id TEXT NOT NULL,name TEXT NOT NULL,kind TEXT NOT NULL,power_kw REAL DEFAULT 0,created_at REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS synpora_auth_tokens(id TEXT PRIMARY KEY,user_id TEXT NOT NULL,token_hash TEXT UNIQUE NOT NULL,purpose TEXT NOT NULL,expires_at REAL NOT NULL,created_at REAL NOT NULL,consumed_at REAL);
 CREATE TABLE IF NOT EXISTS synpora_auth_rate_limits(rate_key TEXT PRIMARY KEY,window_start REAL NOT NULL,failures INTEGER NOT NULL,locked_until REAL NOT NULL);""")
         try:
             c.execute("ALTER TABLE synpora_saas_users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0")
+        except Exception:
+            pass  # Existing SQLite installations already have the column.
+        try:
+            c.execute("ALTER TABLE synpora_saas_users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0")
         except Exception:
             pass  # Existing SQLite installations already have the column.
         c.commit()
@@ -114,14 +119,27 @@ def _verify(pw,stored):
     try:
         salt,_=stored.split("$",1); return hmac.compare_digest(_hash(pw,salt),stored)
     except Exception: return False
-def _token(uid):
+def _token(uid,version=0):
     if not JWT_SECRET:
         raise RuntimeError("SYNPORA_JWT_SECRET is required")
     import base64
-    body=json.dumps({"uid":uid,"exp":int(time.time())+86400},separators=(",",":")).encode()
+    body=json.dumps({"uid":uid,"ver":int(version),"iat":int(time.time()),"exp":int(time.time())+86400},separators=(",",":")).encode()
     b=base64.urlsafe_b64encode(body).decode().rstrip("=")
     sig=hmac.new(JWT_SECRET.encode(),b.encode(),hashlib.sha256).hexdigest()
     return b+"."+sig
+def _token_version(token):
+    if not _uid(token): return None
+    import base64
+    try:
+        body=token.split(".",1)[0]
+        raw=base64.urlsafe_b64decode(body+"="*((4-len(body)%4)%4))
+        claims=json.loads(raw)
+        version=claims.get("ver",0)
+        if isinstance(version,bool) or not isinstance(version,int) or version<0: return None
+        return version
+    except Exception:
+        return None
+
 def _uid(token):
     if not JWT_SECRET: return None
     import base64
@@ -2083,8 +2101,17 @@ def install(app):
 
     def user(authorization):
         if not authorization or not authorization.startswith("Bearer "): raise HTTPException(401,"Authentication required")
-        uid=_uid(authorization[7:])
-        if not uid: raise HTTPException(401,"Invalid or expired token")
+        token=authorization[7:]
+        uid=_uid(token)
+        version=_token_version(token)
+        if not uid or version is None: raise HTTPException(401,"Invalid or expired token")
+        c=init_db()
+        try:
+            row=c.execute("SELECT token_version FROM synpora_saas_users WHERE id=?",(uid,)).fetchone()
+            if not row or int(row["token_version"])!=version:
+                raise HTTPException(401,"Invalid or expired token")
+        finally:
+            c.close()
         return uid
 
     @app.post("/api/v1/auth/register")
@@ -2098,7 +2125,7 @@ def install(app):
         try:
             # Account and initial farm must be created atomically; never leave a half-created account.
             with c.transaction():
-                c.execute("INSERT INTO synpora_saas_users(id,email,password_hash,created_at,email_verified) VALUES(?,?,?,?,?)",(uid,email,_hash(x.password),time.time(),not (os.getenv("SYNPORA_REQUIRE_EMAIL_VERIFICATION","1" if _database_required() else "0").strip().lower() in ("1","true","yes"))))
+                c.execute("INSERT INTO synpora_saas_users(id,email,password_hash,created_at,email_verified,token_version) VALUES(?,?,?,?,?,?)",(uid,email,_hash(x.password),time.time(),not (os.getenv("SYNPORA_REQUIRE_EMAIL_VERIFICATION","1" if _database_required() else "0").strip().lower() in ("1","true","yes")),0))
                 c.execute("INSERT INTO synpora_saas_farms VALUES(?,?,?,?)",(farm_id,uid,"My first farm",time.time()))
         except Exception as e:
             message=str(e).lower()
@@ -2141,7 +2168,7 @@ def install(app):
             _login_failures.pop(key,None)
         try: c.close()
         except Exception: pass
-        return {"token":_token(row["id"]),"user":{"id":row["id"],"email":row["email"]}}
+        return {"token":_token(row["id"],int(row["token_version"])),"user":{"id":row["id"],"email":row["email"]}}
 
     @app.post("/api/v1/auth/verify-email")
     def verify_email(x:EmailTokenIn):
@@ -2152,7 +2179,8 @@ def install(app):
             row=c.execute("SELECT id,user_id,expires_at FROM synpora_auth_tokens WHERE token_hash=? AND purpose='verify_email' AND consumed_at IS NULL",(digest,)).fetchone()
             if not row or float(row["expires_at"])<=time.time(): raise HTTPException(400,"Invalid or expired token")
             with c.transaction():
-                c.execute("UPDATE synpora_auth_tokens SET consumed_at=? WHERE id=? AND consumed_at IS NULL",(time.time(),row["id"]))
+                consumed=c.execute("UPDATE synpora_auth_tokens SET consumed_at=? WHERE id=? AND consumed_at IS NULL",(time.time(),row["id"]))
+                if consumed.rowcount!=1: raise HTTPException(400,"Invalid or expired token")
                 c.execute("UPDATE synpora_saas_users SET email_verified=? WHERE id=?",(True,row["user_id"]))
             return {"verified":True,"message":"Email verified. You can now sign in."}
         finally: c.close()
@@ -2203,8 +2231,9 @@ def install(app):
             if not row or float(row["expires_at"])<=time.time(): raise HTTPException(400,"Invalid or expired token")
             now=time.time()
             with c.transaction():
-                c.execute("UPDATE synpora_auth_tokens SET consumed_at=? WHERE id=? AND consumed_at IS NULL",(now,row["id"]))
-                c.execute("UPDATE synpora_saas_users SET password_hash=? WHERE id=?",(_hash(x.new_password),row["user_id"]))
+                consumed=c.execute("UPDATE synpora_auth_tokens SET consumed_at=? WHERE id=? AND consumed_at IS NULL",(now,row["id"]))
+                if consumed.rowcount!=1: raise HTTPException(400,"Invalid or expired token")
+                c.execute("UPDATE synpora_saas_users SET password_hash=?,token_version=token_version+1 WHERE id=?",(_hash(x.new_password),row["user_id"]))
                 c.execute("UPDATE synpora_auth_tokens SET consumed_at=? WHERE user_id=? AND purpose='reset_password' AND consumed_at IS NULL",(now,row["user_id"]))
             return {"password_reset":True,"message":"Password updated. Sign in with your new password."}
         finally: c.close()
