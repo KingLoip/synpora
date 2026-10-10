@@ -1,4 +1,4 @@
-import os, sqlite3, hashlib, hmac, secrets, json, time
+import os, sqlite3, hashlib, hmac, secrets, json, time, threading
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -90,6 +90,38 @@ def install(app):
     if _database_required() and len(JWT_SECRET)<32:
         raise RuntimeError("SYNPORA_JWT_SECRET must contain at least 32 characters in production")
     init_db()
+    # Best-effort per-account login throttling. This is process-local and intentionally
+    # does not log emails, passwords, tokens, or client-supplied forwarding headers.
+    _login_limit_lock=threading.Lock()
+    _login_failures={}
+    _LOGIN_WINDOW_SECONDS=900
+    _LOGIN_MAX_FAILURES=5
+    _LOGIN_LOCKOUT_SECONDS=300
+
+    def _login_allowed(key, now=None):
+        now=time.time() if now is None else now
+        with _login_limit_lock:
+            state=_login_failures.get(key,{"attempts":[],"locked_until":0.0})
+            state["attempts"]=[t for t in state["attempts"] if now-t < _LOGIN_WINDOW_SECONDS]
+            _login_failures[key]=state
+            return now >= state["locked_until"]
+
+    def _login_failed(key, now=None):
+        now=time.time() if now is None else now
+        with _login_limit_lock:
+            state=_login_failures.get(key,{"attempts":[],"locked_until":0.0})
+            state["attempts"]=[t for t in state["attempts"] if now-t < _LOGIN_WINDOW_SECONDS]
+            state["attempts"].append(now)
+            if len(state["attempts"]) >= _LOGIN_MAX_FAILURES:
+                state["locked_until"]=now+_LOGIN_LOCKOUT_SECONDS
+            _login_failures[key]=state
+            # Bound memory growth under random-email abuse; expired entries are disposable.
+            if len(_login_failures)>10000:
+                cutoff=now-_LOGIN_WINDOW_SECONDS
+                for old_key,old_state in list(_login_failures.items()):
+                    if old_state.get("locked_until",0)<=now and not any(t>=cutoff for t in old_state.get("attempts",[])):
+                        _login_failures.pop(old_key,None)
+
     @app.get("/api/v1/system/status")
     def status():
         configured=bool(DB_URL)
@@ -1870,8 +1902,18 @@ def install(app):
     @app.post("/api/v1/auth/login")
     def login(x:AuthIn):
         email=x.email.strip().lower()
+        # Hash the key so the limiter's in-memory index is not a list of raw email addresses.
+        key=hashlib.sha256(email.encode("utf-8")).hexdigest()
+        if not _login_allowed(key):
+            raise HTTPException(429,"Too many login attempts. Try again in a few minutes.",headers={"Retry-After":str(_LOGIN_LOCKOUT_SECONDS)})
         c=init_db(); row=c.execute("SELECT * FROM users WHERE email=?",(email,)).fetchone()
-        if not row or not _verify(x.password,row["password_hash"]): raise HTTPException(401,"Invalid credentials")
+        if not row or not _verify(x.password,row["password_hash"]):
+            _login_failed(key)
+            raise HTTPException(401,"Invalid credentials")
+        with _login_limit_lock:
+            _login_failures.pop(key,None)
+        try: c.close()
+        except Exception: pass
         return {"token":_token(row["id"]),"user":{"id":row["id"],"email":row["email"]}}
 
     @app.get("/api/v1/auth/me")
