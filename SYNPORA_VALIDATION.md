@@ -64,3 +64,6 @@ These controls reduce common abuse and robustness risks but do not replace distr
 - Use the admin-only `POST /api/v1/system/email-connection-test` endpoint with the market-maintenance token to test SMTP connectivity and authentication. It does not send email.
 - Verification and password-reset tokens are random, stored only as SHA-256 digests, expire, and are single-use. A successful password reset increments the user's token version and invalidates previously issued JWTs.
 - The production-readiness endpoint requires a recent fully provenance-verified market snapshot, persistent PostgreSQL, strong secrets, and configured email delivery. `ready` does not imply independent security certification or proven economic forecast performance.
+
+
+Shared account-level throttling reserves each login/registration/reset attempt in a row-locked PostgreSQL transaction before expensive authentication or email work. This avoids a concurrent check-then-increment race; the PostgreSQL CI job includes a parallel-request regression test.

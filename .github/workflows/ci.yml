@@ -786,6 +786,13 @@ jobs:
               assert attempts and attempts[0]==5, attempts
           throttled=client.post("/api/v1/auth/login",json={"email":"pg-rate-limit@example.test","password":"incorrect-password"})
           assert throttled.status_code==429 and int(throttled.headers.get("Retry-After","0"))>0, throttled.text
+          # Concurrent requests must not oversubscribe the shared attempt budget.
+          from concurrent.futures import ThreadPoolExecutor
+          def concurrent_bad_login(_):
+              return client.post("/api/v1/auth/login",json={"email":"pg-concurrent-rate-limit@example.test","password":"incorrect-password"}).status_code
+          with ThreadPoolExecutor(max_workers=10) as pool:
+              concurrent_statuses=list(pool.map(concurrent_bad_login,range(10)))
+          assert concurrent_statuses.count(401)==5 and concurrent_statuses.count(429)==5, concurrent_statuses
           created=client.post("/api/v1/farms",headers=headers,json={"name":"Postgres persistence check"})
           assert created.status_code==200, created.text
           farm_id_2=created.json()["id"]
