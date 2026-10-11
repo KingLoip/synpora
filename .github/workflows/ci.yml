@@ -477,6 +477,7 @@ jobs:
           assert "market_data_ready" in readiness.json()
           assert "market_data_latest_eligible_age_seconds" in readiness.json()
           assert "smtp_configured" in readiness.json()
+          assert "BackgroundTasks" in open("saas_api.py").read() or "background_tasks.add_task" in open("saas_api.py").read()
           assert c.post("/api/v1/auth/password-reset/request",json={"email":"missing-reset@example.com"}).json()["accepted"] is True
           assert c.post("/api/v1/auth/resend-verification",json={"email":"missing-verify@example.com"}).json()["accepted"] is True
           assert c.post("/api/v1/auth/password-reset/confirm",json={"token":"bad-token","new_password":"ci-password-123"}).status_code==400

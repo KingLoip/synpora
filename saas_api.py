@@ -164,7 +164,7 @@ def _uid(token):
     except Exception: return None
 
 def install(app):
-    from fastapi import Header, HTTPException
+    from fastapi import BackgroundTasks, Header, HTTPException
     from pydantic import BaseModel
     routes_before=list(app.router.routes)
     original_route_ids={id(r) for r in routes_before}
@@ -2263,6 +2263,15 @@ def install(app):
                 smtp.login(username,password)
                 smtp.send_message(message)
 
+    def _send_security_email_safely(recipient,subject,body):
+        # Send after the HTTP response; log only the exception class, never email
+        # addresses, reset links, tokens, or provider error text.
+        import logging
+        try:
+            _send_security_email(recipient,subject,body)
+        except Exception as exc:
+            logging.getLogger("synpora.auth_email").warning("Security email delivery failed (%s).",type(exc).__name__)
+
     def _issue_email_token(c,user_id,purpose,recipient):
         raw=secrets.token_urlsafe(32)
         now=time.time()
@@ -2298,7 +2307,7 @@ def install(app):
         return uid
 
     @app.post("/api/v1/auth/register")
-    def register(x:AuthIn):
+    def register(x:AuthIn,background_tasks:BackgroundTasks):
         email=x.email.strip().lower()
         if len(email)<3 or "@" not in email or len(email)>254 or email.startswith("@") or email.endswith("@") or email.count("@")!=1:
             raise HTTPException(400,"Valid email required")
@@ -2328,9 +2337,9 @@ def install(app):
                     raw,base=_issue_email_token(token_row,uid,"verify_email",email)
                     token_row.commit()
                 finally: token_row.close()
-                _send_security_email(email,"Verify your SYNPORA email",f"Verify your SYNPORA account using this one-time link: {base}/verify-email?token={raw}\nThe link expires in 60 minutes. If you did not create this account, ignore this message.")
+                background_tasks.add_task(_send_security_email_safely,email,"Verify your SYNPORA email",f"Verify your SYNPORA account using this one-time link: {base}/verify-email?token={raw}\nThe link expires in 60 minutes. If you did not create this account, ignore this message.")
             except Exception:
-                raise HTTPException(503,"Account created but verification email could not be sent. Use the resend-verification endpoint after email delivery is configured.")
+                raise HTTPException(503,"Account created but verification could not be initialized. Use the resend-verification endpoint.")
             return {"verification_required":True,"message":"Check your email to verify your account.","user":{"id":uid,"email":email},"farm":{"id":farm_id,"name":"My first farm"}}
         return {"token":_token(uid),"user":{"id":uid,"email":email},"farm":{"id":farm_id,"name":"My first farm"}}
 
@@ -2376,7 +2385,7 @@ def install(app):
         finally: c.close()
 
     @app.post("/api/v1/auth/resend-verification")
-    def resend_verification(x:PasswordResetRequestIn):
+    def resend_verification(x:PasswordResetRequestIn,background_tasks:BackgroundTasks):
         email=x.email.strip().lower()
         # Bound user-controlled input before hashing or touching the database.
         if len(email)>254:
@@ -2391,7 +2400,7 @@ def install(app):
                 if row and not bool(row["email_verified"]):
                     raw,base=_issue_email_token(c,row["id"],"verify_email",email)
                     c.commit()
-                    _send_security_email(email,"Verify your SYNPORA email",f"Verify your account: {base}/verify-email?token={raw}\nThe link expires in 60 minutes.")
+                    background_tasks.add_task(_send_security_email_safely,email,"Verify your SYNPORA email",f"Verify your account: {base}/verify-email?token={raw}\nThe link expires in 60 minutes.")
             finally: c.close()
         except Exception:
             # Do not leak account existence or provider details.
@@ -2399,7 +2408,7 @@ def install(app):
         return {"accepted":True,"message":"If the account needs verification, instructions will be sent."}
 
     @app.post("/api/v1/auth/password-reset/request")
-    def request_password_reset(x:PasswordResetRequestIn):
+    def request_password_reset(x:PasswordResetRequestIn,background_tasks:BackgroundTasks):
         email=x.email.strip().lower()
         # Return the same public response for oversized inputs to avoid account enumeration.
         if len(email)>254:
@@ -2413,7 +2422,7 @@ def install(app):
                 if row:
                     raw,base=_issue_email_token(c,row["id"],"reset_password",email)
                     c.commit()
-                    _send_security_email(email,"Reset your SYNPORA password",f"Reset your password using this one-time link: {base}/reset-password?token={raw}\nThe link expires in 30 minutes. If you did not request this, ignore this message.")
+                    background_tasks.add_task(_send_security_email_safely,email,"Reset your SYNPORA password",f"Reset your password using this one-time link: {base}/reset-password?token={raw}\nThe link expires in 30 minutes. If you did not request this, ignore this message.")
             finally: c.close()
         except Exception:
             pass
