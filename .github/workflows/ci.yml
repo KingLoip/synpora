@@ -473,6 +473,7 @@ jobs:
           assert readiness.status_code==200, readiness.text
           assert readiness.json()["hardware_write_enabled"] is False
           assert readiness.json()["database_schema_ready"] is True
+          assert set(readiness.json()["required_database_tables"])=={"market_snapshots","synpora_saas_users","synpora_saas_farms","synpora_saas_assets","synpora_auth_tokens","synpora_auth_rate_limits"}
           assert "market_data_ready" in readiness.json()
           assert "market_data_latest_eligible_age_seconds" in readiness.json()
           assert "smtp_configured" in readiness.json()

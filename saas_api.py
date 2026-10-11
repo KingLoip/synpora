@@ -1849,7 +1849,10 @@ def install(app):
             c.execute("SELECT 1").fetchone()
             db_reachable=bool(DB_URL and c.is_postgres)
             db_backend="postgresql" if db_reachable else "sqlite_fallback"
-            c.execute("SELECT COUNT(*) FROM market_snapshots").fetchone()
+            required_database_tables=["market_snapshots","synpora_saas_users","synpora_saas_farms","synpora_saas_assets","synpora_auth_tokens","synpora_auth_rate_limits"]
+            for table in required_database_tables:
+                # Names are static constants, never caller input.
+                c.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone()
             db_schema_ready=True
             # Production readiness requires at least one recent, fully provenance-verified
             # snapshot; merely having a reachable database or configured feed is not enough.
@@ -1889,7 +1892,7 @@ def install(app):
         email_verification_required=os.getenv("SYNPORA_REQUIRE_EMAIL_VERIFICATION","1" if _database_required() else "0").strip().lower() in ("1","true","yes")
         ready=bool(db_configured and db_reachable and db_schema_ready and jwt_configured and jwt_secret_strong and market_token_configured and market_token_strong and smtp_configured and (not email_verification_required or smtp_configured) and market_data_ready)
         return {"database_configured":db_configured,"database_reachable":db_reachable,
-                "database_schema_ready":db_schema_ready,"database_backend":db_backend,"database_error":db_error,
+                "database_schema_ready":db_schema_ready,"required_database_tables":required_database_tables if "required_database_tables" in locals() else ["market_snapshots","synpora_saas_users","synpora_saas_farms","synpora_saas_assets","synpora_auth_tokens","synpora_auth_rate_limits"],"database_backend":db_backend,"database_error":db_error,
                 "market_data_ready":market_data_ready,"market_data_eligible_snapshots_scanned":market_data_eligible_snapshots,
                 "market_data_latest_eligible_age_seconds":round(market_data_latest_eligible_age_seconds,1) if market_data_latest_eligible_age_seconds is not None else None,
                 "jwt_secret_configured":jwt_configured,"jwt_secret_strong":jwt_secret_strong,
