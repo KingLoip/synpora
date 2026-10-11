@@ -83,3 +83,6 @@ Configure these Railway service variables before treating the SaaS authenticatio
 - `SYNPORA_REQUIRE_EMAIL_VERIFICATION=1`
 
 The production-readiness endpoint reports whether required settings are present; it does not verify the provider credentials or send a test email. After configuration, call `POST /api/v1/system/email-connection-test` with the `X-SYNPORA-MARKET-TOKEN` header. This admin-only diagnostic checks SMTP/TLS/authentication without sending a message and exposes only the error class. Then complete a real delivery/verification/reset smoke test with a controlled mailbox. If these variables are missing, readiness intentionally remains `configuration_required` rather than claiming full production readiness.
+
+
+The verification email links now resolve to dedicated browser pages at `/verify-email?token=...` and `/reset-password?token=...`. Both pages validate token syntax, use same-origin API requests, prevent caching, and set a no-referrer policy. They do not place the token in logs or browser storage. CI checks valid-page rendering and malformed-token rejection.
