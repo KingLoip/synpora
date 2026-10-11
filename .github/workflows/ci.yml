@@ -31,7 +31,7 @@ jobs:
       - name: Syntax check
         run: |
           python -m py_compile backend/app/*.py
-          python -m py_compile server.py saas_api.py synpora_enhancement.py
+          python -m py_compile server.py saas_api.py auth_pages.py synpora_enhancement.py
       - name: Import smoke test
         run: |
           pip install -q -r backend/requirements.txt
@@ -48,6 +48,8 @@ jobs:
           from backend.app.main import app
           from backend.app.saas_api import install
           install(app)
+          from auth_pages import install_auth_pages
+          install_auth_pages(app)
           c=TestClient(app)
           email="ci-smoke@example.com"
           reg=c.post("/api/v1/auth/register",json={"email":email,"password":"ci-password-123"})
