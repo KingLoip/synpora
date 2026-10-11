@@ -56,6 +56,9 @@ jobs:
           assert reg.status_code==200, reg.text
           duplicate=c.post("/api/v1/auth/register",json={"email":email,"password":"ci-password-123"})
           assert duplicate.status_code==409, duplicate.text
+          assert c.post("/api/v1/auth/register",json={"email":email,"password":"ci-password-123"}).status_code==409
+          limited_register=c.post("/api/v1/auth/register",json={"email":email,"password":"ci-password-123"})
+          assert limited_register.status_code==429, limited_register.text
           assert c.post("/api/v1/auth/register",json={"email":"invalid-email","password":"ci-password-123"}).status_code==400
           assert c.post("/api/v1/auth/register",json={"email":"ci-long-password@example.com","password":"x"*1025}).status_code==400
           assert c.post("/api/v1/auth/login",json={"email":email,"password":"x"*1025}).status_code==400

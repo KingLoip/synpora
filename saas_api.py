@@ -2296,6 +2296,8 @@ def install(app):
             raise HTTPException(400,"Valid email required")
         if len(x.password)<8: raise HTTPException(400,"Password must be at least 8 characters")
         if len(x.password)>1024: raise HTTPException(400,"Password must be at most 1024 characters")
+        if not _email_action_allowed(email,"register"):
+            raise HTTPException(429,"Too many account creation attempts. Try again later.",headers={"Retry-After":"3600"})
         verification_required=os.getenv("SYNPORA_REQUIRE_EMAIL_VERIFICATION","1" if _database_required() else "0").strip().lower() in ("1","true","yes")
         if verification_required:
             try: _smtp_configuration()
@@ -2327,6 +2329,8 @@ def install(app):
     @app.post("/api/v1/auth/login")
     def login(x:AuthIn):
         email=x.email.strip().lower()
+        if not email or len(email)>254:
+            raise HTTPException(400,"Valid email required")
         if len(x.password)>1024:
             raise HTTPException(400,"Password must be at most 1024 characters")
         # Hash the key so the limiter's in-memory index is not a list of raw email addresses.
@@ -2366,6 +2370,9 @@ def install(app):
     @app.post("/api/v1/auth/resend-verification")
     def resend_verification(x:PasswordResetRequestIn):
         email=x.email.strip().lower()
+        # Bound user-controlled input before hashing or touching the database.
+        if len(email)>254:
+            return {"accepted":True,"message":"If the account needs verification, instructions will be sent."}
         # Deliberately return the same response regardless of whether the account exists.
         if not _email_action_allowed(email,"verify_resend"):
             return {"accepted":True,"message":"If the account needs verification, instructions will be sent."}
@@ -2386,6 +2393,9 @@ def install(app):
     @app.post("/api/v1/auth/password-reset/request")
     def request_password_reset(x:PasswordResetRequestIn):
         email=x.email.strip().lower()
+        # Return the same public response for oversized inputs to avoid account enumeration.
+        if len(email)>254:
+            return {"accepted":True,"message":"If the account exists, reset instructions will be sent."}
         if not _email_action_allowed(email,"password_reset"):
             return {"accepted":True,"message":"If the account exists, reset instructions will be sent."}
         try:
