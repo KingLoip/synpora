@@ -885,5 +885,7 @@ jobs:
           printf '%s' "$readiness" | jq '{status,market_data_ready,market_data_latest_eligible_age_seconds,smtp_configured,email_verification_required,database_backend}'
           if [ "$(printf '%s' "$readiness" | jq -r '.status')" != "ready" ]; then
             echo "LIVE READINESS BLOCKERS:"
-            printf '%s' "$readiness" | jq -r 'to_entries | map(select((.key == "smtp_configured" and .value == false) or (.key == "market_data_ready" and .value == false) or (.key == "public_url_https" and .value == false) or (.key == "email_verification_required" and .value == false))) | .[] | "\(.key)=\(.value)"'
+            printf '%s' "$readiness" | jq -r 'to_entries | map(select((.key == "smtp_configured" and .value == false) or (.key == "market_data_ready" and .value == false) or (.key == "public_url_https" and .value == false) or (.key == "email_verification_required" and .value == false) or (.key == "database_schema_ready" and .value == false) or (.key == "jwt_secret_strong" and .value == false) or (.key == "market_admin_token_strong" and .value == false))) | .[] | "\(.key)=\(.value)"'
+            echo "Production release is blocked until all readiness checks pass."
+            exit 1
           fi
