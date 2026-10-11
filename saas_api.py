@@ -226,7 +226,13 @@ def install(app):
                 if now-start>=window_seconds:
                     start=now; failures=0; locked=0.0
                 allowed=now>=locked and failures<max_attempts
-                if action=="failed":
+                if action=="attempt":
+                    # Atomically reserve an attempt inside this row-locked transaction;
+                    # concurrent requests cannot all pass the same remaining slot.
+                    if allowed:
+                        failures+=1
+                        if failures>=max_attempts: locked=now+lockout_seconds
+                elif action=="failed":
                     failures+=1
                     if failures>=max_attempts: locked=now+lockout_seconds
                 elif action=="success":
@@ -247,19 +253,18 @@ def install(app):
             state["attempts"]=[t for t in state["attempts"] if now-t < _LOGIN_WINDOW_SECONDS]
             _login_failures[key]=state
             local_allowed=now>=state["locked_until"] and len(state["attempts"])<_LOGIN_MAX_FAILURES
-        return local_allowed and _shared_login_state(key,"check",now)
+        return local_allowed and _shared_login_state(key,"attempt",now)
 
     def _email_action_allowed(email,purpose):
         key=hashlib.sha256((purpose+":"+email).encode("utf-8")).hexdigest()
         now=time.time()
-        if not _shared_login_state(key,"check",now,3600,3,3600):
-            return False
-        _shared_login_state(key,"failed",now,3600,3,3600)
-        return True
+        # Consume one of the hourly slots atomically; no check-then-increment race.
+        return _shared_login_state(key,"attempt",now,3600,3,3600)
 
     def _login_failed(key, now=None):
         now=time.time() if now is None else now
-        _shared_login_state(key,"failed",now)
+        # Shared counter was reserved atomically before password verification;
+        # only update the process-local cache here to avoid double-counting.
         with _login_limit_lock:
             state=_login_failures.get(key,{"attempts":[],"locked_until":0.0})
             state["attempts"]=[t for t in state["attempts"] if now-t < _LOGIN_WINDOW_SECONDS]

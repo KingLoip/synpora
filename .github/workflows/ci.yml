@@ -778,6 +778,12 @@ jobs:
           for _ in range(5):
               failed=client.post("/api/v1/auth/login",json={"email":"pg-rate-limit@example.test","password":"incorrect-password"})
               assert failed.status_code==401, failed.text
+          # A shared row must show five attempts even though failure accounting is separate.
+          with psycopg.connect(os.environ["DATABASE_URL"]) as db:
+              import hashlib
+              rate_key=hashlib.sha256("pg-rate-limit@example.test".encode("utf-8")).hexdigest()
+              attempts=db.execute("SELECT failures FROM synpora_auth_rate_limits WHERE rate_key=%s",(rate_key,)).fetchone()
+              assert attempts and attempts[0]==5, attempts
           throttled=client.post("/api/v1/auth/login",json={"email":"pg-rate-limit@example.test","password":"incorrect-password"})
           assert throttled.status_code==429 and int(throttled.headers.get("Retry-After","0"))>0, throttled.text
           created=client.post("/api/v1/farms",headers=headers,json={"name":"Postgres persistence check"})
