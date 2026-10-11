@@ -859,10 +859,11 @@ jobs:
           printf '%s' "$market" | jq -e '.recommendation_only == true and .hardware_write == false and has("latest_eligible_age_seconds")' >/dev/null
           curl --silent --show-error --max-time 10 --fail --output /tmp/synpora-ops.html "$BASE_URL/ops"
           grep -q 'SYNPORA – Betriebsstatus' /tmp/synpora-ops.html
-          verify_page_code=$(curl --silent --show-error --max-time 10 --output /tmp/synpora-verify.html --write-out '%{http_code}' "$BASE_URL/verify-email?token=SmokeToken123")
+          verify_page_code=$(curl --silent --show-error --max-time 10 --dump-header /tmp/synpora-verify.headers --output /tmp/synpora-verify.html --write-out '%{http_code}' "$BASE_URL/verify-email?token=SmokeToken123")
           test "$verify_page_code" = "200"
-          grep -qi 'Cache-Control: no-store' <(curl --silent --show-error --max-time 10 --head "$BASE_URL/verify-email?token=SmokeToken123" 2>/dev/null) || grep -q 'SYNPORA' /tmp/synpora-verify.html
-          grep -q 'script-src.*nonce-' /tmp/synpora-verify.html || true
+          grep -qi '^cache-control: no-store' /tmp/synpora-verify.headers
+          grep -qi "^content-security-policy:.*script-src 'nonce-" /tmp/synpora-verify.headers
+          grep -qi '^referrer-policy: no-referrer' /tmp/synpora-verify.headers
           reset_page_code=$(curl --silent --show-error --max-time 10 --output /tmp/synpora-reset.html --write-out '%{http_code}' "$BASE_URL/reset-password?token=SmokeToken123")
           test "$reset_page_code" = "200"
           grep -q 'Passwort ändern' /tmp/synpora-reset.html
