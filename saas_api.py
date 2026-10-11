@@ -197,6 +197,7 @@ def install(app):
     _LOGIN_WINDOW_SECONDS=900
     _LOGIN_MAX_FAILURES=5
     _LOGIN_LOCKOUT_SECONDS=300
+    _rate_cleanup_bucket=-1
 
     def _shared_login_state(key, action, now=None, window_seconds=None, max_attempts=None, lockout_seconds=None):
         # Database-backed limits are shared by all app replicas; keys are SHA-256 digests,
@@ -205,6 +206,15 @@ def install(app):
         window_seconds=_LOGIN_WINDOW_SECONDS if window_seconds is None else window_seconds
         max_attempts=_LOGIN_MAX_FAILURES if max_attempts is None else max_attempts
         lockout_seconds=_LOGIN_LOCKOUT_SECONDS if lockout_seconds is None else lockout_seconds
+        # Retention cleanup is run once per five-minute bucket even if the first
+        # request arrives several seconds after the boundary.
+        cleanup_bucket=int(now//300)
+        do_cleanup=False
+        nonlocal _rate_cleanup_bucket
+        with _login_limit_lock:
+            if cleanup_bucket>_rate_cleanup_bucket:
+                _rate_cleanup_bucket=cleanup_bucket
+                do_cleanup=True
         c=init_db()
         try:
             with c.transaction():
@@ -223,8 +233,8 @@ def install(app):
                     failures=0; locked=0.0; start=now
                 c.execute("UPDATE synpora_auth_rate_limits SET window_start=?,failures=?,locked_until=? WHERE rate_key=?",(start,failures,locked,key))
                 # Opportunistically prune expired limiter rows so random-email abuse cannot
-                # grow this table without bound. Indexed cleanup runs at most once per 5 min bucket.
-                if int(now)%300==0:
+                # grow this table without bound. Indexed cleanup runs once per five-minute bucket.
+                if do_cleanup:
                     c.execute("DELETE FROM synpora_auth_rate_limits WHERE window_start<? AND locked_until<?",(now-7200,now))
             return allowed
         finally:
