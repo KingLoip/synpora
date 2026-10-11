@@ -822,12 +822,13 @@ jobs:
       - name: Wait for this release to reach Railway
         env:
           BASE_URL: https://synpora-production.up.railway.app
+          EXPECTED_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           found=0
           for attempt in $(seq 1 60); do
             release=$(curl --silent --show-error --max-time 8 --fail "$BASE_URL/api/v1/system/release" 2>/dev/null || true)
-            if printf '%s' "$release" | jq -e ' .release == "1.3.1" and .hardware_write == false and .autonomous_control == false and (.features | index("password_recovery") != null)' >/dev/null 2>&1; then
+            if printf '%s' "$release" | jq -e --arg sha "$EXPECTED_SHA" ' .release == "1.3.1" and .build_commit == $sha and .hardware_write == false and .autonomous_control == false and (.features | index("password_recovery") != null)' >/dev/null 2>&1; then
               found=1
               break
             fi
@@ -856,7 +857,15 @@ jobs:
           test "$email_guard" = "403"
           market=$(curl --silent --show-error --max-time 15 --fail "$BASE_URL/api/v1/market/data-health")
           printf '%s' "$market" | jq -e '.recommendation_only == true and .hardware_write == false and has("latest_eligible_age_seconds")' >/dev/null
-          curl --silent --show-error --max-time 10 --fail "$BASE_URL/ops" | grep -q 'SYNPORA – Betriebsstatus'
+          curl --silent --show-error --max-time 10 --fail --output /tmp/synpora-ops.html "$BASE_URL/ops"
+          grep -q 'SYNPORA – Betriebsstatus' /tmp/synpora-ops.html
+          verify_page_code=$(curl --silent --show-error --max-time 10 --output /tmp/synpora-verify.html --write-out '%{http_code}' "$BASE_URL/verify-email?token=SmokeToken123")
+          test "$verify_page_code" = "200"
+          grep -qi 'Cache-Control: no-store' <(curl --silent --show-error --max-time 10 --head "$BASE_URL/verify-email?token=SmokeToken123" 2>/dev/null) || grep -q 'SYNPORA' /tmp/synpora-verify.html
+          grep -q 'script-src.*nonce-' /tmp/synpora-verify.html || true
+          reset_page_code=$(curl --silent --show-error --max-time 10 --output /tmp/synpora-reset.html --write-out '%{http_code}' "$BASE_URL/reset-password?token=SmokeToken123")
+          test "$reset_page_code" = "200"
+          grep -q 'Passwort ändern' /tmp/synpora-reset.html
           printf '%s' "$readiness" | jq '{status,market_data_ready,market_data_latest_eligible_age_seconds,smtp_configured,email_verification_required,database_backend}'
           if [ "$(printf '%s' "$readiness" | jq -r '.status')" != "ready" ]; then
             echo "LIVE READINESS BLOCKERS:"
