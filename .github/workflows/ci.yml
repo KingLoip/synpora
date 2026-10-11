@@ -481,6 +481,9 @@ jobs:
           assert c.get("/reset-password?token=validToken_123").status_code==200
           assert c.get("/verify-email?token=%3Cscript%3E").status_code==400
           assert c.get("/reset-password?token=validToken_123").headers.get("Cache-Control")=="no-store"
+          auth_page=c.get("/verify-email?token=validToken_123")
+          csp=auth_page.headers.get("Content-Security-Policy","")
+          assert "script-src 'nonce-" in csp and "'unsafe-inline'" not in csp.split("script-src",1)[1].split(";",1)[0], csp
           # Exercise real one-time verification/reset logic with a mocked SMTP transport.
           import re
           from unittest.mock import patch
