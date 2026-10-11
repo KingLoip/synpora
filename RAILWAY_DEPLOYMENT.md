@@ -86,3 +86,10 @@ The production-readiness endpoint reports whether required settings are present;
 
 
 The verification email links now resolve to dedicated browser pages at `/verify-email?token=...` and `/reset-password?token=...`. Both pages validate token syntax, use same-origin API requests, prevent caching, and set a no-referrer policy. They do not place the token in logs or browser storage. CI checks valid-page rendering and malformed-token rejection.
+
+
+## Final release gate
+
+The `production-smoke` job now waits for the exact Git revision reported by Railway, verifies live health/data contracts and the verification/reset browser pages, and fails the release check if `/api/v1/system/production-readiness` is not `ready`. A green syntax/PostgreSQL test suite is not sufficient when required production secrets or recent provenance-verified market data are missing. The readiness endpoint checks the presence of the required SaaS/authentication and market tables as well as database connectivity.
+
+Security emails are queued as FastAPI background tasks after the HTTP response. Delivery failures log only the exception class; they never log the address, token, link, credentials, or provider message. The one-time tokens remain stored only as SHA-256 digests.
