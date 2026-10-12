@@ -241,10 +241,10 @@ jobs:
           db=saas.init_db()
           ts=time.time()
           provenance={"fields":{
-              "btc_hashprice_usd_ph_day":{"source":"external","available":True},
-              "gpu_l40s_usd_hour":{"source":"external","available":True},
-              "eur_usd":{"source":"external","available":True},
-              "austria_spot_eur_kwh":{"source":"external","available":True}}}
+              "btc_hashprice_usd_ph_day":{"source":"external","available":True,"age_seconds":10.0},
+              "gpu_l40s_usd_hour":{"source":"external","available":True,"age_seconds":10.0},
+              "eur_usd":{"source":"external","available":True,"age_seconds":3600.0},
+              "austria_spot_eur_kwh":{"source":"external","available":True,"age_seconds":600.0}}}
           payload={"timestamp":ts,"source":"validated_external_observation",
               "btc_hashprice_usd_ph_day":40.0,"gpu_l40s_usd_hour":1.2,
               "eur_usd":1.1,"austria_spot_eur_kwh":0.08,
