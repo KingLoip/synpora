@@ -252,9 +252,10 @@ jobs:
               "data_quality":provenance}
           # An otherwise recent snapshot with a stale required field must not settle learning labels.
           stale_payload=json.loads(json.dumps(payload))
+          stale_payload["timestamp"]=ts-1
           stale_payload["data_quality"]["fields"]["gpu_l40s_usd_hour"]["age_seconds"]=901
           db.execute("INSERT INTO market_snapshots (id,ts,payload,btc_hashprice_usd_ph_day,gpu_l40s_usd_hour,eur_usd,austria_spot_eur_kwh) VALUES (?,?,?,?,?,?,?)",
-              (str(uuid.uuid4()),ts,json.dumps(stale_payload),40.0,1.2,1.1,0.08))
+              (str(uuid.uuid4()),ts-1,json.dumps(stale_payload),40.0,1.2,1.1,0.08))
           db.commit()
           stale_settlement=c.post(f"/api/v1/farms/{farm}/learning/update",headers=h)
           assert stale_settlement.status_code==200, stale_settlement.text
