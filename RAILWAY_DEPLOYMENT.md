@@ -64,7 +64,7 @@ A successful GitHub Actions run validates code and image build, but does not pro
 1. GitHub Actions SYNPORA CI passes both the syntax/API/Docker job and the PostgreSQL integration job, including email verification, single-use password reset, and session revocation.
 2. Railway reports the newest synpora deployment as SUCCESS, one running replica, and no unresolved critical issues; PostgreSQL is online with its persistent volume attached.
 3. Open /health, /ops, /api/v1/system/production-readiness and /api/v1/market/data-health; readiness alone does not prove the live market feed is fresh or economically accurate.
-4. Confirm `market_data_ready: true`, a recent successful collector attempt, and eligible snapshots with external provenance for all required market fields. The readiness endpoint now remains blocked when no fully verified snapshot younger than 15 minutes exists. Investigate repeated provider failures or stale data before using forecasts.
+4. Confirm `market_data_ready: true`, a recent successful collector attempt, and eligible snapshots with external provenance for all required market fields. The latest eligible snapshot age must be numeric and no greater than 900 seconds; stale/reference values never satisfy this gate. The live CI release check explicitly asserts market freshness, SMTP configuration, HTTPS public URL, required email verification, PostgreSQL health, and both safety flags. Investigate provider failures or stale data rather than weakening the freshness threshold.
 5. Treat all rankings as recommendations, not guaranteed returns. Site installation/network costs and user-supplied tax/capex assumptions still need real-world review.
 
 
