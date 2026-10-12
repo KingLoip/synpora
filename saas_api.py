@@ -662,7 +662,8 @@ def install(app):
 
     def _fetch_builtin_market_sources(out):
         # Source adapters use public APIs with bounded caching and explicit provenance.
-        import math, urllib.parse
+        import math, urllib.parse, logging
+        logger=logging.getLogger("synpora.market_provider")
         now=time.time()
         meta=out.setdefault("_fieldMeta",{})
         if os.getenv("SYNPORA_DISABLE_BUILTIN_MARKET_SOURCES","").strip().lower() in ("1","true","yes"):
@@ -701,8 +702,8 @@ def install(app):
                                 "age_seconds":round(age,1),"valid":True}
                     except (TypeError,ValueError):
                         pass
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Market provider %s failed (%s).", "stratumv2_hashprice", type(exc).__name__)
         # Frankfurter's daily EUR/USD rate; the rate's own date, not fetch time, controls freshness.
         try:
             raw=_provider_json("https://api.frankfurter.dev/v2/providers/ecb/rate/eur/usd",ttl_seconds=3600)
@@ -714,8 +715,8 @@ def install(app):
                 meta["eurUsd"]={"source":"external","provider":"Frankfurter ECB daily EUR/USD",
                     "source_url":"https://api.frankfurter.dev/v2/providers/ecb/rate/eur/usd",
                     "observed_at":rate_ts,"age_seconds":round(age,1),"valid":True}
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Market provider %s failed (%s).", "frankfurter_eur_usd", type(exc).__name__)
         # Fraunhofer ISE Energy-Charts: current Austrian day-ahead spot interval.
         try:
             raw=_provider_json("https://api.energy-charts.info/v2/price_current?bzn=AT",ttl_seconds=300)
@@ -752,8 +753,8 @@ def install(app):
                         "source_url":"https://api.energy-charts.info/v2/price_current?bzn=AT",
                         "license":"CC BY 4.0; attribute Energy-Charts.info",
                         "observed_at":interval_ts,"valid_until":valid_until,"age_seconds":round(now-interval_ts,1),"valid":True}
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Market provider %s failed (%s).", "energy_charts_austria", type(exc).__name__)
         # Zarobit publishes an anonymous, provenance-tagged GPU rental listing API.
         # Poll at most every 15 minutes to stay within its documented anonymous daily quota.
         try:
@@ -783,8 +784,8 @@ def install(app):
                     "source_url":zarobit_url,"license":"CC BY 4.0; attribute Zarobit",
                     "observed_at":observed_at,"age_seconds":round(now-observed_at,1),
                     "offer_count":len(prices),"valid":True}
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Market provider %s failed (%s).", "zarobit_l40s", type(exc).__name__)
         # Vast.ai offer sampling is optional and requires the operator's own API key.
         vast_key=os.getenv("SYNPORA_VAST_API_KEY","").strip()
         # Prefer the fresh, timestamped public market median. Vast.ai is an operator-key
@@ -820,8 +821,8 @@ def install(app):
                     meta["gpuHourlyUsd"]={"source":"external","provider":"Vast.ai L40S marketplace median",
                         "source_url":"https://vast.ai/developers/api",
                         "observed_at":now,"age_seconds":0.0,"offer_count":len(prices),"valid":True}
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Market provider %s failed (%s).", "vastai_l40s", type(exc).__name__)
         return out
 
     def _external_market():
