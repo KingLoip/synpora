@@ -526,6 +526,15 @@ jobs:
                   assert c.post("/api/v1/auth/password-reset/confirm",json={"token":reset_token,"new_password":"ci-other-password-789"}).status_code==400
                   assert c.get("/api/v1/farms",headers=old_auth).status_code==401
                   assert c.post("/api/v1/auth/login",json={"email":verify_email,"password":"ci-new-password-456"}).status_code==200
+                  # SMTP connection diagnostics must authenticate securely without sending any message.
+                  sends_before=smtp_mock.return_value.__enter__.return_value.send_message.call_count
+                  email_connection=c.post("/api/v1/system/email-connection-test",headers={"X-SYNPORA-MARKET-TOKEN":"ci-market-secret"})
+                  assert email_connection.status_code==200, email_connection.text
+                  assert email_connection.json()["email_delivery"]=="connected", email_connection.json()
+                  assert smtp_mock.return_value.__enter__.return_value.starttls.called, "STARTTLS must be required on port 587"
+                  assert smtp_mock.return_value.__enter__.return_value.login.called, "SMTP credentials must be tested"
+                  assert smtp_mock.return_value.__enter__.return_value.noop.called, "SMTP server response must be checked"
+                  assert smtp_mock.return_value.__enter__.return_value.send_message.call_count==sends_before, "Connection test must not send an email"
           finally:
               for key,value in saved_env.items():
                   if value is None: os.environ.pop(key,None)
