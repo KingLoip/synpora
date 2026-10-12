@@ -82,16 +82,32 @@ def _market_loop():
                     payload=json.loads(response.read().decode())
                 quality=payload.get("data_quality",{})
                 completed_at=time.time()
-                logger.info("Market snapshot collected; source=%s quality=%s external_fields=%s reference_fields=%s",
-                    payload.get("source","unknown"),quality.get("status","unknown"),
+                quality_status=quality.get("status","unknown")
+                logger.info("Market collection response received; source=%s quality=%s external_fields=%s reference_fields=%s",
+                    payload.get("source","unknown"),quality_status,
                     quality.get("external_fields",0),quality.get("reference_fields",0))
-                next_attempt=completed_at+MARKET_COLLECTION_INTERVAL_SECONDS
-                _market_status_update(last_success_at=completed_at,last_attempt_result="success",
-                    last_error_class=None,last_source=payload.get("source","unknown"),
-                    last_quality=quality.get("status","unknown"),consecutive_failures=0,
-                    retry_delay_seconds=0,next_attempt_at=next_attempt,
-                    last_attempt_duration_ms=round((time.monotonic()-attempt_started)*1000))
-                retry_delay=60
+                duration_ms=round((time.monotonic()-attempt_started)*1000)
+                if quality_status=="live":
+                    next_attempt=completed_at+MARKET_COLLECTION_INTERVAL_SECONDS
+                    _market_status_update(last_success_at=completed_at,last_attempt_result="success",
+                        last_error_class=None,last_source=payload.get("source","unknown"),
+                        last_quality=quality_status,consecutive_failures=0,
+                        retry_delay_seconds=0,next_attempt_at=next_attempt,
+                        last_attempt_duration_ms=duration_ms)
+                    retry_delay=60
+                else:
+                    # A successful HTTP response is not a successful collection when
+                    # critical market fields are stale, missing, or reference-only.
+                    retry_delay=min(MARKET_COLLECTION_INTERVAL_SECONDS,max(60,retry_delay*2))
+                    next_attempt=completed_at+retry_delay
+                    with _market_status_lock:
+                        failures=int(app.state.market_collector_status.get("consecutive_failures",0))+1
+                        app.state.market_collector_status.update(last_attempt_result="degraded",
+                            last_error_class="DataQualityDegraded",last_source=payload.get("source","unknown"),
+                            last_quality=quality_status,consecutive_failures=failures,
+                            retry_delay_seconds=retry_delay,next_attempt_at=next_attempt,
+                            last_attempt_duration_ms=duration_ms)
+                    logger.warning("Market collection quality is not live; retrying in %s seconds.",retry_delay)
         except Exception as exc:
             logger.warning("Market snapshot collection failed (%s).",type(exc).__name__)
             retry_delay=min(MARKET_COLLECTION_INTERVAL_SECONDS,max(60,retry_delay*2))
