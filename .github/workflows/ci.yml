@@ -527,6 +527,7 @@ jobs:
                   assert c.get("/api/v1/farms",headers=old_auth).status_code==401
                   assert c.post("/api/v1/auth/login",json={"email":verify_email,"password":"ci-new-password-456"}).status_code==200
                   # SMTP connection diagnostics must authenticate securely without sending any message.
+                  smtp_mock.return_value.__enter__.return_value.noop.return_value=(250,b"OK")
                   sends_before=smtp_mock.return_value.__enter__.return_value.send_message.call_count
                   email_connection=c.post("/api/v1/system/email-connection-test",headers={"X-SYNPORA-MARKET-TOKEN":"ci-market-secret"})
                   assert email_connection.status_code==200, email_connection.text
