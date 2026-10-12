@@ -677,6 +677,7 @@ def install(app):
             hp_fresh=hp_meta.get("source")=="external" and hp_meta.get("valid",False) and math.isfinite(hp_value) and hp_value>0 and -60<=hp_age<=900
         except (TypeError,ValueError):
             hp_fresh=False
+        stratum_ok=False
         if not hp_fresh:
             try:
                 raw=_provider_json("https://stratumv2.com/api/hashprice",headers={"User-Agent":"SYNPORA/1.3.0","Accept":"application/json"},ttl_seconds=60)
@@ -687,6 +688,7 @@ def install(app):
                 if -60<=age<=300 and math.isfinite(hashprice) and hashprice>0 and math.isfinite(btc_price) and btc_price>0:
                     out["hashpriceUsd"]=hashprice
                     out["btcPrice"]=btc_price
+                    stratum_ok=True
                     meta["hashpriceUsd"]={"source":"external","provider":"Stratum V2 hashprice API",
                         "source_url":"https://stratumv2.com/api/hashprice","observed_at":observed_at,
                         "age_seconds":round(age,1),"valid":True}
@@ -704,7 +706,10 @@ def install(app):
                         pass
             except Exception as exc:
                 logger.warning("Market provider %s failed (%s).", "stratumv2_hashprice", type(exc).__name__)
+            if not stratum_ok:
+                logger.warning("Market provider %s returned no fresh usable observation.", "stratumv2_hashprice")
         # Frankfurter's daily EUR/USD rate; the rate's own date, not fetch time, controls freshness.
+        frankfurter_ok=False
         try:
             raw=_provider_json("https://api.frankfurter.dev/v2/providers/ecb/rate/eur/usd",ttl_seconds=3600)
             rate=float(raw.get("rate"))
@@ -712,12 +717,16 @@ def install(app):
             age=now-rate_ts
             if math.isfinite(rate) and rate>0 and -86400<=age<=96*3600:
                 out["eurUsd"]=rate
+                frankfurter_ok=True
                 meta["eurUsd"]={"source":"external","provider":"Frankfurter ECB daily EUR/USD",
                     "source_url":"https://api.frankfurter.dev/v2/providers/ecb/rate/eur/usd",
                     "observed_at":rate_ts,"age_seconds":round(age,1),"valid":True}
         except Exception as exc:
             logger.warning("Market provider %s failed (%s).", "frankfurter_eur_usd", type(exc).__name__)
+        if not frankfurter_ok:
+            logger.warning("Market provider %s returned no fresh usable observation.", "frankfurter_eur_usd")
         # Fraunhofer ISE Energy-Charts: current Austrian day-ahead spot interval.
+        energy_charts_ok=False
         try:
             raw=_provider_json("https://api.energy-charts.info/v2/price_current?bzn=AT",ttl_seconds=300)
             series=raw.get("series",[]) if isinstance(raw,dict) else []
@@ -749,14 +758,18 @@ def install(app):
                     raise ValueError("Unknown electricity price unit")
                 if -1.0<=price_value<=10.0:
                     out["austriaSpotEurKwh"]=price_value
+                    energy_charts_ok=True
                     meta["austriaSpotEurKwh"]={"source":"external","provider":"Energy-Charts.info (Fraunhofer ISE), Austria day-ahead",
                         "source_url":"https://api.energy-charts.info/v2/price_current?bzn=AT",
                         "license":"CC BY 4.0; attribute Energy-Charts.info",
                         "observed_at":interval_ts,"valid_until":valid_until,"age_seconds":round(now-interval_ts,1),"valid":True}
         except Exception as exc:
             logger.warning("Market provider %s failed (%s).", "energy_charts_austria", type(exc).__name__)
+        if not energy_charts_ok:
+            logger.warning("Market provider %s returned no fresh usable observation.", "energy_charts_austria")
         # Zarobit publishes an anonymous, provenance-tagged GPU rental listing API.
         # Poll at most every 15 minutes to stay within its documented anonymous daily quota.
+        zarobit_ok=False
         try:
             zarobit_url="https://api.zarobit.com/api/v1/prices/current?gpu_model=L40S&price_type=on_demand&limit=100"
             raw=_provider_json(zarobit_url,headers={"User-Agent":"SYNPORA/1.3.0","Accept":"application/json"},ttl_seconds=900)
@@ -780,12 +793,15 @@ def install(app):
                 median=prices[len(prices)//2] if len(prices)%2 else (prices[len(prices)//2-1]+prices[len(prices)//2])/2
                 observed_at=max(observed)
                 out["gpuHourlyUsd"]=median
+                zarobit_ok=True
                 meta["gpuHourlyUsd"]={"source":"external","provider":"Zarobit L40S on-demand listing median",
                     "source_url":zarobit_url,"license":"CC BY 4.0; attribute Zarobit",
                     "observed_at":observed_at,"age_seconds":round(now-observed_at,1),
                     "offer_count":len(prices),"valid":True}
         except Exception as exc:
             logger.warning("Market provider %s failed (%s).", "zarobit_l40s", type(exc).__name__)
+        if not zarobit_ok:
+            logger.warning("Market provider %s returned no fresh usable L40S offers.", "zarobit_l40s")
         # Vast.ai offer sampling is optional and requires the operator's own API key.
         vast_key=os.getenv("SYNPORA_VAST_API_KEY","").strip()
         # Prefer the fresh, timestamped public market median. Vast.ai is an operator-key
