@@ -250,6 +250,26 @@ jobs:
               "eur_usd":1.1,"austria_spot_eur_kwh":0.08,
               "gpu_l40s_power_kw":0.35,"gpu_utilization":0.7,"gpu_platform_fee":0.15,
               "data_quality":provenance}
+          # Regression-test the eligibility gate directly, including hostile and stale metadata.
+          assert saas._snapshot_is_learning_eligible(payload) is True
+          stale_probe=json.loads(json.dumps(payload))
+          stale_probe["data_quality"]["fields"]["gpu_l40s_usd_hour"]["age_seconds"]=901
+          assert saas._snapshot_is_learning_eligible(stale_probe) is False, "stale GPU offer must be ineligible"
+          missing_age_probe=json.loads(json.dumps(payload))
+          del missing_age_probe["data_quality"]["fields"]["eur_usd"]["age_seconds"]
+          assert saas._snapshot_is_learning_eligible(missing_age_probe) is False, "missing source age must be ineligible"
+          reference_probe=json.loads(json.dumps(payload))
+          reference_probe["data_quality"]["fields"]["eur_usd"]["source"]="reference"
+          assert saas._snapshot_is_learning_eligible(reference_probe) is False, "reference FX must be ineligible"
+          malformed_probe=json.loads(json.dumps(payload))
+          malformed_probe["gpu_l40s_usd_hour"]=float("inf")
+          assert saas._snapshot_is_learning_eligible(malformed_probe) is False, "non-finite market values must be ineligible"
+          availability_probe=json.loads(json.dumps(payload))
+          availability_probe["data_quality"]["fields"]["gpu_l40s_usd_hour"]["available"]="true"
+          assert saas._snapshot_is_learning_eligible(availability_probe) is False, "availability must be a boolean"
+          bounds_probe=json.loads(json.dumps(payload))
+          bounds_probe["austria_spot_eur_kwh"]=12.0
+          assert saas._snapshot_is_learning_eligible(bounds_probe) is False, "out-of-range energy price must be ineligible"
           db.execute("INSERT INTO market_snapshots (id,ts,payload,btc_hashprice_usd_ph_day,gpu_l40s_usd_hour,eur_usd,austria_spot_eur_kwh) VALUES (?,?,?,?,?,?,?)",
               (str(uuid.uuid4()),ts,json.dumps(payload),40.0,1.2,1.1,0.08))
           db.commit()
