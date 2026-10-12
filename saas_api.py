@@ -1881,6 +1881,8 @@ def install(app):
         market_data_ready=False
         market_data_latest_eligible_age_seconds=None
         market_data_eligible_snapshots=0
+        market_data_field_diagnostics={}
+        market_data_latest_snapshot_age_seconds=None
         c=None
         try:
             c=init_db()
@@ -1900,10 +1902,28 @@ def install(app):
                 try:
                     snap_ts=float(market_row["ts"] if hasattr(market_row,"keys") else market_row[0])
                     payload=json.loads(market_row["payload"] if hasattr(market_row,"keys") else market_row[1])
-                    if isinstance(payload,dict) and _snapshot_is_learning_eligible(payload):
-                        market_data_eligible_snapshots+=1
-                        if market_data_latest_eligible_age_seconds is None:
-                            market_data_latest_eligible_age_seconds=max(0.0,now-snap_ts)
+                    if isinstance(payload,dict):
+                        snap_age=max(0.0,now-snap_ts)
+                        if market_data_latest_snapshot_age_seconds is None:
+                            market_data_latest_snapshot_age_seconds=round(snap_age,1)
+                            quality=payload.get("data_quality",{})
+                            fields=quality.get("fields",{}) if isinstance(quality,dict) else {}
+                            required_market_fields=("btc_hashprice_usd_ph_day","gpu_l40s_usd_hour","eur_usd","austria_spot_eur_kwh")
+                            for field_name in required_market_fields:
+                                field=fields.get(field_name,{}) if isinstance(fields,dict) else {}
+                                if not isinstance(field,dict):
+                                    field={}
+                                age=field.get("age_seconds")
+                                market_data_field_diagnostics[field_name]={
+                                    "available":bool(field.get("available",False)),
+                                    "source":str(field.get("source","missing")),
+                                    "provider":str(field.get("provider","unknown"))[:80],
+                                    "age_seconds":round(float(age),1) if isinstance(age,(int,float)) and age>=0 else None,
+                                }
+                        if _snapshot_is_learning_eligible(payload):
+                            market_data_eligible_snapshots+=1
+                            if market_data_latest_eligible_age_seconds is None:
+                                market_data_latest_eligible_age_seconds=snap_age
                 except Exception:
                     continue
             market_data_ready=bool(market_data_eligible_snapshots>0 and market_data_latest_eligible_age_seconds is not None and market_data_latest_eligible_age_seconds<=900)
@@ -1929,10 +1949,26 @@ def install(app):
         smtp_configured=bool(smtp_host and smtp_port_valid and smtp_username and smtp_password and smtp_from and public_url.startswith("https://"))
         email_verification_required=os.getenv("SYNPORA_REQUIRE_EMAIL_VERIFICATION","1" if _database_required() else "0").strip().lower() in ("1","true","yes")
         ready=bool(db_configured and db_reachable and db_schema_ready and jwt_configured and jwt_secret_strong and market_token_configured and market_token_strong and smtp_configured and (not email_verification_required or smtp_configured) and market_data_ready)
+        market_data_guidance=[]
+        if not market_data_ready:
+            gpu_diag=market_data_field_diagnostics.get("gpu_l40s_usd_hour",{})
+            if not gpu_diag.get("available") or gpu_diag.get("source")!="external":
+                if not os.getenv("SYNPORA_VAST_API_KEY","").strip() and not os.getenv("SYNPORA_MARKET_DATA_URL","").strip():
+                    market_data_guidance.append("Configure SYNPORA_VAST_API_KEY in Railway Variables or provide an HTTPS market feed whose host is listed in SYNPORA_MARKET_DATA_ALLOWED_HOSTS.")
+                else:
+                    market_data_guidance.append("Verify the configured GPU provider returns timestamped L40S on-demand prices no older than 900 seconds.")
+            missing=[name for name in ("btc_hashprice_usd_ph_day","gpu_l40s_usd_hour","eur_usd","austria_spot_eur_kwh")
+                     if market_data_field_diagnostics.get(name,{}).get("source")!="external"]
+            if missing:
+                market_data_guidance.append("Missing or non-external required market fields: "+", ".join(missing)+". Reference values do not satisfy production readiness.")
+            market_data_guidance.append("Do not lower freshness limits; readiness requires a fully external eligible snapshot no older than 900 seconds.")
         return {"database_configured":db_configured,"database_reachable":db_reachable,
                 "database_schema_ready":db_schema_ready,"required_database_tables":required_database_tables if "required_database_tables" in locals() else ["market_snapshots","synpora_saas_users","synpora_saas_farms","synpora_saas_assets","synpora_auth_tokens","synpora_auth_rate_limits"],"database_backend":db_backend,"database_error":db_error,
                 "market_data_ready":market_data_ready,"market_data_eligible_snapshots_scanned":market_data_eligible_snapshots,
                 "market_data_latest_eligible_age_seconds":round(market_data_latest_eligible_age_seconds,1) if market_data_latest_eligible_age_seconds is not None else None,
+                "market_data_latest_snapshot_age_seconds":market_data_latest_snapshot_age_seconds,
+                "market_data_field_diagnostics":market_data_field_diagnostics,
+                "market_data_guidance":market_data_guidance,
                 "jwt_secret_configured":jwt_configured,"jwt_secret_strong":jwt_secret_strong,
                 "smtp_configured":smtp_configured,"smtp_host_configured":bool(smtp_host),
                 "smtp_auth_configured":bool(smtp_username and smtp_password),"smtp_from_configured":bool(smtp_from),
