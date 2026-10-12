@@ -78,7 +78,7 @@ def _market_loop():
             else:
                 url="http://127.0.0.1:"+os.getenv("PORT","8000")+"/api/v1/market/collect"
                 req=urllib.request.Request(url,headers={"X-SYNPORA-MARKET-TOKEN":token,"Accept":"application/json"},method="POST")
-                with urllib.request.urlopen(req,timeout=8) as response:
+                with urllib.request.urlopen(req,timeout=30) as response:
                     payload=json.loads(response.read().decode())
                 quality=payload.get("data_quality",{})
                 completed_at=time.time()
