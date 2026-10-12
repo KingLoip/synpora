@@ -1869,6 +1869,7 @@ def install(app):
 
     @app.get("/api/v1/system/production-readiness")
     def production_readiness():
+        import math, re
         db_configured=bool(os.getenv("DATABASE_URL") or os.getenv("POSTGRES_URL"))
         jwt_configured=bool(os.getenv("SYNPORA_JWT_SECRET","").strip())
         jwt_secret_strong=len(os.getenv("SYNPORA_JWT_SECRET","").strip())>=32
@@ -1914,11 +1915,20 @@ def install(app):
                                 if not isinstance(field,dict):
                                     field={}
                                 age=field.get("age_seconds")
+                                source=field.get("source","missing")
+                                if source not in ("external","reference","missing"):
+                                    source="missing"
+                                provider=re.sub(r"[^A-Za-z0-9 _.-]","",str(field.get("provider","unknown")))[:80] or "unknown"
+                                try:
+                                    age_value=float(age)
+                                    safe_age=round(age_value,1) if math.isfinite(age_value) and age_value>=0 else None
+                                except (TypeError,ValueError,OverflowError):
+                                    safe_age=None
                                 market_data_field_diagnostics[field_name]={
                                     "available":bool(field.get("available",False)),
-                                    "source":str(field.get("source","missing")),
-                                    "provider":str(field.get("provider","unknown"))[:80],
-                                    "age_seconds":round(float(age),1) if isinstance(age,(int,float)) and age>=0 else None,
+                                    "source":source,
+                                    "provider":provider,
+                                    "age_seconds":safe_age,
                                 }
                         if _snapshot_is_learning_eligible(payload):
                             market_data_eligible_snapshots+=1
