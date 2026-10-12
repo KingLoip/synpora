@@ -677,7 +677,7 @@ def install(app):
             hp_fresh=hp_meta.get("source")=="external" and hp_meta.get("valid",False) and math.isfinite(hp_value) and hp_value>0 and -60<=hp_age<=900
         except (TypeError,ValueError):
             hp_fresh=False
-        stratum_ok=False
+        stratum_ok=hp_fresh
         if not hp_fresh:
             try:
                 raw=_provider_json("https://stratumv2.com/api/hashprice",headers={"User-Agent":"SYNPORA/1.3.0","Accept":"application/json"},ttl_seconds=60)
