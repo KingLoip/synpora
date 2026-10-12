@@ -5,6 +5,12 @@ from auth_pages import install_auth_pages
 app = install(app)
 install_auth_pages(app)
 
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    from fastapi.responses import Response
+    svg = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#10151d"/><path d="M14 43V21h7l11 13 11-13h7v22h-8V32L32 43 22 32v11z" fill="#79d6a2"/></svg>"""
+    return Response(content=svg, media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"})
+
 @app.middleware("http")
 async def security_headers(request, call_next):
     response = await call_next(request)
