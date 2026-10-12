@@ -1671,17 +1671,33 @@ def install(app):
                 "avg_regret_eur_kwh":round(sum(regrets)/len(regrets),8) if regrets else None}
 
     def _snapshot_is_learning_eligible(payload):
-        # Learning targets must be based on independently sourced values, not defaults.
+        # Learning targets must be independently sourced, numerically valid, and fresh.
+        # Do not let hand-edited/corrupt payload metadata mark stale or nonsensical values eligible.
+        import math
         if not isinstance(payload,dict):
             return False
         quality=payload.get("data_quality")
         fields=quality.get("fields") if isinstance(quality,dict) else None
         if not isinstance(fields,dict):
             return False
-        required=("btc_hashprice_usd_ph_day","gpu_l40s_usd_hour","eur_usd","austria_spot_eur_kwh")
-        for key in required:
+        required={
+            "btc_hashprice_usd_ph_day": (0.0, float("inf"), 900.0),
+            "gpu_l40s_usd_hour": (0.0, float("inf"), 900.0),
+            "eur_usd": (0.0, float("inf"), 96.0*3600.0),
+            "austria_spot_eur_kwh": (-1.0, 10.0, 7200.0),
+        }
+        for key,(minimum,maximum,max_age) in required.items():
             field=fields.get(key)
-            if not isinstance(field,dict) or field.get("source")!="external" or not field.get("available",True):
+            if not isinstance(field,dict) or field.get("source")!="external" or field.get("available") is not True:
+                return False
+            try:
+                value=float(payload[key])
+                age=float(field["age_seconds"])
+                if not math.isfinite(value) or not math.isfinite(age):
+                    return False
+                if value<=minimum or value>maximum or age<0 or age>max_age:
+                    return False
+            except (KeyError,TypeError,ValueError,OverflowError):
                 return False
         return True
 
