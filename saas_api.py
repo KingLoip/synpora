@@ -773,19 +773,34 @@ def install(app):
         try:
             zarobit_url="https://api.zarobit.com/api/v1/prices/current?gpu_model=L40S&price_type=on_demand&limit=100"
             raw=_provider_json(zarobit_url,headers={"User-Agent":"SYNPORA/1.3.0","Accept":"application/json"},ttl_seconds=900)
-            offers=raw.get("data",[]) if isinstance(raw,dict) else []
+            offers=(raw if isinstance(raw,list) else
+                raw.get("data",raw.get("offers",raw.get("results",[]))) if isinstance(raw,dict) else [])
             prices=[]; observed=[]
+            counts={"offers":len(offers) if isinstance(offers,list) else 0,
+                "l40s":0,"on_demand":0,"priced":0,"timestamped":0,"fresh":0}
             for offer in offers if isinstance(offers,list) else []:
-                if not isinstance(offer,dict) or "L40S" not in str(offer.get("gpu_model","")).upper():
+                if not isinstance(offer,dict):
                     continue
-                if str(offer.get("price_type","on_demand")).lower()!="on_demand":
+                model=str(offer.get("gpu_model",offer.get("gpu_name",offer.get("model","")))).upper()
+                if "L40S" not in model:
                     continue
+                counts["l40s"]+=1
+                price_type=str(offer.get("price_type",offer.get("pricing_type","on_demand"))).lower()
+                if price_type not in ("on_demand","ondemand","hourly"):
+                    continue
+                counts["on_demand"]+=1
                 try:
-                    hourly=float(offer.get("price_usd_per_gpu_hour"))
-                    stamp=_parse_provider_timestamp(offer.get("collected_at"))
+                    raw_hourly=offer.get("price_usd_per_gpu_hour",offer.get("hourly_price_usd",offer.get("price_per_hour_usd")))
+                    hourly=float(raw_hourly)
+                    if not math.isfinite(hourly) or hourly<=0:
+                        continue
+                    counts["priced"]+=1
+                    raw_stamp=offer.get("collected_at",offer.get("updated_at",offer.get("observed_at",offer.get("timestamp"))))
+                    stamp=_parse_provider_timestamp(raw_stamp)
+                    counts["timestamped"]+=1
                     age=now-stamp
-                    if math.isfinite(hourly) and hourly>0 and -60<=age<=900:
-                        prices.append(hourly); observed.append(stamp)
+                    if -60<=age<=900:
+                        prices.append(hourly); observed.append(stamp); counts["fresh"]+=1
                 except (TypeError,ValueError):
                     continue
             if prices:
@@ -801,7 +816,8 @@ def install(app):
         except Exception as exc:
             logger.warning("Market provider %s failed (%s).", "zarobit_l40s", type(exc).__name__)
         if not zarobit_ok:
-            logger.warning("Market provider %s returned no fresh usable L40S offers.", "zarobit_l40s")
+            logger.warning("Market provider %s returned no fresh usable L40S offers; counts=%s.",
+                "zarobit_l40s", counts if "counts" in locals() else {"response":"unavailable"})
         # Vast.ai offer sampling is optional and requires the operator's own API key.
         vast_key=os.getenv("SYNPORA_VAST_API_KEY","").strip()
         # Prefer the fresh, timestamped public market median. Vast.ai is an operator-key
