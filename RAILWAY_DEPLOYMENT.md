@@ -28,7 +28,7 @@ Open `/ops` on the deployed service for a live operational overview of productio
 - Austrian day-ahead spot electricity: Fraunhofer ISE Energy-Charts current-interval endpoint for bidding zone `AT`; the interval's validity is checked. Energy-Charts data is CC BY 4.0 and should be attributed when republished.
 - GPU L40S rental rate: median of current Vast.ai marketplace offers when `SYNPORA_VAST_API_KEY` is configured. It is an indicative marketplace rate, not a guaranteed contract price; storage, bandwidth, downtime, and workload performance can change realized revenue.
 
-Every source has its own freshness/provenance checks. If a provider is unavailable, stale, or incomplete, SYNPORA falls back to reference values for display but those reference values do not qualify snapshots for learning or backtesting. The custom aggregator feed is optional and can supplement or override individual fields.
+Every source has its own freshness/provenance checks. Learning/backtesting eligibility also revalidates each stored required field: external provenance and availability must be explicit, values must be finite and in range, and field age must be within the source-specific limit (hashprice/GPU 15 minutes, EUR/USD 96 hours, Austrian spot electricity 2 hours). Missing age metadata, stale fields, invalid numbers, and reference values do not qualify a snapshot even if its database timestamp is recent. If a provider is unavailable, stale, or incomplete, SYNPORA falls back to reference values for display but those reference values do not qualify snapshots for learning or backtesting. The custom aggregator feed is optional and can supplement or override individual fields.
 
 ## Market collection
 
