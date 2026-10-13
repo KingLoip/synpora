@@ -24,6 +24,7 @@ The blocker is market data: `gpu_l40s_usd_hour` is still a reference fallback, a
 - [ ] CodeQL finishes successfully.
 - [ ] Live production smoke test sees the expected commit on the public Railway URL.
 - [ ] `/health`, `/api/v1/system/production-readiness`, `/api/v1/market/data-health` and `/ops` return their expected contracts.
+- [ ] `/api/v1/system/collector-status` exposes attempt/success timestamps, quality, failure count and bounded retry timing; degraded data must not advance the last-success timestamp.
 - [ ] The unauthenticated `POST /api/v1/system/email-connection-test` is rejected (403); this endpoint must remain protected.
 
 ## Live data quality and learning eligibility
