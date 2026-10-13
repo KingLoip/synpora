@@ -643,6 +643,8 @@ jobs:
           assert "SYNPORA – Betriebsstatus" in ops.text
           assert "/api/v1/system/production-readiness" in ops.text
           assert "setInterval(refresh,30000)" in ops.text
+          assert "latest_eligible_age_seconds<=900" in ops.text
+          assert "successAge<=900" in ops.text
           assert "script-src 'self'" in ops.headers.get("content-security-policy",""), ops.headers
           assert ops.headers.get("x-content-type-options")=="nosniff", ops.headers
           collector=c.get("/api/v1/system/collector-status")
