@@ -889,7 +889,9 @@ jobs:
           printf 'Readiness HTTP %s: %s\n' "$readiness_code" "$readiness"
           test "$readiness_code" = "200"
           printf '%s' "$readiness" | jq '{status,database_configured,database_reachable,database_schema_ready,database_backend,jwt_secret_strong,market_admin_token_strong,smtp_configured,market_data_ready,public_url_https,email_verification_required,hardware_write_enabled,autonomous_control_enabled}'
-          printf '%s' "$readiness" | jq -e '.database_configured and .database_reachable and .database_schema_ready and .jwt_secret_strong and .market_admin_token_strong and .smtp_configured == true and .public_url_https == true and .email_verification_required == true and .market_data_ready == true and (.market_data_latest_eligible_age_seconds | type == "number" and . <= 900) and .hardware_write_enabled == false and .autonomous_control_enabled == false' >/dev/null
+          # Keep infrastructure/security checks separate from the external-data release gate,
+          # so a missing market provider does not hide the precise live-readiness blocker.
+          printf '%s' "$readiness" | jq -e '.database_configured and .database_reachable and .database_schema_ready and .jwt_secret_strong and .market_admin_token_strong and .smtp_configured == true and .public_url_https == true and .email_verification_required == true and .hardware_write_enabled == false and .autonomous_control_enabled == false' >/dev/null
           email_guard=$(curl --silent --show-error --max-time 10 --output /dev/null --write-out '%{http_code}' -X POST "$BASE_URL/api/v1/system/email-connection-test")
           test "$email_guard" = "403"
           market=$(curl --silent --show-error --max-time 15 --fail "$BASE_URL/api/v1/market/data-health")
@@ -905,9 +907,10 @@ jobs:
           test "$reset_page_code" = "200"
           grep -q 'Passwort ändern' /tmp/synpora-reset.html
           printf '%s' "$readiness" | jq '{status,market_data_ready,market_data_latest_eligible_age_seconds,smtp_configured,email_verification_required,database_backend}'
-          if [ "$(printf '%s' "$readiness" | jq -r '.status')" != "ready" ]; then
+          if [ "$(printf '%s' "$readiness" | jq -r '.status')" != "ready" ] || [ "$(printf '%s' "$readiness" | jq -r '(.market_data_latest_eligible_age_seconds // 999999) <= 900 and .market_data_ready == true')" != "true" ]; then
             echo "LIVE READINESS BLOCKERS:"
             printf '%s' "$readiness" | jq -r 'to_entries | map(select((.key == "smtp_configured" and .value == false) or (.key == "market_data_ready" and .value == false) or (.key == "public_url_https" and .value == false) or (.key == "email_verification_required" and .value == false) or (.key == "database_schema_ready" and .value == false) or (.key == "jwt_secret_strong" and .value == false) or (.key == "market_admin_token_strong" and .value == false))) | .[] | "\(.key)=\(.value)"'
+            printf '%s' "$readiness" | jq -r '"Eligible snapshot age (seconds): " + ((.market_data_latest_eligible_age_seconds // "missing")|tostring), "GPU field: " + ((.market_data_field_diagnostics.gpu_l40s_usd_hour // {})|tojson), "Guidance: " + ((.market_data_guidance // [])|join(" "))'
             echo "Production release is blocked until all readiness checks pass."
             exit 1
           fi
