@@ -833,7 +833,7 @@ def install(app):
             math.isfinite(public_gpu_age) and -60<=public_gpu_age<=900)
         if vast_key and not public_gpu_available:
             try:
-                query=urllib.parse.urlencode({"q":json.dumps({"gpu_name":{"eq":"NVIDIA L40S"},"rentable":{"eq":True},"type":"ondemand","limit":100})})
+                query=urllib.parse.urlencode({"q":json.dumps({"gpu_name":"NVIDIA L40S","rentable":True,"type":"ondemand","limit":100})})
                 url="https://cloud.vast.ai/api/v0/bundles/?"+query
                 raw=_provider_json(url,headers={"User-Agent":"SYNPORA/1.2.0","Accept":"application/json","Authorization":"Bearer "+vast_key},ttl_seconds=300)
                 offers=raw if isinstance(raw,list) else raw.get("offers",raw.get("bundles",raw.get("results",[])))
@@ -858,6 +858,9 @@ def install(app):
                     meta["gpuHourlyUsd"]={"source":"external","provider":"Vast.ai L40S marketplace median",
                         "source_url":"https://vast.ai/developers/api",
                         "observed_at":now,"age_seconds":0.0,"offer_count":len(prices),"valid":True}
+                else:
+                    logger.warning("Market provider %s returned no usable L40S prices; response_offers=%s.",
+                        "vastai_l40s", len(offers) if isinstance(offers,list) else 0)
             except urllib.error.HTTPError as exc:
                 # Never log headers, URLs with credentials, or the API key. For a 400,
                 # retain only a short, sanitized JSON error message to diagnose query schema.
