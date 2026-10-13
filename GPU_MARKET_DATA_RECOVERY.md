@@ -2,11 +2,9 @@
 
 ## Current production incident (2026-10-13)
 
-The last inspected live readiness response reported `status: configuration_required` and `market_data_ready: false`. PostgreSQL, JWT strength, SMTP configuration, HTTPS public URL, and required email verification all passed. Safety flags remained `hardware_write_enabled: false` and `autonomous_control_enabled: false`.
+The earlier failure mode was `status: configuration_required` and `market_data_ready: false`: the GPU field was a reference fallback, and the latest eligible snapshot exceeded 900 seconds. The collector counted six timestamped Zarobit L40S offers but zero fresh offers, and one attempt reported no fresh Austrian Energy-Charts observation.
 
-The blocking field was `gpu_l40s_usd_hour`: it was marked `source: reference`, had no usable observation age, and no Vast.ai key or allowlisted custom feed was configured. The collector's Zarobit L40S diagnostic counted six offers, six L40S offers, six on-demand offers, six priced offers and six timestamped offers, but zero fresh offers. A separate collector attempt also reported no fresh Austrian Energy-Charts observation. This is a point-in-time diagnosis, not a guarantee that the providers remain in the same state.
-
-The CI failure was therefore an expected release-gate failure, not a backend crash: the live readiness payload reported the latest eligible snapshot was 2512.8 seconds old, beyond the 900-second maximum. Keep the gate blocked until the feed recovers.
+**Latest observed recovery (2026-10-13 around 16:40 UTC):** live readiness and CI smoke passed. The GPU field was external (`Zarobit L40S on-demand listing median`, age 318.4 seconds), and the latest eligible snapshot age was 298.3 seconds. CodeQL passed too. This was a transient point-in-time success; it does not establish sustained provider reliability. Continue to inspect collector status and confirm repeated fresh cycles. If freshness regresses, leave release readiness blocked and use the recovery steps below.
 
 ## Current failure mode
 
