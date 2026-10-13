@@ -828,7 +828,7 @@ def install(app):
             public_gpu_meta.get("source")=="external" and public_gpu_meta.get("valid",False))
         if vast_key and not public_gpu_available:
             try:
-                query=urllib.parse.urlencode({"q":json.dumps({"gpu_name":"L40S"})})
+                query=urllib.parse.urlencode({"q":json.dumps({"gpu_name":{"eq":"NVIDIA L40S"},"rentable":{"eq":True},"type":"on-demand","limit":100})})
                 url="https://cloud.vast.ai/api/v0/bundles/?"+query
                 raw=_provider_json(url,headers={"User-Agent":"SYNPORA/1.2.0","Accept":"application/json","Authorization":"Bearer "+vast_key},ttl_seconds=300)
                 offers=raw if isinstance(raw,list) else raw.get("offers",raw.get("bundles",raw.get("results",[])))
