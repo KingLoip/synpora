@@ -662,7 +662,7 @@ def install(app):
 
     def _fetch_builtin_market_sources(out):
         # Source adapters use public APIs with bounded caching and explicit provenance.
-        import math, urllib.parse, logging
+        import math, urllib.parse, urllib.error, logging
         logger=logging.getLogger("synpora.market_provider")
         now=time.time()
         meta=out.setdefault("_fieldMeta",{})
@@ -853,6 +853,13 @@ def install(app):
                     meta["gpuHourlyUsd"]={"source":"external","provider":"Vast.ai L40S marketplace median",
                         "source_url":"https://vast.ai/developers/api",
                         "observed_at":now,"age_seconds":0.0,"offer_count":len(prices),"valid":True}
+            except urllib.error.HTTPError as exc:
+                # Log only the HTTP status; never include headers, URLs with credentials,
+                # request bodies, or the API key in production logs.
+                if exc.code in (401, 403):
+                    logger.warning("Market provider %s rejected the request (HTTP %s); verify the API key and read permissions.", "vastai_l40s", exc.code)
+                else:
+                    logger.warning("Market provider %s failed (HTTP %s).", "vastai_l40s", exc.code)
             except Exception as exc:
                 logger.warning("Market provider %s failed (%s).", "vastai_l40s", type(exc).__name__)
         return out
