@@ -2,6 +2,14 @@
 
 This checklist is the release gate for the live Railway deployment. A green CI run proves the tested code path and build; it does not by itself prove delivery to a mailbox, long-term feed reliability, persistence after restart, or business-model accuracy.
 
+## Live release status — 2026-10-13
+
+**Not production-ready yet.** The latest inspected live readiness response returned `configuration_required`. PostgreSQL was configured, reachable and schema-ready; JWT/admin-token strength, SMTP configuration, HTTPS public URL and required email verification were true. Safety flags remained off (`hardware_write=false`, `autonomous_control=false`).
+
+The blocker is market data: `gpu_l40s_usd_hour` is still a reference fallback, and the latest eligible snapshot was 2512.8 seconds old against the 900-second gate. The collector reported six Zarobit L40S offers but zero fresh offers; one collector attempt also reported no fresh Austrian Energy-Charts observation. The latest live CI run therefore failed its readiness gate as intended. The most recent CodeQL run passed, and the most recent Railway deployment succeeded. These are point-in-time observations; recheck before making a release decision.
+
+**Next external action required:** configure a legitimate `SYNPORA_VAST_API_KEY` in Railway Variables or provide a controlled HTTPS feed with an exact hostname allowlist. Do not paste secrets into chat or GitHub. Then verify external provenance and freshness, repeated successful collector cycles, and a green live smoke test. See [GPU market-data recovery runbook](GPU_MARKET_DATA_RECOVERY.md).
+
 ## Safety invariants — must always pass
 
 - [ ] Release endpoint reports `mode: recommendation_only`.
