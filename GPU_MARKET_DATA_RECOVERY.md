@@ -36,6 +36,17 @@ The payload must include external values for:
 
 The GPU and hashprice observations must be no older than 900 seconds; EUR/USD no older than 96 hours; Austrian spot electricity no older than 7200 seconds. Every required value must be finite and within its validation range. A reference estimate or missing timestamp is not live data.
 
+## Vast.ai HTTP authentication diagnostics
+
+The collector logs the Vast.ai HTTP status code without logging the Authorization header or API key. Interpret it as follows:
+
+- **401**: the key was rejected or is malformed/revoked. Create a replacement only if the key cannot be verified, then update the Railway secret and redeploy.
+- **403**: the key may be valid but lacks permission for marketplace offer reads, or the account/team policy blocks the endpoint. Review the key's read permissions for offer/instance search; do not enable write permissions just to read prices.
+- **429**: the provider is rate-limiting requests. Keep the bounded retry/backoff and avoid manual repeated collection.
+- **5xx**: provider-side failure; retain the public provider fallback and retry later.
+
+Never log the response headers, request Authorization value, full exception text, or API-key query parameter. A successful HTTP response still does not count as recovery unless fresh L40S prices are parsed and the full market-data readiness gate passes.
+
 ## Triage order
 
 1. Inspect `/api/v1/system/production-readiness` for `market_data_field_diagnostics`, `market_data_guidance`, and `market_data_latest_eligible_age_seconds`.
