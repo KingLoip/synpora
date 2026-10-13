@@ -854,10 +854,22 @@ def install(app):
                         "source_url":"https://vast.ai/developers/api",
                         "observed_at":now,"age_seconds":0.0,"offer_count":len(prices),"valid":True}
             except urllib.error.HTTPError as exc:
-                # Log only the HTTP status; never include headers, URLs with credentials,
-                # request bodies, or the API key in production logs.
+                # Never log headers, URLs with credentials, or the API key. For a 400,
+                # retain only a short, sanitized JSON error message to diagnose query schema.
+                detail=""
+                if exc.code == 400:
+                    try:
+                        error_payload=json.loads(exc.read(4096).decode("utf-8","replace"))
+                        if isinstance(error_payload,dict):
+                            candidate=error_payload.get("detail",error_payload.get("message",error_payload.get("error","")))
+                            if isinstance(candidate,str):
+                                detail=" ".join(ch for ch in candidate if ch.isprintable()).replace(vast_key,"[redacted]")[:160]
+                    except Exception:
+                        detail=""
                 if exc.code in (401, 403):
                     logger.warning("Market provider %s rejected the request (HTTP %s); verify the API key and read permissions.", "vastai_l40s", exc.code)
+                elif exc.code == 400 and detail:
+                    logger.warning("Market provider %s rejected the query (HTTP 400): %s", "vastai_l40s", detail)
                 else:
                     logger.warning("Market provider %s failed (HTTP %s).", "vastai_l40s", exc.code)
             except Exception as exc:
