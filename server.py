@@ -166,11 +166,11 @@ async function refresh(){
     const [r,m,v,k]=await Promise.all(results.map(x=>x.json()));
     show('ready',r.status==='ready'?'Bereit':'Konfiguration prüfen',r.status==='ready'?'ok':'warn',JSON.stringify(r,null,2));
     const eligible=m.eligible_snapshots||0,excluded=m.excluded_or_invalid_snapshots||0;
-    const marketKind=(m.latest_eligible_age_seconds!==null&&m.latest_eligible_age_seconds!==undefined&&m.latest_eligible_age_seconds<=1200&&eligible>0)?'ok':'warn';
+    const marketKind=(m.latest_eligible_age_seconds!==null&&m.latest_eligible_age_seconds!==undefined&&m.latest_eligible_age_seconds<=900&&eligible>0)?'ok':'warn';
     show('market',marketKind==='ok'?'Externe Daten vorhanden':'Datenqualität prüfen',marketKind,JSON.stringify(m,null,2));
     show('learning',eligible>0?'Geeignete Snapshots: '+eligible:'Noch keine geeigneten Snapshots',eligible>0?'ok':'warn','Ausgeschlossen: '+excluded+'\nLetzter geeigneter Snapshot (Alter Sekunden): '+(m.latest_eligible_age_seconds??'—')+'\nWarnungen: '+JSON.stringify(m.warnings||[]));
     const successAge=k.last_success_at?Math.max(0,Date.now()/1000-k.last_success_at):null;
-    const collectorOk=k.enabled&&k.last_attempt_result==='success'&&successAge!==null&&successAge<=1200&&k.last_quality==='live';
+    const collectorOk=k.enabled&&k.last_attempt_result==='success'&&successAge!==null&&successAge<=900&&k.last_quality==='live';
     const collectorDegraded=k.last_attempt_result==='degraded'||k.last_attempt_result==='failure';
     const collectorKind=!k.enabled?'warn':collectorOk?'ok':collectorDegraded?'bad':'warn';
     const collectorTitle=!k.enabled?'Sammlung deaktiviert':collectorOk?'Sammlung läuft · externe Daten':k.last_attempt_result==='degraded'?'Datenqualität unzureichend':k.last_attempt_result==='failure'?'Datensammlung fehlgeschlagen':'Sammlung prüfen';
