@@ -827,7 +827,7 @@ def install(app):
             public_gpu_age=float(public_gpu_meta.get("age_seconds",float("inf"))) if isinstance(public_gpu_meta,dict) else float("inf")
         except (TypeError,ValueError):
             public_gpu_age=float("inf")
-        public_gpu_available=(isinstance(public_gpu_meta,dict) and
+        public_gpu_available=(zarobit_ok and isinstance(public_gpu_meta,dict) and
             str(public_gpu_meta.get("provider","")).startswith("Zarobit") and
             public_gpu_meta.get("source")=="external" and public_gpu_meta.get("valid",False) and
             math.isfinite(public_gpu_age) and -60<=public_gpu_age<=900)
