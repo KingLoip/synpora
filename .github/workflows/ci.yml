@@ -897,6 +897,9 @@ jobs:
           test "$email_guard" = "403"
           market=$(curl --silent --show-error --max-time 15 --fail "$BASE_URL/api/v1/market/data-health")
           printf '%s' "$market" | jq -e '.recommendation_only == true and .hardware_write == false and has("latest_eligible_age_seconds")' >/dev/null
+          collector=$(curl --silent --show-error --max-time 10 --fail "$BASE_URL/api/v1/system/collector-status")
+          printf 'Collector status contract: %s\n' "$collector"
+          printf '%s' "$collector" | jq -e '.enabled == true and has("last_attempt_result") and has("last_success_at") and has("last_quality") and has("consecutive_failures") and has("next_attempt_at") and has("retry_delay_seconds")' >/dev/null
           curl --silent --show-error --max-time 10 --fail --output /tmp/synpora-ops.html "$BASE_URL/ops"
           grep -q 'SYNPORA – Betriebsstatus' /tmp/synpora-ops.html
           verify_page_code=$(curl --silent --show-error --max-time 10 --dump-header /tmp/synpora-verify.headers --output /tmp/synpora-verify.html --write-out '%{http_code}' "$BASE_URL/verify-email?token=SmokeToken123")
