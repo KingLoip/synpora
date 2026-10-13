@@ -4,11 +4,11 @@ This checklist is the release gate for the live Railway deployment. A green CI r
 
 ## Live release status — 2026-10-13
 
-**Not production-ready yet.** The latest inspected live readiness response returned `configuration_required`. PostgreSQL was configured, reachable and schema-ready; JWT/admin-token strength, SMTP configuration, HTTPS public URL and required email verification were true. Safety flags remained off (`hardware_write=false`, `autonomous_control=false`).
+**Not fully production-ready yet.** The latest successful live smoke test (2026-10-13 around 16:40 UTC) observed `status: ready`; the GPU field was external (`Zarobit L40S on-demand listing median`, observation age 318.4 seconds), and the latest eligible snapshot age was 298.3 seconds. CI's syntax, PostgreSQL integration, live smoke and CodeQL jobs passed for the latest checked commit. PostgreSQL and security/configuration checks also passed; safety flags remained off (`hardware_write=false`, `autonomous_control=false`).
 
-The blocker is market data: `gpu_l40s_usd_hour` is still a reference fallback, and the latest eligible snapshot was 2512.8 seconds old against the 900-second gate. The collector reported six Zarobit L40S offers but zero fresh offers; one collector attempt also reported no fresh Austrian Energy-Charts observation. The latest live CI run therefore failed its readiness gate as intended. The most recent CodeQL run passed, and the most recent Railway deployment succeeded. These are point-in-time observations; recheck before making a release decision.
+This is a successful point-in-time recovery, not proof of sustained provider reliability. Earlier collector cycles had six Zarobit L40S offers but zero fresh offers, and one cycle reported no fresh Austrian Energy-Charts observation. No Vast.ai key or custom feed was configured at the time of the successful smoke test, so the built-in Zarobit feed briefly supplied eligible data. Keep monitoring repeated collector cycles and confirm the latest eligible snapshot stays within 900 seconds before calling the service fully production-ready.
 
-**Next external action required:** configure a legitimate `SYNPORA_VAST_API_KEY` in Railway Variables or provide a controlled HTTPS feed with an exact hostname allowlist. Do not paste secrets into chat or GitHub. Then verify external provenance and freshness, repeated successful collector cycles, and a green live smoke test. See [GPU market-data recovery runbook](GPU_MARKET_DATA_RECOVERY.md).
+**Next operational action:** no secret is needed if the built-in feed continues to provide fresh external prices. If it becomes stale again, configure a legitimate `SYNPORA_VAST_API_KEY` in Railway Variables or a controlled HTTPS feed with an exact hostname allowlist. Never paste secrets into chat or GitHub. See [GPU market-data recovery runbook](GPU_MARKET_DATA_RECOVERY.md).
 
 ## Safety invariants — must always pass
 
