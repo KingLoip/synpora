@@ -833,10 +833,25 @@ def install(app):
             math.isfinite(public_gpu_age) and -60<=public_gpu_age<=900)
         if vast_key and not public_gpu_available:
             try:
-                query=urllib.parse.urlencode({"q":json.dumps({"gpu_name":"NVIDIA_L40S"})})
-                url="https://cloud.vast.ai/api/v0/bundles/?"+query
-                raw=_provider_json(url,headers={"User-Agent":"SYNPORA/1.2.0","Accept":"application/json","Authorization":"Bearer "+vast_key},ttl_seconds=300)
-                offers=raw if isinstance(raw,list) else raw.get("offers",raw.get("bundles",raw.get("results",[])))
+                raw=None
+                offers=[]
+                last_http_error=None
+                # Vast.ai's public examples use provider-specific GPU labels; try the
+                # canonical model label if the NVIDIA-prefixed alias is rejected.
+                for gpu_name in ("NVIDIA_L40S","L40S"):
+                    query=urllib.parse.urlencode({"q":json.dumps({"gpu_name":gpu_name})})
+                    url="https://cloud.vast.ai/api/v0/bundles/?"+query
+                    try:
+                        raw=_provider_json(url,headers={"User-Agent":"SYNPORA/1.2.0","Accept":"application/json","Authorization":"Bearer "+vast_key},ttl_seconds=300)
+                        offers=raw if isinstance(raw,list) else raw.get("offers",raw.get("bundles",raw.get("results",[])))
+                        last_http_error=None
+                        break
+                    except urllib.error.HTTPError as exc:
+                        last_http_error=exc
+                        if exc.code != 400:
+                            raise
+                if last_http_error is not None:
+                    raise last_http_error
                 prices=[]
                 for offer in offers if isinstance(offers,list) else []:
                     if not isinstance(offer,dict):
