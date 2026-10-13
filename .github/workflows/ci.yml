@@ -1,5 +1,10 @@
 name: SYNPORA CI
 
+# A newer push supersedes an older live-smoke run because Railway deploys the newest main commit.
+concurrency:
+  group: synpora-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   push:
     branches: ["main"]
