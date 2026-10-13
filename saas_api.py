@@ -823,9 +823,14 @@ def install(app):
         # Prefer the fresh, timestamped public market median. Vast.ai is an operator-key
         # fallback only when the public source did not yield a valid fresh observation.
         public_gpu_meta=meta.get("gpuHourlyUsd",{})
+        try:
+            public_gpu_age=float(public_gpu_meta.get("age_seconds",float("inf"))) if isinstance(public_gpu_meta,dict) else float("inf")
+        except (TypeError,ValueError):
+            public_gpu_age=float("inf")
         public_gpu_available=(isinstance(public_gpu_meta,dict) and
             str(public_gpu_meta.get("provider","")).startswith("Zarobit") and
-            public_gpu_meta.get("source")=="external" and public_gpu_meta.get("valid",False))
+            public_gpu_meta.get("source")=="external" and public_gpu_meta.get("valid",False) and
+            math.isfinite(public_gpu_age) and -60<=public_gpu_age<=900)
         if vast_key and not public_gpu_available:
             try:
                 query=urllib.parse.urlencode({"q":json.dumps({"gpu_name":{"eq":"NVIDIA L40S"},"rentable":{"eq":True},"type":"on-demand","limit":100})})
