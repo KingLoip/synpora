@@ -2,13 +2,17 @@
 
 This checklist is the release gate for the live Railway deployment. A green CI run proves the tested code path and build; it does not by itself prove delivery to a mailbox, long-term feed reliability, persistence after restart, or business-model accuracy.
 
-## Live release status — 2026-10-13
+## Live release status — 2026-10-14
 
-**Not fully production-ready yet.** The latest successful live smoke test (2026-10-13 around 16:40 UTC) observed `status: ready`; the GPU field was external (`Zarobit L40S on-demand listing median`, observation age 318.4 seconds), and the latest eligible snapshot age was 298.3 seconds. CI's syntax, PostgreSQL integration, live smoke and CodeQL jobs passed for the latest checked commit. PostgreSQL and security/configuration checks also passed; safety flags remained off (`hardware_write=false`, `autonomous_control=false`).
+**Still a production candidate, not fully production-ready.** The international-readiness change was merged as `03810cf9cf61605e17f2d1c06cd8e54036ff6a5a` and deployed successfully. The bounded provider-retry change was then merged as `0d4366dfdda1827258ef60e6d4fc147666c853cd` and also deployed successfully. PostgreSQL and the application are online; Railway reports no current warnings, critical issues, crashed replicas, or failed deployments.
 
-This is a successful point-in-time recovery, not proof of sustained provider reliability. Earlier collector cycles had six Zarobit L40S offers but zero fresh offers, and one cycle reported no fresh Austrian Energy-Charts observation. No Vast.ai key or custom feed was configured at the time of the successful smoke test, so the built-in Zarobit feed briefly supplied eligible data. Keep monitoring repeated collector cycles and confirm the latest eligible snapshot stays within 900 seconds before calling the service fully production-ready.
+The PR checks for the latest code passed: syntax/provider unit tests, import/API smoke, JWT regression, dashboard smoke, Docker build, release invariants, PostgreSQL integration, and CodeQL. After deployment, the health, release, production-readiness, data-health, collector-status, and operations routes returned HTTP 200; the unauthenticated SMTP diagnostic correctly returned HTTP 403. Railway recorded **0 HTTP 5xx responses over the last hour**. This is good operational evidence, but not a substitute for checking response payloads or a sustained observation window.
 
-**Next operational action:** no secret is needed if the built-in feed continues to provide fresh external prices. If it becomes stale again, configure a legitimate `SYNPORA_VAST_API_KEY` in Railway Variables or a controlled HTTPS feed with an exact hostname allowlist. Never paste secrets into chat or GitHub. See [GPU market-data recovery runbook](GPU_MARKET_DATA_RECOVERY.md).
+**International data policy:** Austrian/aWATTar prices are no longer a global market-readiness requirement. Energy cost remains essential for profitability, but must be supplied for the actual site/tariff. Forecast plans hold the supplied site tariff constant rather than forecasting from Austrian history. Learning/backtesting is deliberately not considered validated until verified, site-appropriate energy-cost labels are available.
+
+The Austrian Energy-Charts provider still returned HTTP 503 during a collection cycle; older Zarobit listings have also been stale. These regional/provider failures must not be mistaken for global market failure, but they do reinforce the need to verify repeated successful collection cycles and fresh GPU pricing. The latest observed collector POST returned HTTP 200; one cycle alone does not prove durable feed reliability. The post-merge scheduled production-monitor result has not yet been independently confirmed in this checklist.
+
+**Next operational action:** verify the scheduled production monitor and repeated collector freshness. If GPU prices become stale, validate the configured `SYNPORA_VAST_API_KEY` directly in Railway Variables or use a controlled HTTPS feed with an exact hostname allowlist. Never paste secrets into chat or GitHub. See [GPU market-data recovery runbook](GPU_MARKET_DATA_RECOVERY.md).
 
 ## Safety invariants — must always pass
 
