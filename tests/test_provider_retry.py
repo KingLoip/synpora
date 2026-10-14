@@ -116,8 +116,9 @@ class ProviderRetryTests(unittest.TestCase):
 
     @patch("time.sleep")
     @patch("urllib.request.urlopen")
-    def test_oversized_json_response_is_rejected_without_retry(self, urlopen, sleep):
-        urlopen.return_value = BytesIO(json.dumps("x" * 262145).encode("utf-8"))
+    def test_oversized_serialized_json_is_rejected_without_retry(self, urlopen, sleep):
+        # The UTF-8 body fits in the read limit, but escaped JSON serialization exceeds it.
+        urlopen.return_value = BytesIO(json.dumps("😀" * 22000, ensure_ascii=False).encode("utf-8"))
 
         with self.assertRaises(ValueError):
             _provider_request_json("https://provider.example/data", attempts=3)
