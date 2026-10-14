@@ -136,6 +136,21 @@ jobs:
           assert negative_spot.status_code==200, negative_spot.text
           negative_values={row["option"]:row["value_eur_kwh"] for row in negative_spot.json()["ranking"]}
           assert negative_values["BTC Mining"]>btc_value, (negative_values,btc_value)
+          # The optimizer must use the same signed site tariff as scenario economics.
+          positive_opt=c.post(f"/api/v1/farms/{farm}/optimize",headers=h,json={
+              "energy_kwh":100,"energy_cost_eur_kwh":0.05,"btc_hashprice_usd_ph_day":39.64,
+              "gpu_hourly_usd":1.09,"eur_usd":1.1205,"seed":42})
+          negative_opt=c.post(f"/api/v1/farms/{farm}/optimize",headers=h,json={
+              "energy_kwh":100,"energy_cost_eur_kwh":-0.05,"btc_hashprice_usd_ph_day":39.64,
+              "gpu_hourly_usd":1.09,"eur_usd":1.1205,"seed":42})
+          assert positive_opt.status_code==200, positive_opt.text
+          assert negative_opt.status_code==200, negative_opt.text
+          positive_opt_values={row["option"]:row["value_eur_kwh"] for row in [positive_opt.json()["best"]]+positive_opt.json()["alternatives"]}
+          negative_opt_values={row["option"]:row["value_eur_kwh"] for row in [negative_opt.json()["best"]]+negative_opt.json()["alternatives"]}
+          for option in ("AI Compute","BTC Mining"):
+              assert abs((negative_opt_values[option]-positive_opt_values[option])-0.10)<1e-8, (option,positive_opt_values,negative_opt_values)
+          assert negative_opt.json()["best"]["energy_cost_eur_kwh"]==-0.05, negative_opt.json()["best"]
+          assert negative_opt.json()["net_value_eur"]>negative_opt.json()["gross_value_eur"], negative_opt.json()
           costed=c.post(f"/api/v1/farms/{farm}/scenario",headers=h,json={
               "energy_kwh":100,"energy_cost_eur_kwh":0.05,
               "btc_hashprice_usd_ph_day":39.64,"asic_efficiency_j_th":20,
@@ -215,6 +230,13 @@ jobs:
           assert es["battery_soc_final_kwh"] >= es["battery_soc_reserve_kwh"]-0.01, es
           quality=c.get(f"/api/v1/farms/{farm}/decision-quality",headers=h)
           assert quality.status_code==200, quality.text
+          # Isolate this learning lifecycle from earlier decision-engine smoke calls.
+          # The learning updater correctly settles every open row for a farm, so this
+          # test must start with a single controlled pending decision.
+          import backend.app.saas_api as saas
+          db=saas.init_db()
+          db.execute("DELETE FROM decision_ledger WHERE farm_id=? AND status='open'",(farm,))
+          db.commit()
           # Learning ledger must work on a fresh schema and must not settle without later valid observations.
           recorded=c.post(f"/api/v1/farms/{farm}/decision",headers=h,json={"energy_kwh":100,"energy_cost_eur_kwh":0.05})
           assert recorded.status_code==200, recorded.text
