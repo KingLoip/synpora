@@ -1,0 +1,89 @@
+name: SYNPORA Production Monitor
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/production-monitor.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: synpora-production-monitor
+  cancel-in-progress: true
+
+jobs:
+  live-market-health:
+    name: Live readiness and collector freshness
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Verify live service and external market data
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE_URL="https://synpora-production.up.railway.app"
+
+          fetch_json() {
+            local url="$1"
+            local output="$2"
+            curl --silent --show-error --fail --location \
+              --connect-timeout 5 --max-time 15 \
+              --retry 2 --retry-delay 2 --retry-all-errors \
+              "$url" --output "$output"
+          }
+
+          fetch_json "$BASE_URL/health" /tmp/health.json
+          jq -e '.status == "ok"' /tmp/health.json >/dev/null
+
+          fetch_json "$BASE_URL/api/v1/system/release" /tmp/release.json
+          jq -e '.hardware_write == false and .autonomous_control == false' /tmp/release.json >/dev/null
+
+          fetch_json "$BASE_URL/api/v1/system/production-readiness" /tmp/readiness.json
+          fetch_json "$BASE_URL/api/v1/market/data-health" /tmp/data-health.json
+          fetch_json "$BASE_URL/api/v1/system/collector-status" /tmp/collector.json
+
+          echo "Release safety:"
+          jq '{release, mode, hardware_write, autonomous_control}' /tmp/release.json
+
+          echo "Readiness and per-field provenance:"
+          jq '{status, database_backend, database_reachable, database_schema_ready, market_data_ready, market_data_latest_eligible_age_seconds, market_data_field_diagnostics}' /tmp/readiness.json
+
+          echo "Collector heartbeat:"
+          jq '{enabled, last_attempt_result, last_quality, last_attempt_at, last_success_at, last_attempt_duration_ms, consecutive_failures, next_attempt_at, retry_delay_seconds}' /tmp/collector.json
+
+          jq -e '
+            .status == "ready" and
+            .database_backend == "postgresql" and
+            .database_reachable == true and
+            .database_schema_ready == true and
+            .market_data_ready == true and
+            (.market_data_latest_eligible_age_seconds | type) == "number" and
+            .market_data_latest_eligible_age_seconds <= 900 and
+            .hardware_write_enabled == false and
+            .autonomous_control_enabled == false and
+            (.market_data_field_diagnostics.btc_hashprice_usd_ph_day |
+              .available == true and .source == "external" and (.age_seconds | type) == "number" and .age_seconds <= 900) and
+            (.market_data_field_diagnostics.gpu_l40s_usd_hour |
+              .available == true and .source == "external" and (.age_seconds | type) == "number" and .age_seconds <= 900) and
+            (.market_data_field_diagnostics.eur_usd |
+              .available == true and .source == "external" and (.age_seconds | type) == "number" and .age_seconds <= 345600) and
+            (.market_data_field_diagnostics.austria_spot_eur_kwh |
+              .available == true and .source == "external" and (.age_seconds | type) == "number" and .age_seconds <= 7200)
+          ' /tmp/readiness.json >/dev/null
+
+          jq -e '
+            .enabled == true and
+            .last_attempt_result == "success" and
+            .last_quality == "live" and
+            .last_success_at != null and
+            (now - .last_success_at) >= -30 and
+            (now - .last_success_at) <= 900 and
+            .consecutive_failures == 0
+          ' /tmp/collector.json >/dev/null
+
+          jq '{eligible_snapshots, excluded_or_invalid_snapshots, latest_eligible_age_seconds, latest_snapshot_age_seconds, latest_snapshot_source, latest_snapshot_providers, warnings}' /tmp/data-health.json
+          echo "SYNPORA production monitor: PASS"
