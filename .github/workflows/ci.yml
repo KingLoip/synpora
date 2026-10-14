@@ -274,10 +274,11 @@ jobs:
               "btc_hashprice_usd_ph_day":{"source":"external","available":True,"age_seconds":10.0},
               "gpu_l40s_usd_hour":{"source":"external","available":True,"age_seconds":10.0},
               "eur_usd":{"source":"external","available":True,"age_seconds":3600.0},
+              "site_energy_cost_eur_kwh":{"source":"external","available":True,"age_seconds":600.0},
               "austria_spot_eur_kwh":{"source":"external","available":True,"age_seconds":600.0}}}
           payload={"timestamp":ts,"source":"validated_external_observation",
               "btc_hashprice_usd_ph_day":40.0,"gpu_l40s_usd_hour":1.2,
-              "eur_usd":1.1,"austria_spot_eur_kwh":0.08,
+              "eur_usd":1.1,"austria_spot_eur_kwh":0.08,"site_energy_cost_eur_kwh":0.08,
               "gpu_l40s_power_kw":0.35,"gpu_utilization":0.7,"gpu_platform_fee":0.15,
               "data_quality":provenance}
           # An otherwise recent snapshot with a stale required field must not settle learning labels.
@@ -290,6 +291,16 @@ jobs:
           stale_settlement=c.post(f"/api/v1/farms/{farm}/learning/update",headers=h)
           assert stale_settlement.status_code==200, stale_settlement.text
           assert stale_settlement.json()["settled_now"]==0, stale_settlement.json()
+          # An Austria-only legacy snapshot must not train an international farm.
+          austria_only_payload=json.loads(json.dumps(payload))
+          austria_only_payload.pop("site_energy_cost_eur_kwh")
+          austria_only_payload["data_quality"]["fields"].pop("site_energy_cost_eur_kwh")
+          db.execute("INSERT INTO market_snapshots (id,ts,payload,btc_hashprice_usd_ph_day,gpu_l40s_usd_hour,eur_usd,austria_spot_eur_kwh) VALUES (?,?,?,?,?,?,?)",
+              (str(uuid.uuid4()),ts,json.dumps(austria_only_payload),40.0,1.2,1.1,0.08))
+          db.commit()
+          austria_only_settlement=c.post(f"/api/v1/farms/{farm}/learning/update",headers=h)
+          assert austria_only_settlement.status_code==200, austria_only_settlement.text
+          assert austria_only_settlement.json()["settled_now"]==0, austria_only_settlement.json()
           db.execute("INSERT INTO market_snapshots (id,ts,payload,btc_hashprice_usd_ph_day,gpu_l40s_usd_hour,eur_usd,austria_spot_eur_kwh) VALUES (?,?,?,?,?,?,?)",
               (str(uuid.uuid4()),ts,json.dumps(payload),40.0,1.2,1.1,0.08))
           db.commit()
@@ -355,6 +366,8 @@ jobs:
               assert builtins.status_code==200, builtins.text
               bm=builtins.json()
               assert bm["data_quality"]["overall"]=="live", bm["data_quality"]
+              assert bm["data_quality"]["details"]["fields"]["site_energy_cost_eur_kwh"]["source"]=="missing", bm["data_quality"]
+              assert bm["data_quality"]["details"]["fields"]["site_energy_cost_eur_kwh"]["available"] is False, bm["data_quality"]
               assert bm["data_quality"]["details"]["fields"]["eur_usd"]["source"]=="external", bm["data_quality"]
               assert bm["data_quality"]["details"]["fields"]["eur_usd"]["provider"].startswith("Frankfurter"), bm["data_quality"]
               energy_field=bm["data_quality"]["details"]["fields"]["austria_spot_eur_kwh"]
@@ -391,7 +404,7 @@ jobs:
                   if "feed.example.test" in url:
                       return FakeFeedResponse({"timestamp":time.time(),"source":"ci-test-feed",
                           "btc_hashprice_usd_ph_day":41.0,"gpu_l40s_usd_hour":1.30,
-                          "eur_usd":1.09,"austria_spot_eur_kwh":0.075,
+                          "eur_usd":1.09,"austria_spot_eur_kwh":0.075,"site_energy_cost_eur_kwh":0.075,
                           "gpu_l40s_power_kw":0.35,"gpu_utilization":0.70,"gpu_platform_fee":0.15})
                   raise OSError("Unexpected feed host in CI")
           def fake_build_opener(*handlers):
@@ -419,7 +432,7 @@ jobs:
               readiness_feed=c.get("/api/v1/system/production-readiness").json()
               assert readiness_feed["market_data_feed_host_allowlisted"] is True, readiness_feed
               assert feed_headers_seen.get("Authorization")=="Bearer ci-feed-secret", feed_headers_seen
-              for field in ("btc_hashprice_usd_ph_day","gpu_l40s_usd_hour","eur_usd","austria_spot_eur_kwh"):
+              for field in ("btc_hashprice_usd_ph_day","gpu_l40s_usd_hour","eur_usd","austria_spot_eur_kwh","site_energy_cost_eur_kwh"):
                   assert fm["data_quality"]["details"]["fields"][field]["source"]=="external", fm["data_quality"]
               socket.getaddrinfo=lambda host,port,type: [(socket.AF_INET,socket.SOCK_STREAM,6,"",("127.0.0.1",port))]
               private_dns=c.get("/api/v1/market/live")
@@ -453,7 +466,7 @@ jobs:
           for offset,hashprice,gpu,fx,energy in ((-7200,38.0,1.00,1.10,0.07),(-3600,42.0,1.25,1.12,0.09)):
               historical={"timestamp":ts+offset,"source":"validated_external_observation",
                   "btc_hashprice_usd_ph_day":hashprice,"gpu_l40s_usd_hour":gpu,
-                  "eur_usd":fx,"austria_spot_eur_kwh":energy,
+                  "eur_usd":fx,"austria_spot_eur_kwh":energy,"site_energy_cost_eur_kwh":energy,
                   "gpu_l40s_power_kw":0.35,"gpu_utilization":0.7,"gpu_platform_fee":0.15,
                   "data_quality":provenance}
               db.execute("INSERT INTO market_snapshots (id,ts,payload,btc_hashprice_usd_ph_day,gpu_l40s_usd_hour,eur_usd,austria_spot_eur_kwh,gpu_l40s_power_kw,gpu_utilization,gpu_platform_fee) VALUES (?,?,?,?,?,?,?,?,?,?)",
@@ -895,7 +908,7 @@ jobs:
           found=0
           for attempt in $(seq 1 60); do
             release=$(curl --silent --show-error --max-time 8 --fail "$BASE_URL/api/v1/system/release" 2>/dev/null || true)
-            if printf '%s' "$release" | jq -e --arg sha "$EXPECTED_SHA" ' .release == "1.3.1" and .build_commit == $sha and .hardware_write == false and .autonomous_control == false and (.features | index("password_recovery") != null)' >/dev/null 2>&1; then
+            if printf '%s' "$release" | jq -e --arg sha "$EXPECTED_SHA" ' .release == "1.3.2" and .build_commit == $sha and .hardware_write == false and .autonomous_control == false and (.features | index("password_recovery") != null)' >/dev/null 2>&1; then
               found=1
               break
             fi

@@ -441,18 +441,20 @@ def install(app):
             "network_hashrate_eh":ext.get("networkHashrate"),
             "eur_usd":fields["eur_usd"]["value"],
             "austria_spot_eur_kwh":fields["austria_spot_eur_kwh"]["value"],
+              "site_energy_cost_eur_kwh":fields["site_energy_cost_eur_kwh"]["value"],
             "gpu":{"model":"L40S","hourly_usd":fields["gpu_l40s_usd_hour"]["value"],
                    "power_kw":ext.get("gpuPowerKw",0.35),"utilization":ext.get("gpuUtilization",0.70),
                    "platform_fee":ext.get("gpuPlatformFee",0.15),
                    "source":fields["gpu_l40s_usd_hour"].get("provider","pricing reference"),
                    "age_seconds":fields["gpu_l40s_usd_hour"].get("age_seconds")},
             "sources":sorted(set(["Startmining API (best effort)"]+
-                [fields[k].get("provider") for k in ("gpu_l40s_usd_hour","eur_usd","austria_spot_eur_kwh")
+                [fields[k].get("provider") for k in ("gpu_l40s_usd_hour","eur_usd","austria_spot_eur_kwh","site_energy_cost_eur_kwh")
                  if fields[k]["source"]=="external" and fields[k].get("provider")]+
                 (["Configured external market feed"] if ext.get("_configuredFeedAccepted") else []))),
             "data_quality":{"btc":"live_external" if fields["btc_price_usd"]["available"] else "missing",
                 "hashprice":"live_external" if fields["btc_hashprice_usd_ph_day"]["source"]=="external" else "fallback",
                 "gpu":fields["gpu_l40s_usd_hour"]["source"],"energy":fields["austria_spot_eur_kwh"]["source"],
+                "site_energy":fields["site_energy_cost_eur_kwh"]["source"],
                 "overall":quality["status"],"details":quality},
             "snapshot_freshness":_market_snapshot_freshness(init_db(),now),
             "timestamp":now
@@ -475,13 +477,14 @@ def install(app):
               "network_hashrate_eh":ext.get("networkHashrate"),
               "eur_usd":fields["eur_usd"]["value"],
               "austria_spot_eur_kwh":fields["austria_spot_eur_kwh"]["value"],
+              "site_energy_cost_eur_kwh":fields["site_energy_cost_eur_kwh"]["value"],
               "gpu_l40s_usd_hour":fields["gpu_l40s_usd_hour"]["value"],
               "gpu_l40s_power_kw":ext.get("gpuPowerKw",0.35),
               "gpu_utilization":ext.get("gpuUtilization",0.70),
               "gpu_platform_fee":ext.get("gpuPlatformFee",0.15),
               "source":"multi_provider_market_collection" if all_critical_external else "mixed_provider_market_collection",
               "providers":sorted(set([fields[k].get("provider") for k in
-                  ("btc_hashprice_usd_ph_day","gpu_l40s_usd_hour","eur_usd","austria_spot_eur_kwh")
+                  ("btc_hashprice_usd_ph_day","gpu_l40s_usd_hour","eur_usd","austria_spot_eur_kwh","site_energy_cost_eur_kwh")
                   if fields[k]["source"]=="external" and fields[k].get("provider")])),
               "data_quality":ext_quality}
         c=init_db()
@@ -1061,6 +1064,7 @@ def install(app):
                                 "gpu_l40s_usd_hour":("gpuHourlyUsd",("gpu_l40s_usd_hour","gpu_hourly_usd","gpuHourlyUsd")),
                                 "eur_usd":("eurUsd",("eur_usd","eurUsd")),
                                 "austria_spot_eur_kwh":("austriaSpotEurKwh",("austria_spot_eur_kwh","austriaSpotEurKwh")),
+                                "site_energy_cost_eur_kwh":("siteEnergyCostEurKwh",("site_energy_cost_eur_kwh","site_energy_price_eur_kwh")),
                                 "gpu_l40s_power_kw":("gpuPowerKw",("gpu_l40s_power_kw","gpuPowerKw")),
                                 "gpu_utilization":("gpuUtilization",("gpu_utilization","gpuUtilization")),
                                 "gpu_platform_fee":("gpuPlatformFee",("gpu_platform_fee","gpuPlatformFee")),
@@ -1075,7 +1079,7 @@ def install(app):
                                     if not __import__("math").isfinite(number): continue
                                     if _field in ("gpu_utilization","gpu_platform_fee"):
                                         if not 0<=number<=1: continue
-                                    elif _field=="austria_spot_eur_kwh":
+                                    elif _field in ("austria_spot_eur_kwh","site_energy_cost_eur_kwh"):
                                         if not -1.0<=number<=10.0: continue
                                     elif number<=0: continue
                                     out[target]=number
@@ -1124,6 +1128,8 @@ def install(app):
         refs={
             "eur_usd":("eurUsd",1.1205,lambda v:float(v)>0),
             "austria_spot_eur_kwh":("austriaSpotEurKwh",0.2055,lambda v:-1.0<=float(v)<=10.0),
+            # Site electricity is optional and only accepted from an operator-supplied timestamped feed.
+            "site_energy_cost_eur_kwh":("siteEnergyCostEurKwh",None,lambda v:v is not None and -1.0<=float(v)<=10.0),
             "gpu_l40s_usd_hour":("gpuHourlyUsd",1.09,lambda v:float(v)>0),
         }
         for name,(key,fallback,valid) in refs.items():
@@ -1156,10 +1162,15 @@ def install(app):
                 if meta.get("valid_until") is not None:
                     observed[name]["valid_until"]=meta.get("valid_until")
             else:
-                observed[name]={"available":True,"source":"reference","value":fallback}
+                if fallback is None:
+                    observed[name]={"available":False,"source":"missing","value":None}
+                else:
+                    observed[name]={"available":True,"source":"reference","value":fallback}
         live=sum(1 for v in observed.values() if v["source"]=="external")
         reference=sum(1 for v in observed.values() if v["source"]=="reference")
-        missing=sum(1 for v in observed.values() if v["source"]=="missing")
+        # A missing site tariff is an optional limitation for global market readiness,
+        # not a missing global market feed.
+        missing=sum(1 for name,v in observed.items() if v["source"]=="missing" and name!="site_energy_cost_eur_kwh")
         # Global market readiness is independent of any one country's electricity market.
         # Energy prices remain optional, regional/site-specific inputs, never a universal live-data gate.
         critical=("btc_hashprice_usd_ph_day","gpu_l40s_usd_hour","eur_usd")
@@ -1167,6 +1178,8 @@ def install(app):
         warnings=[]
         if missing: warnings.append("External Bitcoin market feed is incomplete; missing values are not represented as live.")
         if reference: warnings.append("Some EUR/USD, regional energy or GPU pricing fields contain reference values, not verified live quotes.")
+        if observed["site_energy_cost_eur_kwh"]["source"]!="external":
+            warnings.append("No verified site-specific electricity tariff is available; learning and backtesting remain disabled for this site rather than substituting an Austrian or other regional price.")
         if observed["gpu_l40s_usd_hour"]["source"]!="external" and not os.getenv("SYNPORA_VAST_API_KEY","").strip():
             warnings.append("Set SYNPORA_VAST_API_KEY to sample live L40S rental offers from Vast.ai; otherwise GPU pricing remains a reference value unless supplied by the configured feed.")
         if configured and not feed_fresh:
@@ -1174,6 +1187,7 @@ def install(app):
         if ext.get("_configuredFeedRejected"):
             warnings.append("Configured market feed host is not in SYNPORA_MARKET_DATA_ALLOWED_HOSTS or its URL is unsafe.")
         return {"fields":observed,"external_fields":live,"reference_fields":reference,"missing_fields":missing,
+                "site_energy_tariff_available":observed["site_energy_cost_eur_kwh"]["source"]=="external",
                 "status":"live" if all_critical_external else ("partial" if live else "fallback"),
                 "generated_at":now,"configured_feed_accepted":bool(feed_fresh),
                 "configured_feed_source":ext.get("_configuredFeedSource") if feed_fresh else None,
@@ -1531,10 +1545,10 @@ def install(app):
                     continue
                 values={}
                 valid=True
-                for key in ("btc_hashprice_usd_ph_day","gpu_l40s_usd_hour","eur_usd","austria_spot_eur_kwh"):
+                for key in ("btc_hashprice_usd_ph_day","gpu_l40s_usd_hour","eur_usd","site_energy_cost_eur_kwh"):
                     try:
                         value=float(payload[key])
-                        if not __import__("math").isfinite(value) or (value<=0 and key!="austria_spot_eur_kwh") or (key=="austria_spot_eur_kwh" and not -1.0<=value<=10.0):
+                        if not __import__("math").isfinite(value) or (value<=0 and key!="site_energy_cost_eur_kwh") or (key=="site_energy_cost_eur_kwh" and not -1.0<=value<=10.0):
                             valid=False; break
                         values[key]=value
                     except (KeyError,TypeError,ValueError):
@@ -1543,7 +1557,7 @@ def install(app):
                     excluded+=1
                     continue
                 scenario=ScenarioIn(energy_kwh=100,
-                    energy_cost_eur_kwh=values["austria_spot_eur_kwh"],
+                    energy_cost_eur_kwh=values["site_energy_cost_eur_kwh"],
                     btc_hashprice_usd_ph_day=values["btc_hashprice_usd_ph_day"],
                     gpu_hourly_usd=values["gpu_l40s_usd_hour"],eur_usd=values["eur_usd"],
                     gpu_power_kw=float(payload.get("gpu_l40s_power_kw") or 0.35),
@@ -1743,7 +1757,9 @@ def install(app):
                 continue
             if not _snapshot_is_learning_eligible(payload):
                 continue
-            values=(row[0],row[2],row[3],row[4])
+            try: site_energy=float(payload["site_energy_cost_eur_kwh"])
+            except (KeyError,TypeError,ValueError): continue
+            values=(row[0],row[2],row[3],site_energy)
             rows.append(values if include_ts else values[1:])
         return rows
 
@@ -1854,6 +1870,7 @@ def install(app):
 
     def _snapshot_is_learning_eligible(payload):
         # Learning targets must be independently sourced, numerically valid, and fresh.
+        # Site-specific tariffs are required; another country's spot price is never substituted.
         # Do not let hand-edited/corrupt payload metadata mark stale or nonsensical values eligible.
         import math
         if not isinstance(payload,dict):
@@ -1866,7 +1883,7 @@ def install(app):
             "btc_hashprice_usd_ph_day": (0.0, float("inf"), 900.0),
             "gpu_l40s_usd_hour": (0.0, float("inf"), 900.0),
             "eur_usd": (0.0, float("inf"), 96.0*3600.0),
-            "austria_spot_eur_kwh": (-1.0, 10.0, 7200.0),
+            "site_energy_cost_eur_kwh": (-1.0, 10.0, 7200.0),
         }
         for key,(minimum,maximum,max_age) in required.items():
             field=fields.get(key)
@@ -1933,11 +1950,18 @@ def install(app):
                         return value if math.isfinite(value) and value>=minimum else default
                     except (TypeError,ValueError):
                         return default
+                try:
+                    site_energy=float(payload["site_energy_cost_eur_kwh"])
+                    if not math.isfinite(site_energy) or not -1.0<=site_energy<=10.0:
+                        raise ValueError("invalid site energy tariff")
+                except (KeyError,TypeError,ValueError):
+                    skipped_invalid+=1
+                    continue
                 scenario=ScenarioIn(
                     btc_hashprice_usd_ph_day=parsed["btc_hashprice_usd_ph_day"],
                     gpu_hourly_usd=parsed["gpu_l40s_usd_hour"],
                     eur_usd=finite_or("eur_usd",1.1205),
-                    energy_cost_eur_kwh=finite_or("austria_spot_eur_kwh",0.2055,0.0),
+                    energy_cost_eur_kwh=site_energy,
                     gpu_power_kw=finite_or("gpu_l40s_power_kw",0.35),
                     gpu_utilization=max(0.0,min(1.0,finite_or("gpu_utilization",0.70,0.0))),
                     gpu_platform_fee=max(0.0,min(1.0,finite_or("gpu_platform_fee",0.15,0.0)))
@@ -2022,7 +2046,7 @@ def install(app):
             "latest_snapshot_fields":latest_quality_fields,
             "latest_eligible_timestamp":newest["ts"] if newest else None,
             "latest_eligible_age_seconds":round(age,1) if age is not None else None,
-            "learning_fields_required":["btc_hashprice_usd_ph_day","gpu_l40s_usd_hour","eur_usd","austria_spot_eur_kwh"],
+            "learning_fields_required":["btc_hashprice_usd_ph_day","gpu_l40s_usd_hour","eur_usd","site_energy_cost_eur_kwh"],
             "warnings":warnings,"recommendation_only":True,"hardware_write":False}
 
     @app.get("/api/v1/farms/{farm_id}/paper-trading")
@@ -2060,9 +2084,9 @@ def install(app):
 
     @app.get("/api/v1/system/release")
     def release_status():
-        return {"product":"SYNPORA","release":"1.3.1","build_commit":os.getenv("RAILWAY_GIT_COMMIT_SHA",os.getenv("SOURCE_VERSION","unknown")),"ai_core":"risk_aware_walk_forward_v3_economic_costs",
+        return {"product":"SYNPORA","release":"1.3.2","build_commit":os.getenv("RAILWAY_GIT_COMMIT_SHA",os.getenv("SOURCE_VERSION","unknown")),"ai_core":"risk_aware_walk_forward_v3_economic_costs",
                 "mode":"recommendation_only","hardware_write":False,"autonomous_control":False,
-                "features":["market_intelligence","adaptive_forecast","model_selection","decision_ledger","self_learning","calibrated_confidence","provenance_gated_walk_forward_backtest","paper_trading_observability","tail_risk_metrics","deterministic_stress_tests","secure_allowlisted_market_feed","operations_dashboard","equipment_depreciation_uptime_maintenance_tax","email_verification","password_recovery","shared_database_login_rate_limit","password_reset_session_revocation","public_gpu_market_data","timestamped_hashprice_fallback"],
+                "features":["market_intelligence","adaptive_forecast","model_selection","decision_ledger","self_learning","calibrated_confidence","provenance_gated_walk_forward_backtest","paper_trading_observability","tail_risk_metrics","deterministic_stress_tests","secure_allowlisted_market_feed","operations_dashboard","equipment_depreciation_uptime_maintenance_tax","email_verification","password_recovery","shared_database_login_rate_limit","password_reset_session_revocation","public_gpu_market_data","timestamped_hashprice_fallback","site_specific_energy_price_learning"],
                 "status":"production_candidate"}
 
     @app.get("/api/v1/system/production-readiness")
@@ -2439,10 +2463,10 @@ def install(app):
                     continue
                 values={}
                 valid=True
-                for key in ("btc_hashprice_usd_ph_day","gpu_l40s_usd_hour","eur_usd","austria_spot_eur_kwh"):
+                for key in ("btc_hashprice_usd_ph_day","gpu_l40s_usd_hour","eur_usd","site_energy_cost_eur_kwh"):
                     try:
                         value=float(payload[key])
-                        if not __import__("math").isfinite(value) or value<=0:
+                        if not __import__("math").isfinite(value) or (value<=0 and key!="site_energy_cost_eur_kwh") or (key=="site_energy_cost_eur_kwh" and not -1.0<=value<=10.0):
                             valid=False; break
                         values[key]=value
                     except (KeyError,TypeError,ValueError):
@@ -2471,7 +2495,7 @@ def install(app):
                 continue
             def to_scenario(obs):
                 v=obs["values"]
-                return RiskScenarioIn(energy_cost_eur_kwh=v["austria_spot_eur_kwh"],
+                return RiskScenarioIn(energy_cost_eur_kwh=v["site_energy_cost_eur_kwh"],
                     btc_hashprice_usd_ph_day=v["btc_hashprice_usd_ph_day"],
                     gpu_hourly_usd=v["gpu_l40s_usd_hour"],eur_usd=v["eur_usd"],
                     gpu_power_kw=obs["gpu_power"],gpu_utilization=obs["gpu_utilization"],
