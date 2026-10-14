@@ -904,9 +904,24 @@ jobs:
           test "$email_guard" = "403"
           market=$(curl --silent --show-error --max-time 15 --fail "$BASE_URL/api/v1/market/data-health")
           printf '%s' "$market" | jq -e '.recommendation_only == true and .hardware_write == false and has("latest_eligible_age_seconds")' >/dev/null
-          collector=$(curl --silent --show-error --max-time 10 --fail "$BASE_URL/api/v1/system/collector-status")
+          # A previously stored snapshot alone is not proof that the live collector is running.
+          # Wait for the startup collector (and one bounded retry) to produce a verified live result.
+          collector=""
+          collector_live=0
+          for attempt in $(seq 1 36); do
+            collector=$(curl --silent --show-error --max-time 10 --fail "$BASE_URL/api/v1/system/collector-status" 2>/dev/null || true)
+            if printf '%s' "$collector" | jq -e '.enabled == true and .last_attempt_result == "success" and .last_quality == "live" and .last_success_at != null and .consecutive_failures == 0' >/dev/null 2>&1; then
+              collector_live=1
+              break
+            fi
+            sleep 5
+          done
           printf 'Collector status contract: %s\n' "$collector"
-          printf '%s' "$collector" | jq -e '.enabled == true and has("last_attempt_result") and has("last_success_at") and has("last_quality") and has("consecutive_failures") and has("next_attempt_at") and has("retry_delay_seconds")' >/dev/null
+          if [ "$collector_live" -ne 1 ]; then
+            echo "The live market collector did not complete a verified successful collection within 3 minutes."
+            exit 1
+          fi
+          printf '%s' "$collector" | jq -e 'has("last_attempt_result") and has("last_success_at") and has("last_quality") and has("consecutive_failures") and has("next_attempt_at") and has("retry_delay_seconds")' >/dev/null
           curl --silent --show-error --max-time 10 --fail --output /tmp/synpora-ops.html "$BASE_URL/ops"
           grep -q 'SYNPORA – Betriebsstatus' /tmp/synpora-ops.html
           verify_page_code=$(curl --silent --show-error --max-time 10 --dump-header /tmp/synpora-verify.headers --output /tmp/synpora-verify.html --write-out '%{http_code}' "$BASE_URL/verify-email?token=SmokeToken123")
