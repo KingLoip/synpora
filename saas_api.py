@@ -8,6 +8,48 @@ JWT_SECRET = os.getenv("SYNPORA_JWT_SECRET","").strip()
 DB_PATH = os.getenv("SYNPORA_SQLITE_PATH","/tmp/synpora.db")
 _REQUEST_CONNECTIONS = contextvars.ContextVar("synpora_request_db_connections", default=None)
 
+
+def _provider_request_json(url, headers=None, timeout=5, attempts=3, data=None, method=None):
+    """Fetch bounded JSON with a small retry budget for transient provider failures.
+
+    Authentication/validation 4xx responses are not retried. Secrets, response
+    bodies, and URLs are never included in retry diagnostics.
+    """
+    import urllib.request
+    import urllib.error
+
+    max_attempts=max(1,min(int(attempts),3))
+    request_headers=dict(headers or {"User-Agent":"SYNPORA/1.3.0","Accept":"application/json"})
+    for attempt in range(max_attempts):
+        req=urllib.request.Request(url,data=data,headers=request_headers,method=method)
+        try:
+            with urllib.request.urlopen(req,timeout=timeout) as response:
+                raw=json.loads(response.read(262145).decode("utf-8"))
+            if len(json.dumps(raw))>262144:
+                raise ValueError("Provider response is too large")
+            return raw
+        except urllib.error.HTTPError as exc:
+            retryable=exc.code in (429,500,502,503,504)
+            if not retryable or attempt+1>=max_attempts:
+                raise
+        except (urllib.error.URLError, TimeoutError, ConnectionError, OSError):
+            if attempt+1>=max_attempts:
+                raise
+        time.sleep(0.25*(attempt+1))
+    raise RuntimeError("Provider retry budget exhausted")
+
+
+def _provider_error_label(exc):
+    """Return a diagnostic class/status without exposing provider response data."""
+    code=getattr(exc,"code",None)
+    if isinstance(code,int):
+        return "HTTP %d" % code
+    reason=getattr(exc,"reason",None)
+    if reason is not None:
+        return type(reason).__name__
+    return type(exc).__name__
+
+
 def _track_connection(conn):
     active=_REQUEST_CONNECTIONS.get()
     if active is not None:
@@ -689,35 +731,24 @@ def install(app):
     _provider_json_cache_at={}
 
     def _provider_json(url, headers=None, ttl_seconds=300):
-        import urllib.request
         now=time.time()
         if url in _provider_json_cache and now-_provider_json_cache_at.get(url,0)<ttl_seconds:
             return _provider_json_cache[url]
-        req=urllib.request.Request(url,headers=headers or {"User-Agent":"SYNPORA/1.2.0","Accept":"application/json"})
-        with urllib.request.urlopen(req,timeout=5) as response:
-            raw=json.loads(response.read(262145).decode())
-        if len(json.dumps(raw))>262144:
-            raise ValueError("Provider response is too large")
+        raw=_provider_request_json(url,headers=headers,timeout=5,attempts=3)
         _provider_json_cache[url]=raw
-        _provider_json_cache_at[url]=now
+        _provider_json_cache_at[url]=time.time()
         return raw
 
     def _provider_json_post(url, payload, headers=None, ttl_seconds=300):
-        import urllib.request
         body=json.dumps(payload,separators=(",",":")).encode("utf-8")
         cache_key=url+"|POST|"+body.decode("utf-8")
-        now=time.time()
-        if cache_key in _provider_json_cache and now-_provider_json_cache_at.get(cache_key,0)<ttl_seconds:
+        if cache_key in _provider_json_cache and time.time()-_provider_json_cache_at.get(cache_key,0)<ttl_seconds:
             return _provider_json_cache[cache_key]
         request_headers=dict(headers or {"User-Agent":"SYNPORA/1.3.0","Accept":"application/json"})
         request_headers["Content-Type"]="application/json"
-        req=urllib.request.Request(url,data=body,headers=request_headers,method="POST")
-        with urllib.request.urlopen(req,timeout=5) as response:
-            raw=json.loads(response.read(262145).decode("utf-8"))
-        if len(json.dumps(raw))>262144:
-            raise ValueError("Provider response is too large")
+        raw=_provider_request_json(url,headers=request_headers,timeout=5,attempts=3,data=body,method="POST")
         _provider_json_cache[cache_key]=raw
-        _provider_json_cache_at[cache_key]=now
+        _provider_json_cache_at[cache_key]=time.time()
         return raw
 
     def _parse_provider_timestamp(value):
@@ -777,7 +808,7 @@ def install(app):
                     except (TypeError,ValueError):
                         pass
             except Exception as exc:
-                logger.warning("Market provider %s failed (%s).", "stratumv2_hashprice", type(exc).__name__)
+                logger.warning("Market provider %s failed (%s).", "stratumv2_hashprice", _provider_error_label(exc))
             if not stratum_ok:
                 logger.warning("Market provider %s returned no fresh usable observation.", "stratumv2_hashprice")
         # Frankfurter's daily EUR/USD rate; the rate's own date, not fetch time, controls freshness.
@@ -794,7 +825,7 @@ def install(app):
                     "source_url":"https://api.frankfurter.dev/v2/providers/ecb/rate/eur/usd",
                     "observed_at":rate_ts,"age_seconds":round(age,1),"valid":True}
         except Exception as exc:
-            logger.warning("Market provider %s failed (%s).", "frankfurter_eur_usd", type(exc).__name__)
+            logger.warning("Market provider %s failed (%s).", "frankfurter_eur_usd", _provider_error_label(exc))
         if not frankfurter_ok:
             logger.warning("Market provider %s returned no fresh usable observation.", "frankfurter_eur_usd")
         # Fraunhofer ISE Energy-Charts: current Austrian day-ahead spot interval.
@@ -836,7 +867,7 @@ def install(app):
                         "license":"CC BY 4.0; attribute Energy-Charts.info",
                         "observed_at":interval_ts,"valid_until":valid_until,"age_seconds":round(now-interval_ts,1),"valid":True}
         except Exception as exc:
-            logger.warning("Market provider %s failed (%s).", "energy_charts_austria", type(exc).__name__)
+            logger.warning("Market provider %s failed (%s).", "energy_charts_austria", _provider_error_label(exc))
         if not energy_charts_ok:
             logger.warning("Market provider %s returned no fresh usable observation.", "energy_charts_austria")
         # Zarobit publishes an anonymous, provenance-tagged GPU rental listing API.
@@ -886,7 +917,7 @@ def install(app):
                     "observed_at":observed_at,"age_seconds":round(now-observed_at,1),
                     "offer_count":len(prices),"valid":True}
         except Exception as exc:
-            logger.warning("Market provider %s failed (%s).", "zarobit_l40s", type(exc).__name__)
+            logger.warning("Market provider %s failed (%s).", "zarobit_l40s", _provider_error_label(exc))
         if not zarobit_ok:
             logger.warning("Market provider %s returned no fresh usable L40S offers; counts=%s.",
                 "zarobit_l40s", counts if "counts" in locals() else {"response":"unavailable"})
@@ -950,7 +981,7 @@ def install(app):
                 else:
                     logger.warning("Market provider %s failed (HTTP %s).", "vastai_l40s", exc.code)
             except Exception as exc:
-                logger.warning("Market provider %s failed (%s).", "vastai_l40s", type(exc).__name__)
+                logger.warning("Market provider %s failed (%s).", "vastai_l40s", _provider_error_label(exc))
         return out
 
     def _external_market():
