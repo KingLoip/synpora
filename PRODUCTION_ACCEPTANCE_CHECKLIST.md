@@ -30,10 +30,10 @@ This is a successful point-in-time recovery, not proof of sustained provider rel
 ## Live data quality and learning eligibility
 
 - [ ] Production readiness reports PostgreSQL configured, reachable and schema-ready.
-- [ ] Each required field has explicit external provenance, availability, valid finite values, and source-appropriate freshness.
-- [ ] Hashprice and GPU data are no older than 15 minutes for learning eligibility.
-- [ ] EUR/USD is no older than 96 hours; Austrian spot electricity is no older than 2 hours.
-- [ ] The latest eligible snapshot age is at most 900 seconds at the time of the readiness check.
+- [ ] Global market readiness requires explicit external provenance, valid finite values, and source-appropriate freshness for hashprice (15 minutes), GPU rental prices (15 minutes), and EUR/USD (96 hours).
+- [ ] Austrian/aWATTar electricity pricing is not a global production requirement; energy cost must be supplied for the actual mining/compute site or tariff.
+- [ ] Global market readiness reports a dedicated latest-ready snapshot age no greater than 900 seconds; this is distinct from learning eligibility.
+- [ ] Learning/backtesting remains blocked unless the energy-cost observation used to settle a decision is verified, time-aligned, and appropriate to that site's tariff. Legacy Austrian observations must not be silently treated as international/site-specific training labels.
 - [ ] Reference/fallback values remain clearly distinguished and are excluded from learning/backtesting.
 - [ ] Review the collector status for repeated failures and confirm snapshots continue to arrive over time. A single fresh snapshot is not evidence of durable feed reliability.
 - [ ] If GPU rental prices need to be live rather than reference estimates, configure a provider API key or an HTTPS custom feed with an exact host allowlist; do not weaken freshness limits to make readiness pass.
