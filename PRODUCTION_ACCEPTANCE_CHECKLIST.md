@@ -20,7 +20,7 @@ These checks are point-in-time evidence, not proof of sustained provider reliabi
 ## Safety invariants — must always pass
 
 - [ ] Release endpoint reports `mode: recommendation_only`.
-- [ ] `hardware_write=false` and `autonomous_control=false`.
+- [x] `hardware_write=false` and `autonomous_control=false` (verified by the live production smoke test and production monitor on 2026-10-14; see [CI run](https://github.com/KingLoip/synpora/actions/runs/38539016356)).
 - [ ] No production release is marked fully production-ready while any acceptance gate below is unverified.
 - [ ] Secrets are stored only in Railway Variables. Never paste them into GitHub issues, commits, logs, or chat.
 
@@ -34,7 +34,7 @@ These checks are point-in-time evidence, not proof of sustained provider reliabi
 - [ ] Confirm at least one successful post-merge scheduled monitor invocation (15-minute schedule).
 - [ ] `/health`, `/api/v1/system/production-readiness`, `/api/v1/market/data-health` and `/ops` return their expected contracts in repeated scheduled runs.
 - [ ] `/api/v1/system/collector-status` exposes attempt/success timestamps, quality, failure count and bounded retry timing; degraded data must not advance the last-success timestamp.
-- [ ] The unauthenticated `POST /api/v1/system/email-connection-test` is rejected (403); this endpoint must remain protected.
+- [x] The unauthenticated `POST /api/v1/system/email-connection-test` is rejected (403); verified by the live production smoke test on 2026-10-14. Keep this endpoint protected (see [CI run](https://github.com/KingLoip/synpora/actions/runs/38539016356)).
 
 ## Live data quality and learning eligibility
 
