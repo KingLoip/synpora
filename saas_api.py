@@ -505,7 +505,9 @@ def install(app):
         ok=c.execute("SELECT 1 FROM synpora_saas_farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone()
         if not ok: raise HTTPException(404,"Farm not found")
         # BTC gross revenue per kWh = hashprice / (J/TH × 24), adjusted for uptime/pool fee.
-        energy_cost=max(0.0,x.energy_cost_eur_kwh)
+        # Negative wholesale prices are valid in some markets and must increase
+        # the modeled net value rather than being silently clamped to zero.
+        energy_cost=float(x.energy_cost_eur_kwh)
         btc_gross=(x.btc_hashprice_usd_ph_day/max(x.eur_usd,0.01))/(max(x.asic_efficiency_j_th,0.01)*24)
         btc_gross*=max(0.0,min(1.0,x.uptime))*(1-max(0.0,min(0.99,x.pool_fee)))
         btc_overhead=max(0.0,x.btc_facility_overhead_kw)+max(0.0,x.facility_overhead_kw)
