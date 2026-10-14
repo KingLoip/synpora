@@ -4,6 +4,9 @@ on:
   schedule:
     - cron: "*/15 * * * *"
   workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/production-monitor.yml"
 
 permissions:
   contents: read
@@ -58,18 +61,18 @@ jobs:
             .database_reachable == true and
             .database_schema_ready == true and
             .market_data_ready == true and
-            .market_data_latest_eligible_age_seconds != null and
+            (.market_data_latest_eligible_age_seconds | type) == "number" and
             .market_data_latest_eligible_age_seconds <= 900 and
             .hardware_write_enabled == false and
             .autonomous_control_enabled == false and
             (.market_data_field_diagnostics.btc_hashprice_usd_ph_day |
-              .available == true and .source == "external" and .age_seconds <= 900) and
+              .available == true and .source == "external" and (.age_seconds | type) == "number" and .age_seconds <= 900) and
             (.market_data_field_diagnostics.gpu_l40s_usd_hour |
-              .available == true and .source == "external" and .age_seconds <= 900) and
+              .available == true and .source == "external" and (.age_seconds | type) == "number" and .age_seconds <= 900) and
             (.market_data_field_diagnostics.eur_usd |
-              .available == true and .source == "external" and .age_seconds <= 345600) and
+              .available == true and .source == "external" and (.age_seconds | type) == "number" and .age_seconds <= 345600) and
             (.market_data_field_diagnostics.austria_spot_eur_kwh |
-              .available == true and .source == "external" and .age_seconds <= 7200)
+              .available == true and .source == "external" and (.age_seconds | type) == "number" and .age_seconds <= 7200)
           ' /tmp/readiness.json >/dev/null
 
           jq -e '
