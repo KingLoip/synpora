@@ -448,12 +448,13 @@ def install(app):
                    "source":fields["gpu_l40s_usd_hour"].get("provider","pricing reference"),
                    "age_seconds":fields["gpu_l40s_usd_hour"].get("age_seconds")},
             "sources":sorted(set(["Startmining API (best effort)"]+
-                [fields[k].get("provider") for k in ("gpu_l40s_usd_hour","eur_usd","austria_spot_eur_kwh")
+                [fields[k].get("provider") for k in ("gpu_l40s_usd_hour","eur_usd","austria_spot_eur_kwh","site_energy_cost_eur_kwh")
                  if fields[k]["source"]=="external" and fields[k].get("provider")]+
                 (["Configured external market feed"] if ext.get("_configuredFeedAccepted") else []))),
             "data_quality":{"btc":"live_external" if fields["btc_price_usd"]["available"] else "missing",
                 "hashprice":"live_external" if fields["btc_hashprice_usd_ph_day"]["source"]=="external" else "fallback",
                 "gpu":fields["gpu_l40s_usd_hour"]["source"],"energy":fields["austria_spot_eur_kwh"]["source"],
+                "site_energy":fields["site_energy_cost_eur_kwh"]["source"],
                 "overall":quality["status"],"details":quality},
             "snapshot_freshness":_market_snapshot_freshness(init_db(),now),
             "timestamp":now
@@ -1161,10 +1162,15 @@ def install(app):
                 if meta.get("valid_until") is not None:
                     observed[name]["valid_until"]=meta.get("valid_until")
             else:
-                observed[name]={"available":True,"source":"reference","value":fallback}
+                if fallback is None:
+                    observed[name]={"available":False,"source":"missing","value":None}
+                else:
+                    observed[name]={"available":True,"source":"reference","value":fallback}
         live=sum(1 for v in observed.values() if v["source"]=="external")
         reference=sum(1 for v in observed.values() if v["source"]=="reference")
-        missing=sum(1 for v in observed.values() if v["source"]=="missing")
+        # A missing site tariff is an optional limitation for global market readiness,
+        # not a missing global market feed.
+        missing=sum(1 for name,v in observed.items() if v["source"]=="missing" and name!="site_energy_cost_eur_kwh")
         # Global market readiness is independent of any one country's electricity market.
         # Energy prices remain optional, regional/site-specific inputs, never a universal live-data gate.
         critical=("btc_hashprice_usd_ph_day","gpu_l40s_usd_hour","eur_usd")
@@ -1172,6 +1178,8 @@ def install(app):
         warnings=[]
         if missing: warnings.append("External Bitcoin market feed is incomplete; missing values are not represented as live.")
         if reference: warnings.append("Some EUR/USD, regional energy or GPU pricing fields contain reference values, not verified live quotes.")
+        if observed["site_energy_cost_eur_kwh"]["source"]!="external":
+            warnings.append("No verified site-specific electricity tariff is available; learning and backtesting remain disabled for this site rather than substituting an Austrian or other regional price.")
         if observed["gpu_l40s_usd_hour"]["source"]!="external" and not os.getenv("SYNPORA_VAST_API_KEY","").strip():
             warnings.append("Set SYNPORA_VAST_API_KEY to sample live L40S rental offers from Vast.ai; otherwise GPU pricing remains a reference value unless supplied by the configured feed.")
         if configured and not feed_fresh:
@@ -1179,6 +1187,7 @@ def install(app):
         if ext.get("_configuredFeedRejected"):
             warnings.append("Configured market feed host is not in SYNPORA_MARKET_DATA_ALLOWED_HOSTS or its URL is unsafe.")
         return {"fields":observed,"external_fields":live,"reference_fields":reference,"missing_fields":missing,
+                "site_energy_tariff_available":observed["site_energy_cost_eur_kwh"]["source"]=="external",
                 "status":"live" if all_critical_external else ("partial" if live else "fallback"),
                 "generated_at":now,"configured_feed_accepted":bool(feed_fresh),
                 "configured_feed_source":ext.get("_configuredFeedSource") if feed_fresh else None,
