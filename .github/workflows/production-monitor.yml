@@ -26,6 +26,7 @@ jobs:
         run: |
           set -euo pipefail
           BASE_URL="https://synpora-production.up.railway.app"
+          CANONICAL_URL="https://synpora.com"
 
           fetch_json() {
             local url="$1"
@@ -36,8 +37,22 @@ jobs:
               "$url" --output "$output"
           }
 
+          fetch_text() {
+            local url="$1"
+            local output="$2"
+            curl --silent --show-error --fail --location \
+              --connect-timeout 5 --max-time 15 \
+              --retry 2 --retry-delay 2 --retry-all-errors \
+              "$url" --output "$output"
+          }
+
+          # Check both the Railway service and the public custom domain.
           fetch_json "$BASE_URL/health" /tmp/health.json
           jq -e '.status == "ok"' /tmp/health.json >/dev/null
+          fetch_text "$CANONICAL_URL/" /tmp/home.html
+          grep -Eiq 'synpora' /tmp/home.html
+          fetch_text "$CANONICAL_URL/ops" /tmp/ops.html
+          grep -Eiq 'synpora' /tmp/ops.html
 
           fetch_json "$BASE_URL/api/v1/system/release" /tmp/release.json
           jq -e '.hardware_write == false and .autonomous_control == false' /tmp/release.json >/dev/null
@@ -45,6 +60,11 @@ jobs:
           fetch_json "$BASE_URL/api/v1/system/production-readiness" /tmp/readiness.json
           fetch_json "$BASE_URL/api/v1/market/data-health" /tmp/data-health.json
           fetch_json "$BASE_URL/api/v1/system/collector-status" /tmp/collector.json
+
+          echo "Public entrypoints:"
+          echo "  Railway health: PASS"
+          echo "  synpora.com homepage: PASS"
+          echo "  synpora.com/ops dashboard: PASS"
 
           echo "Release safety:"
           jq '{release, mode, hardware_write, autonomous_control}' /tmp/release.json
