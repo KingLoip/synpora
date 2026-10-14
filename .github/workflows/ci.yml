@@ -404,7 +404,7 @@ jobs:
                   if "feed.example.test" in url:
                       return FakeFeedResponse({"timestamp":time.time(),"source":"ci-test-feed",
                           "btc_hashprice_usd_ph_day":41.0,"gpu_l40s_usd_hour":1.30,
-                          "eur_usd":1.09,"austria_spot_eur_kwh":0.075,"site_energy_cost_eur_kwh":0.075,
+                          "eur_usd":1.09,"austria_spot_eur_kwh":0.075,"site_energy_cost_eur_kwh":-0.075,
                           "gpu_l40s_power_kw":0.35,"gpu_utilization":0.70,"gpu_platform_fee":0.15})
                   raise OSError("Unexpected feed host in CI")
           def fake_build_opener(*handlers):
@@ -434,6 +434,7 @@ jobs:
               assert feed_headers_seen.get("Authorization")=="Bearer ci-feed-secret", feed_headers_seen
               for field in ("btc_hashprice_usd_ph_day","gpu_l40s_usd_hour","eur_usd","austria_spot_eur_kwh","site_energy_cost_eur_kwh"):
                   assert fm["data_quality"]["details"]["fields"][field]["source"]=="external", fm["data_quality"]
+              assert fm["site_energy_cost_eur_kwh"]==-0.075, fm
               socket.getaddrinfo=lambda host,port,type: [(socket.AF_INET,socket.SOCK_STREAM,6,"",("127.0.0.1",port))]
               private_dns=c.get("/api/v1/market/live")
               assert private_dns.status_code==200 and private_dns.json()["data_quality"]["details"]["configured_feed_accepted"] is False, private_dns.json()
