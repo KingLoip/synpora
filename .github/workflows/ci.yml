@@ -312,7 +312,27 @@ jobs:
           sb=settled.json()
           assert sb["settled_now"]==1 and sb["open_remaining"]==0, sb
           assert "validated_external_observation" in sb["snapshot_sources_used"], sb
+          assert sb["site_energy_tariff_basis_used"]["verified_site_snapshot"]==1, sb
           assert sb["hardware_write"] is False and sb["recommendation_only"] is True, sb
+          # A global external market observation without a regional energy field may settle using
+          # the site tariff captured with the decision, never an Austria-only price.
+          next_decision=c.post(f"/api/v1/farms/{farm}/decision",headers=h,json={"energy_kwh":100,"energy_cost_eur_kwh":0.05})
+          assert next_decision.status_code==200, next_decision.text
+          next_ts=time.time()
+          global_only_payload=json.loads(json.dumps(payload))
+          global_only_payload.pop("site_energy_cost_eur_kwh")
+          global_only_payload["data_quality"]["fields"].pop("site_energy_cost_eur_kwh")
+          global_only_payload["timestamp"]=next_ts
+          global_only_payload["source"]="validated_global_market_without_site_tariff"
+          db.execute("INSERT INTO market_snapshots (id,ts,payload,btc_hashprice_usd_ph_day,gpu_l40s_usd_hour,eur_usd,austria_spot_eur_kwh) VALUES (?,?,?,?,?,?,?)",
+              (str(uuid.uuid4()),next_ts,json.dumps(global_only_payload),40.0,1.2,1.1,0.80))
+          db.commit()
+          decision_tariff_settlement=c.post(f"/api/v1/farms/{farm}/learning/update",headers=h)
+          assert decision_tariff_settlement.status_code==200, decision_tariff_settlement.text
+          ds=decision_tariff_settlement.json()
+          assert ds["settled_now"]==1 and ds["open_remaining"]==0, ds
+          assert ds["site_energy_tariff_basis_used"]["decision_input"]==1, ds
+          assert "validated_global_market_without_site_tariff" in ds["snapshot_sources_used"], ds
           # Leave a reference snapshot as the newest observation for the forecast warning test.
           snap_again=c.post("/api/v1/market/snapshot",headers={"X-SYNPORA-MARKET-TOKEN":"ci-market-secret"})
           assert snap_again.status_code==200, snap_again.text
