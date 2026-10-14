@@ -1,5 +1,7 @@
 import json
 import unittest
+from datetime import datetime, timedelta, timezone
+from email.utils import format_datetime
 from io import BytesIO
 from unittest.mock import patch
 from urllib.error import HTTPError, URLError
@@ -58,7 +60,6 @@ class ProviderRetryTests(unittest.TestCase):
         self.assertEqual(urlopen.call_count, 3)
         self.assertEqual(sleep.call_count, 2)
 
-
     @patch("time.sleep")
     @patch("urllib.request.urlopen")
     def test_rate_limit_respects_short_retry_after(self, urlopen, sleep):
@@ -74,6 +75,20 @@ class ProviderRetryTests(unittest.TestCase):
 
     @patch("time.sleep")
     @patch("urllib.request.urlopen")
+    def test_rate_limit_http_date_in_the_past_retries_without_waiting(self, urlopen, sleep):
+        retry_at = datetime.now(timezone.utc) - timedelta(seconds=5)
+        error = HTTPError("https://provider.example/data", 429, "rate limited",
+                          {"Retry-After": format_datetime(retry_at, usegmt=True)}, BytesIO(b""))
+        urlopen.side_effect = [error, response({"ok": True})]
+
+        result = _provider_request_json("https://provider.example/data", attempts=3)
+
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(urlopen.call_count, 2)
+        sleep.assert_called_once_with(0.0)
+
+    @patch("time.sleep")
+    @patch("urllib.request.urlopen")
     def test_rate_limit_with_long_retry_after_is_deferred(self, urlopen, sleep):
         error = HTTPError("https://provider.example/data", 429, "rate limited",
                           {"Retry-After": "60"}, BytesIO(b""))
@@ -84,7 +99,6 @@ class ProviderRetryTests(unittest.TestCase):
 
         urlopen.assert_called_once()
         sleep.assert_not_called()
-
 
     @patch("time.sleep")
     @patch("urllib.request.urlopen")
@@ -97,6 +111,17 @@ class ProviderRetryTests(unittest.TestCase):
             _provider_request_json("https://provider.example/data", attempts=3)
 
         self.assertEqual(caught.exception.code, 429)
+        urlopen.assert_called_once()
+        sleep.assert_not_called()
+
+    @patch("time.sleep")
+    @patch("urllib.request.urlopen")
+    def test_oversized_json_response_is_rejected_without_retry(self, urlopen, sleep):
+        urlopen.return_value = BytesIO(json.dumps("x" * 262145).encode("utf-8"))
+
+        with self.assertRaises(ValueError):
+            _provider_request_json("https://provider.example/data", attempts=3)
+
         urlopen.assert_called_once()
         sleep.assert_not_called()
 
