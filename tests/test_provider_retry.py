@@ -58,6 +58,33 @@ class ProviderRetryTests(unittest.TestCase):
         self.assertEqual(urlopen.call_count, 3)
         self.assertEqual(sleep.call_count, 2)
 
+
+    @patch("time.sleep")
+    @patch("urllib.request.urlopen")
+    def test_rate_limit_respects_short_retry_after(self, urlopen, sleep):
+        error = HTTPError("https://provider.example/data", 429, "rate limited",
+                          {"Retry-After": "0.5"}, BytesIO(b""))
+        urlopen.side_effect = [error, response({"ok": True})]
+
+        result = _provider_request_json("https://provider.example/data", attempts=3)
+
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(urlopen.call_count, 2)
+        sleep.assert_called_once_with(0.5)
+
+    @patch("time.sleep")
+    @patch("urllib.request.urlopen")
+    def test_rate_limit_with_long_retry_after_is_deferred(self, urlopen, sleep):
+        error = HTTPError("https://provider.example/data", 429, "rate limited",
+                          {"Retry-After": "60"}, BytesIO(b""))
+        urlopen.side_effect = error
+
+        with self.assertRaises(HTTPError):
+            _provider_request_json("https://provider.example/data", timeout=5, attempts=3)
+
+        urlopen.assert_called_once()
+        sleep.assert_not_called()
+
     def test_error_label_reports_http_status_without_response_body(self):
         error = HTTPError("https://provider.example/data?token=secret", 429, "rate limited", {}, BytesIO(b"secret-body"))
 
