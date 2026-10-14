@@ -46,6 +46,27 @@ jobs:
               "$url" --output "$output"
           }
 
+          expect_secret_path_blocked() {
+            local path="$1"
+            local body="/tmp/security-probe.body"
+            local status
+            status="$(curl --silent --show-error --output "$body" \
+              --write-out '%{http_code}' --connect-timeout 5 --max-time 10 \
+              "$CANONICAL_URL$path")"
+            case "$status" in
+              403|404|410) ;;
+              *)
+                echo "Security probe failed: $path returned HTTP $status (expected 403, 404, or 410)." >&2
+                return 1
+                ;;
+            esac
+            if grep -Eiq '(DATABASE_URL=|SYNPORA_JWT_SECRET=|BEGIN [A-Z ]*PRIVATE KEY|gitdir:)' "$body"; then
+              echo "Security probe failed: sensitive-looking content returned for $path." >&2
+              return 1
+            fi
+            echo "  $path: blocked (HTTP $status)"
+          }
+
           # Check both the Railway service and the public custom domain.
           fetch_json "$BASE_URL/health" /tmp/health.json
           jq -e '.status == "ok"' /tmp/health.json >/dev/null
@@ -54,17 +75,23 @@ jobs:
           fetch_text "$CANONICAL_URL/ops" /tmp/ops.html
           grep -Eiq 'synpora' /tmp/ops.html
 
+          echo "Public entrypoints:"
+          echo "  Railway health: PASS"
+          echo "  synpora.com homepage: PASS"
+          echo "  synpora.com/ops dashboard: PASS"
+
+          echo "Secret/config path exposure checks:"
+          expect_secret_path_blocked "/.env"
+          expect_secret_path_blocked "/.env.production"
+          expect_secret_path_blocked "/.git/config"
+          expect_secret_path_blocked "/.git-credentials"
+
           fetch_json "$BASE_URL/api/v1/system/release" /tmp/release.json
           jq -e '.hardware_write == false and .autonomous_control == false' /tmp/release.json >/dev/null
 
           fetch_json "$BASE_URL/api/v1/system/production-readiness" /tmp/readiness.json
           fetch_json "$BASE_URL/api/v1/market/data-health" /tmp/data-health.json
           fetch_json "$BASE_URL/api/v1/system/collector-status" /tmp/collector.json
-
-          echo "Public entrypoints:"
-          echo "  Railway health: PASS"
-          echo "  synpora.com homepage: PASS"
-          echo "  synpora.com/ops dashboard: PASS"
 
           echo "Release safety:"
           jq '{release, mode, hardware_write, autonomous_control}' /tmp/release.json
