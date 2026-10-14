@@ -291,6 +291,16 @@ jobs:
           stale_settlement=c.post(f"/api/v1/farms/{farm}/learning/update",headers=h)
           assert stale_settlement.status_code==200, stale_settlement.text
           assert stale_settlement.json()["settled_now"]==0, stale_settlement.json()
+          # An Austria-only legacy snapshot must not train an international farm.
+          austria_only_payload=json.loads(json.dumps(payload))
+          austria_only_payload.pop("site_energy_cost_eur_kwh")
+          austria_only_payload["data_quality"]["fields"].pop("site_energy_cost_eur_kwh")
+          db.execute("INSERT INTO market_snapshots (id,ts,payload,btc_hashprice_usd_ph_day,gpu_l40s_usd_hour,eur_usd,austria_spot_eur_kwh) VALUES (?,?,?,?,?,?,?)",
+              (str(uuid.uuid4()),ts,json.dumps(austria_only_payload),40.0,1.2,1.1,0.08))
+          db.commit()
+          austria_only_settlement=c.post(f"/api/v1/farms/{farm}/learning/update",headers=h)
+          assert austria_only_settlement.status_code==200, austria_only_settlement.text
+          assert austria_only_settlement.json()["settled_now"]==0, austria_only_settlement.json()
           db.execute("INSERT INTO market_snapshots (id,ts,payload,btc_hashprice_usd_ph_day,gpu_l40s_usd_hour,eur_usd,austria_spot_eur_kwh) VALUES (?,?,?,?,?,?,?)",
               (str(uuid.uuid4()),ts,json.dumps(payload),40.0,1.2,1.1,0.08))
           db.commit()
