@@ -230,6 +230,13 @@ jobs:
           assert es["battery_soc_final_kwh"] >= es["battery_soc_reserve_kwh"]-0.01, es
           quality=c.get(f"/api/v1/farms/{farm}/decision-quality",headers=h)
           assert quality.status_code==200, quality.text
+          # Isolate this learning lifecycle from earlier decision-engine smoke calls.
+          # The learning updater correctly settles every open row for a farm, so this
+          # test must start with a single controlled pending decision.
+          import backend.app.saas_api as saas
+          db=saas.init_db()
+          db.execute("DELETE FROM decision_ledger WHERE farm_id=? AND status='open'",(farm,))
+          db.commit()
           # Learning ledger must work on a fresh schema and must not settle without later valid observations.
           recorded=c.post(f"/api/v1/farms/{farm}/decision",headers=h,json={"energy_kwh":100,"energy_cost_eur_kwh":0.05})
           assert recorded.status_code==200, recorded.text
