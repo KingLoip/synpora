@@ -403,8 +403,9 @@ def install(app):
         now=time.time()
         ext_quality=_market_quality(ext,now)
         fields=ext_quality["fields"]
+        # Only globally applicable feeds gate collection success. Regional energy prices are optional.
         all_critical_external=all(fields[k]["source"]=="external" for k in
-            ("btc_hashprice_usd_ph_day","gpu_l40s_usd_hour","eur_usd","austria_spot_eur_kwh"))
+            ("btc_hashprice_usd_ph_day","gpu_l40s_usd_hour","eur_usd"))
         snap={"timestamp":now,
               "btc_price_usd":ext.get("btcPrice"),
               "btc_hashprice_usd_ph_day":fields["btc_hashprice_usd_ph_day"]["value"],
@@ -1106,11 +1107,13 @@ def install(app):
         live=sum(1 for v in observed.values() if v["source"]=="external")
         reference=sum(1 for v in observed.values() if v["source"]=="reference")
         missing=sum(1 for v in observed.values() if v["source"]=="missing")
-        critical=("btc_hashprice_usd_ph_day","gpu_l40s_usd_hour","eur_usd","austria_spot_eur_kwh")
+        # Global market readiness is independent of any one country's electricity market.
+        # Energy prices remain optional, regional/site-specific inputs, never a universal live-data gate.
+        critical=("btc_hashprice_usd_ph_day","gpu_l40s_usd_hour","eur_usd")
         all_critical_external=all(observed[k]["source"]=="external" for k in critical)
         warnings=[]
         if missing: warnings.append("External Bitcoin market feed is incomplete; missing values are not represented as live.")
-        if reference: warnings.append("Some EUR/USD, Austrian spot energy or GPU pricing fields still contain reference values, not verified live quotes.")
+        if reference: warnings.append("Some EUR/USD, regional energy or GPU pricing fields contain reference values, not verified live quotes.")
         if observed["gpu_l40s_usd_hour"]["source"]!="external" and not os.getenv("SYNPORA_VAST_API_KEY","").strip():
             warnings.append("Set SYNPORA_VAST_API_KEY to sample live L40S rental offers from Vast.ai; otherwise GPU pricing remains a reference value unless supplied by the configured feed.")
         if configured and not feed_fresh:
@@ -1766,6 +1769,36 @@ def install(app):
                 "winner_accuracy":round(winner,3) if rows else None,
                 "avg_regret_eur_kwh":round(sum(regrets)/len(regrets),8) if regrets else None}
 
+    def _snapshot_is_market_ready(payload):
+        # Global market readiness covers hashprice, GPU rental price, and FX only.
+        # Country/site electricity tariffs are supplied separately and never inferred from Austria.
+        import math
+        if not isinstance(payload,dict):
+            return False
+        quality=payload.get("data_quality")
+        fields=quality.get("fields") if isinstance(quality,dict) else None
+        if not isinstance(fields,dict):
+            return False
+        required={
+            "btc_hashprice_usd_ph_day": (0.0, float("inf"), 900.0),
+            "gpu_l40s_usd_hour": (0.0, float("inf"), 900.0),
+            "eur_usd": (0.0, float("inf"), 96.0*3600.0),
+        }
+        for key,(minimum,maximum,max_age) in required.items():
+            field=fields.get(key)
+            if not isinstance(field,dict) or field.get("source")!="external" or field.get("available") is not True:
+                return False
+            try:
+                value=float(payload[key])
+                age=float(field["age_seconds"])
+                if not math.isfinite(value) or not math.isfinite(age):
+                    return False
+                if value<=minimum or value>maximum or age < -60 or age>max_age:
+                    return False
+            except (KeyError,TypeError,ValueError,OverflowError):
+                return False
+        return True
+
     def _snapshot_is_learning_eligible(payload):
         # Learning targets must be independently sourced, numerically valid, and fresh.
         # Do not let hand-edited/corrupt payload metadata mark stale or nonsensical values eligible.
@@ -1992,6 +2025,8 @@ def install(app):
         db_backend="unavailable" if _database_required() else "sqlite_fallback"
         db_error=None
         market_data_ready=False
+        market_data_latest_ready_age_seconds=None
+        market_data_ready_snapshots=0
         market_data_latest_eligible_age_seconds=None
         market_data_eligible_snapshots=0
         market_data_field_diagnostics={}
@@ -2007,8 +2042,8 @@ def install(app):
                 # Names are static constants, never caller input.
                 c.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone()
             db_schema_ready=True
-            # Production readiness requires at least one recent, fully provenance-verified
-            # snapshot; merely having a reachable database or configured feed is not enough.
+            # Global market readiness requires recent provenance-verified hashprice, GPU, and FX.
+            # Learning/backtesting remains separately gated by complete site-relevant energy labels.
             market_rows=c.execute("SELECT ts,payload FROM market_snapshots ORDER BY ts DESC LIMIT 100").fetchall()
             now=time.time()
             for market_row in market_rows:
@@ -2021,7 +2056,7 @@ def install(app):
                             market_data_latest_snapshot_age_seconds=round(snap_age,1)
                             quality=payload.get("data_quality",{})
                             fields=quality.get("fields",{}) if isinstance(quality,dict) else {}
-                            required_market_fields=("btc_hashprice_usd_ph_day","gpu_l40s_usd_hour","eur_usd","austria_spot_eur_kwh")
+                            required_market_fields=("btc_hashprice_usd_ph_day","gpu_l40s_usd_hour","eur_usd")
                             for field_name in required_market_fields:
                                 field=fields.get(field_name,{}) if isinstance(fields,dict) else {}
                                 if not isinstance(field,dict):
@@ -2042,13 +2077,17 @@ def install(app):
                                     "provider":provider,
                                     "age_seconds":safe_age,
                                 }
+                        if _snapshot_is_market_ready(payload):
+                            market_data_ready_snapshots+=1
+                            if market_data_latest_ready_age_seconds is None:
+                                market_data_latest_ready_age_seconds=snap_age
                         if _snapshot_is_learning_eligible(payload):
                             market_data_eligible_snapshots+=1
                             if market_data_latest_eligible_age_seconds is None:
                                 market_data_latest_eligible_age_seconds=snap_age
                 except Exception:
                     continue
-            market_data_ready=bool(market_data_eligible_snapshots>0 and market_data_latest_eligible_age_seconds is not None and market_data_latest_eligible_age_seconds<=900)
+            market_data_ready=bool(market_data_ready_snapshots>0 and market_data_latest_ready_age_seconds is not None and market_data_latest_ready_age_seconds<=900)
         except Exception as e:
             db_error=type(e).__name__
             if _database_required() and not db_reachable:
@@ -2079,14 +2118,18 @@ def install(app):
                     market_data_guidance.append("Configure SYNPORA_VAST_API_KEY in Railway Variables or provide an HTTPS market feed whose host is listed in SYNPORA_MARKET_DATA_ALLOWED_HOSTS.")
                 else:
                     market_data_guidance.append("Verify the configured GPU provider returns timestamped L40S on-demand prices no older than 900 seconds.")
-            missing=[name for name in ("btc_hashprice_usd_ph_day","gpu_l40s_usd_hour","eur_usd","austria_spot_eur_kwh")
+            missing=[name for name in ("btc_hashprice_usd_ph_day","gpu_l40s_usd_hour","eur_usd")
                      if market_data_field_diagnostics.get(name,{}).get("source")!="external"]
             if missing:
                 market_data_guidance.append("Missing or non-external required market fields: "+", ".join(missing)+". Reference values do not satisfy production readiness.")
-            market_data_guidance.append("Do not lower freshness limits; readiness requires a fully external eligible snapshot no older than 900 seconds.")
+            market_data_guidance.append("Do not lower freshness limits; global readiness requires external hashprice, GPU, and FX observations with source-appropriate freshness.")
+        if market_data_ready and market_data_eligible_snapshots==0:
+            market_data_guidance.append("Global market feeds are live, but learning/backtesting is still blocked until verified energy-cost observations appropriate to the decision site are available.")
         return {"database_configured":db_configured,"database_reachable":db_reachable,
                 "database_schema_ready":db_schema_ready,"required_database_tables":required_database_tables if "required_database_tables" in locals() else ["market_snapshots","synpora_saas_users","synpora_saas_farms","synpora_saas_assets","synpora_auth_tokens","synpora_auth_rate_limits"],"database_backend":db_backend,"database_error":db_error,
-                "market_data_ready":market_data_ready,"market_data_eligible_snapshots_scanned":market_data_eligible_snapshots,
+                "market_data_ready":market_data_ready,"market_data_ready_snapshots_scanned":market_data_ready_snapshots,
+                "market_data_latest_ready_age_seconds":round(market_data_latest_ready_age_seconds,1) if market_data_latest_ready_age_seconds is not None else None,
+                "market_data_eligible_snapshots_scanned":market_data_eligible_snapshots,
                 "market_data_latest_eligible_age_seconds":round(market_data_latest_eligible_age_seconds,1) if market_data_latest_eligible_age_seconds is not None else None,
                 "market_data_latest_snapshot_age_seconds":market_data_latest_snapshot_age_seconds,
                 "market_data_field_diagnostics":market_data_field_diagnostics,
@@ -2168,11 +2211,16 @@ def install(app):
         if not c.execute("SELECT 1 FROM synpora_saas_farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
         learn=_forecast_learning(c,farm_id)
         models=_model_select(c)
-        conf={"btc":_ensemble_confidence(c,"btc"),"gpu":_ensemble_confidence(c,"gpu"),"energy":_ensemble_confidence(c,"energy")}
+        # Energy is not a learned forecast until the product stores a verified site-specific tariff series.
+        conf={"btc":_ensemble_confidence(c,"btc"),"gpu":_ensemble_confidence(c,"gpu"),"energy":0.0}
         hours=max(1,min(72,x.horizon_hours))
         btc_fc,btc_w=_ensemble_forecast(c,"btc",hours,x.btc_hashprice_usd_ph_day)
         gpu_fc,gpu_w=_ensemble_forecast(c,"gpu",hours,x.gpu_hourly_usd)
-        energy_fc,energy_w=_ensemble_forecast(c,"energy",hours,x.energy_cost_eur_kwh)
+        # Energy tariffs are site-specific user inputs. Do not forecast them from historical
+        # Austrian spot prices or other users' locations; hold the supplied tariff constant
+        # until a verified site-specific tariff time series exists.
+        energy_fc=[float(x.energy_cost_eur_kwh)]*hours
+        energy_w={"method":"user_supplied_site_tariff","weights":{}}
         import math
         rows=[]
         for h in range(hours):
@@ -2191,6 +2239,7 @@ def install(app):
                          "btc_hashprice_usd_ph_day":round(btc,4),"gpu_value_eur_kwh":round(gpu_v,5),"forecast_energy_cost_eur_kwh":round(energy,5),
                          "btc_value_eur_kwh":round(btc_v,5),"best_option":"AI Compute" if gpu_v>=btc_v else "BTC Mining"})
         forecast_quality=_forecast_quality(rows,models,conf,hours)
+        forecast_quality["warnings"].append("Energy cost is held at the supplied site tariff; no location-independent electricity-price forecast is applied.")
         snapshot_freshness=_market_snapshot_freshness(c)
         forecast_quality["market_snapshot_freshness"]=snapshot_freshness
         forecast_quality["warnings"] += snapshot_freshness["warnings"]
@@ -2210,10 +2259,15 @@ def install(app):
         assets=[dict(r) for r in c.execute("SELECT id,name,kind,power_kw FROM synpora_saas_assets WHERE farm_id=? ORDER BY created_at",(farm_id,)).fetchall()]
         hours=max(1,min(72,x.horizon_hours)); dt=max(0.25,x.interval_hours)
         try:
-            btc_fc,_=_ensemble_forecast(c,"btc",hours,x.btc_hashprice_usd_ph_day); gpu_fc,_=_ensemble_forecast(c,"gpu",hours,x.gpu_hourly_usd); energy_fc,_=_ensemble_forecast(c,"energy",hours,x.energy_cost_eur_kwh)
-            forecast_source="adaptive_ensemble"
+            btc_fc,_=_ensemble_forecast(c,"btc",hours,x.btc_hashprice_usd_ph_day)
+            gpu_fc,_=_ensemble_forecast(c,"gpu",hours,x.gpu_hourly_usd)
+            forecast_source="adaptive_market_with_site_tariff_input"
         except Exception:
-            btc_fc=[x.btc_hashprice_usd_ph_day]*hours; gpu_fc=[x.gpu_hourly_usd]*hours; energy_fc=[x.energy_cost_eur_kwh]*hours; forecast_source="input_fallback"
+            btc_fc=[x.btc_hashprice_usd_ph_day]*hours
+            gpu_fc=[x.gpu_hourly_usd]*hours
+            forecast_source="input_fallback"
+        # Never apply an Austrian or cross-user energy forecast to this farm.
+        energy_fc=[float(x.energy_cost_eur_kwh)]*hours
         reserve=max(0,min(100,x.battery_reserve_pct)); cap=max(0,x.battery_capacity_kwh); soc=max(cap*reserve/100,min(cap,cap*x.battery_soc_pct/100))
         power=max(0,x.battery_power_kw); ce=max(.01,min(1,x.battery_charge_efficiency)); de=max(.01,min(1,x.battery_discharge_efficiency)); soc_min=cap*reserve/100; initial_soc=soc
         import math
