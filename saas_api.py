@@ -1179,7 +1179,7 @@ def install(app):
         if missing: warnings.append("External Bitcoin market feed is incomplete; missing values are not represented as live.")
         if reference: warnings.append("Some EUR/USD, regional energy or GPU pricing fields contain reference values, not verified live quotes.")
         if observed["site_energy_cost_eur_kwh"]["source"]!="external":
-            warnings.append("No verified site-specific electricity tariff is available for historical model fitting/backtesting; online paper-trading learning can use the tariff captured with each decision rather than an unrelated regional price.")
+            warnings.append("No verified site-specific tariff series is available for historical model fitting or snapshot-priced benchmarks; walk-forward backtests can instead accept an explicit constant site tariff, and online learning can use each decision's captured tariff.")
         if observed["gpu_l40s_usd_hour"]["source"]!="external" and not os.getenv("SYNPORA_VAST_API_KEY","").strip():
             warnings.append("Set SYNPORA_VAST_API_KEY to sample live L40S rental offers from Vast.ai; otherwise GPU pricing remains a reference value unless supplied by the configured feed.")
         if configured and not feed_fresh:
@@ -2107,9 +2107,9 @@ def install(app):
 
     @app.get("/api/v1/system/release")
     def release_status():
-        return {"product":"SYNPORA","release":"1.3.2","build_commit":os.getenv("RAILWAY_GIT_COMMIT_SHA",os.getenv("SOURCE_VERSION","unknown")),"ai_core":"risk_aware_walk_forward_v3_economic_costs",
+        return {"product":"SYNPORA","release":"1.3.3","build_commit":os.getenv("RAILWAY_GIT_COMMIT_SHA",os.getenv("SOURCE_VERSION","unknown")),"ai_core":"risk_aware_walk_forward_v3_economic_costs",
                 "mode":"recommendation_only","hardware_write":False,"autonomous_control":False,
-                "features":["market_intelligence","adaptive_forecast","model_selection","decision_ledger","self_learning","calibrated_confidence","provenance_gated_walk_forward_backtest","paper_trading_observability","tail_risk_metrics","deterministic_stress_tests","secure_allowlisted_market_feed","operations_dashboard","equipment_depreciation_uptime_maintenance_tax","email_verification","password_recovery","shared_database_login_rate_limit","password_reset_session_revocation","public_gpu_market_data","timestamped_hashprice_fallback","site_specific_energy_price_learning"],
+                "features":["market_intelligence","adaptive_forecast","model_selection","decision_ledger","self_learning","calibrated_confidence","provenance_gated_walk_forward_backtest","paper_trading_observability","tail_risk_metrics","deterministic_stress_tests","secure_allowlisted_market_feed","operations_dashboard","equipment_depreciation_uptime_maintenance_tax","email_verification","password_recovery","shared_database_login_rate_limit","password_reset_session_revocation","public_gpu_market_data","timestamped_hashprice_fallback","site_specific_energy_price_learning","constant_tariff_walk_forward_backtest"],
                 "status":"production_candidate"}
 
     @app.get("/api/v1/system/production-readiness")
@@ -2224,7 +2224,7 @@ def install(app):
                 market_data_guidance.append("Missing or non-external required market fields: "+", ".join(missing)+". Reference values do not satisfy production readiness.")
             market_data_guidance.append("Do not lower freshness limits; global readiness requires external hashprice, GPU, and FX observations with source-appropriate freshness.")
         if market_data_ready and market_data_eligible_snapshots==0:
-            market_data_guidance.append("Global market feeds are live. Historical model fitting/backtesting requires verified site-specific energy-price observations; online paper-trading learning can use the tariff captured with each decision.")
+            market_data_guidance.append("Global market feeds are live. Historical model fitting and snapshot-priced benchmarks require verified site-specific energy-price observations; walk-forward backtests can use an explicit constant tariff, while online learning can use each decision's captured tariff.")
         return {"database_configured":db_configured,"database_reachable":db_reachable,
                 "database_schema_ready":db_schema_ready,"required_database_tables":required_database_tables if "required_database_tables" in locals() else ["market_snapshots","synpora_saas_users","synpora_saas_farms","synpora_saas_assets","synpora_auth_tokens","synpora_auth_rate_limits"],"database_backend":db_backend,"database_error":db_error,
                 "market_data_ready":market_data_ready,"market_data_ready_snapshots_scanned":market_data_ready_snapshots,
@@ -2467,6 +2467,9 @@ def install(app):
     class BacktestIn(BaseModel):
         min_samples: int=24
         max_snapshots: int=1000
+        # Optional fixed site tariff enables an assumption-based backtest
+        # when a complete historical site-price series is not available.
+        energy_cost_eur_kwh: float|None=None
 
     @app.post("/api/v1/farms/{farm_id}/backtest")
     def backtest(farm_id:str,x:BacktestIn,authorization:str|None=Header(default=None)):
@@ -2474,6 +2477,15 @@ def install(app):
         if not c.execute("SELECT 1 FROM synpora_saas_farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone():
             raise HTTPException(404,"Farm not found")
         _ensure_market_table(c)
+        if x.energy_cost_eur_kwh is not None:
+            try:
+                tariff=float(x.energy_cost_eur_kwh)
+                if not __import__("math").isfinite(tariff) or not -1.0<=tariff<=10.0:
+                    raise ValueError("invalid fixed site tariff")
+            except (TypeError,ValueError,OverflowError):
+                raise HTTPException(422,"energy_cost_eur_kwh must be finite and between -1 and 10")
+        else:
+            tariff=None
         limit=max(2,min(5000,int(x.max_snapshots)))
         min_samples=max(1,min(500,int(x.min_samples)))
         raw=c.execute("SELECT ts,payload FROM market_snapshots ORDER BY ts DESC LIMIT ?",(limit,)).fetchall()
@@ -2481,19 +2493,31 @@ def install(app):
         for row in reversed(raw):
             try:
                 payload=json.loads(row[1] or "{}")
-                if not isinstance(payload,dict) or not _snapshot_is_learning_eligible(payload):
+                eligible=(_snapshot_is_learning_eligible(payload) if tariff is None else _snapshot_is_market_ready(payload))
+                if not isinstance(payload,dict) or not eligible:
                     excluded+=1
                     continue
                 values={}
                 valid=True
-                for key in ("btc_hashprice_usd_ph_day","gpu_l40s_usd_hour","eur_usd","site_energy_cost_eur_kwh"):
+                for key in ("btc_hashprice_usd_ph_day","gpu_l40s_usd_hour","eur_usd"):
                     try:
                         value=float(payload[key])
-                        if not __import__("math").isfinite(value) or (value<=0 and key!="site_energy_cost_eur_kwh") or (key=="site_energy_cost_eur_kwh" and not -1.0<=value<=10.0):
+                        if not __import__("math").isfinite(value) or value<=0:
                             valid=False; break
                         values[key]=value
                     except (KeyError,TypeError,ValueError):
                         valid=False; break
+                if valid and tariff is not None:
+                    values["site_energy_cost_eur_kwh"]=tariff
+                elif valid:
+                    try:
+                        value=float(payload["site_energy_cost_eur_kwh"])
+                        if not __import__("math").isfinite(value) or not -1.0<=value<=10.0:
+                            valid=False
+                        else:
+                            values["site_energy_cost_eur_kwh"]=value
+                    except (KeyError,TypeError,ValueError):
+                        valid=False
                 if not valid:
                     excluded+=1
                     continue
@@ -2555,7 +2579,8 @@ def install(app):
                 "chosen_strategy":p["chosen"],"predicted_value_eur_kwh":round(p["predicted"],6),
                 "actual_next_value_eur_kwh":round(p["actual"],6),"actual_best_strategy":p["actual_best_strategy"],
                 "regret_eur_kwh":round(p["regret"],6)} for p in pairs[-20:]],
-            "warnings":warnings,"recommendation_only":True,"hardware_write":False}
+            "warnings":warnings,"energy_cost_mode":"user_supplied_constant" if tariff is not None else "per_snapshot_verified_site_tariff",
+            "energy_cost_eur_kwh":tariff,"recommendation_only":True,"hardware_write":False}
 
     class AuthIn(BaseModel):
         email: str = __import__("pydantic").Field(..., max_length=254)
