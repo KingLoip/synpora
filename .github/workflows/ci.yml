@@ -291,18 +291,30 @@ jobs:
           stale_settlement=c.post(f"/api/v1/farms/{farm}/learning/update",headers=h)
           assert stale_settlement.status_code==200, stale_settlement.text
           assert stale_settlement.json()["settled_now"]==0, stale_settlement.json()
-          # An Austria-only legacy snapshot must not train an international farm.
+          # An Austria-only legacy snapshot must never supply its regional tariff to learning.
+          # Online paper-trading can settle using the site tariff recorded with the decision.
           austria_only_payload=json.loads(json.dumps(payload))
           austria_only_payload.pop("site_energy_cost_eur_kwh")
           austria_only_payload["data_quality"]["fields"].pop("site_energy_cost_eur_kwh")
+          austria_only_payload["source"]="austria_only_legacy_observation"
           db.execute("INSERT INTO market_snapshots (id,ts,payload,btc_hashprice_usd_ph_day,gpu_l40s_usd_hour,eur_usd,austria_spot_eur_kwh) VALUES (?,?,?,?,?,?,?)",
-              (str(uuid.uuid4()),ts,json.dumps(austria_only_payload),40.0,1.2,1.1,0.08))
+              (str(uuid.uuid4()),ts,json.dumps(austria_only_payload),40.0,1.2,1.1,0.80))
           db.commit()
           austria_only_settlement=c.post(f"/api/v1/farms/{farm}/learning/update",headers=h)
           assert austria_only_settlement.status_code==200, austria_only_settlement.text
-          assert austria_only_settlement.json()["settled_now"]==0, austria_only_settlement.json()
+          aus=austria_only_settlement.json()
+          assert aus["settled_now"]==1 and aus["open_remaining"]==0, aus
+          assert aus["site_energy_tariff_basis_used"]["decision_input"]==1, aus
+          assert "austria_only_legacy_observation" in aus["snapshot_sources_used"], aus
+          # A later snapshot with a verified site tariff can also be used as the actual label.
+          site_decision=c.post(f"/api/v1/farms/{farm}/decision",headers=h,json={"energy_kwh":100,"energy_cost_eur_kwh":0.05})
+          assert site_decision.status_code==200, site_decision.text
+          site_ts=time.time()
+          site_payload=json.loads(json.dumps(payload))
+          site_payload["timestamp"]=site_ts
+          site_payload["source"]="verified_site_tariff_observation"
           db.execute("INSERT INTO market_snapshots (id,ts,payload,btc_hashprice_usd_ph_day,gpu_l40s_usd_hour,eur_usd,austria_spot_eur_kwh) VALUES (?,?,?,?,?,?,?)",
-              (str(uuid.uuid4()),ts,json.dumps(payload),40.0,1.2,1.1,0.08))
+              (str(uuid.uuid4()),site_ts,json.dumps(site_payload),40.0,1.2,1.1,0.08))
           db.commit()
           external_forecast=c.post(f"/api/v1/farms/{farm}/forecast-plan",headers=h,json={"horizon_hours":3})
           assert external_forecast.status_code==200, external_forecast.text
@@ -311,7 +323,7 @@ jobs:
           assert settled.status_code==200, settled.text
           sb=settled.json()
           assert sb["settled_now"]==1 and sb["open_remaining"]==0, sb
-          assert "validated_external_observation" in sb["snapshot_sources_used"], sb
+          assert "verified_site_tariff_observation" in sb["snapshot_sources_used"], sb
           assert sb["site_energy_tariff_basis_used"]["verified_site_snapshot"]==1, sb
           assert sb["hardware_write"] is False and sb["recommendation_only"] is True, sb
           # A global external market observation without a regional energy field may settle using
