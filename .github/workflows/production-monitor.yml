@@ -17,6 +17,9 @@ concurrency:
 
 jobs:
   live-market-health:
+    # Never gate a pull request on production state from code that has not been deployed yet.
+    # Scheduled/manual runs continue to validate the live deployment after rollout.
+    if: github.event_name != 'pull_request'
     name: Live readiness and collector freshness
     runs-on: ubuntu-latest
     timeout-minutes: 4
