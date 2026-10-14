@@ -563,7 +563,7 @@ def install(app):
         margin=round(best["value_eur_kwh"]-options[1]["value_eur_kwh"],5) if len(options)>1 else 0
         explanation={"primary_reason":"highest modeled net value per kWh","value_margin_eur_kwh":margin,"confidence_driver":"forecast_and_historical_learning","risk_driver":risk,"fallback_option":options[1]["option"] if len(options)>1 else None}
         try:
-            c.execute("INSERT INTO decision_ledger (id,farm_id,ts,chosen,predicted_value,confidence,status) VALUES (?,?,?,?,?,?,?)",(str(__import__("uuid").uuid4()),farm_id,time.time(),best["option"],best["value_eur_kwh"],confidence,"open"))
+            c.execute("INSERT INTO decision_ledger (id,farm_id,ts,chosen,predicted_value,confidence,status,energy_cost_eur_kwh) VALUES (?,?,?,?,?,?,?,?)",(str(__import__("uuid").uuid4()),farm_id,time.time(),best["option"],best["value_eur_kwh"],confidence,"open",best["energy_cost_eur_kwh"]))
             c.commit()
         except Exception:
             pass
@@ -1179,7 +1179,7 @@ def install(app):
         if missing: warnings.append("External Bitcoin market feed is incomplete; missing values are not represented as live.")
         if reference: warnings.append("Some EUR/USD, regional energy or GPU pricing fields contain reference values, not verified live quotes.")
         if observed["site_energy_cost_eur_kwh"]["source"]!="external":
-            warnings.append("No verified site-specific electricity tariff is available; learning and backtesting remain disabled for this site rather than substituting an Austrian or other regional price.")
+            warnings.append("No verified site-specific electricity tariff is available for historical model fitting/backtesting; online paper-trading learning can use the tariff captured with each decision rather than an unrelated regional price.")
         if observed["gpu_l40s_usd_hour"]["source"]!="external" and not os.getenv("SYNPORA_VAST_API_KEY","").strip():
             warnings.append("Set SYNPORA_VAST_API_KEY to sample live L40S rental offers from Vast.ai; otherwise GPU pricing remains a reference value unless supplied by the configured feed.")
         if configured and not feed_fresh:
@@ -1321,8 +1321,8 @@ def install(app):
         return {"inserted":inserted,"requested":limit,"source":"Startmining price history"}
 
     def _ensure_learning_tables(c):
-        c.execute("CREATE TABLE IF NOT EXISTS decision_ledger(id TEXT PRIMARY KEY,farm_id TEXT NOT NULL,ts REAL NOT NULL,chosen TEXT NOT NULL,predicted_value REAL NOT NULL,confidence REAL NOT NULL,status TEXT NOT NULL,actual_value REAL,settled_at REAL,actual_best_value REAL,regret_eur_kwh REAL)")
-        for col in ("actual_best_value","regret_eur_kwh"):
+        c.execute("CREATE TABLE IF NOT EXISTS decision_ledger(id TEXT PRIMARY KEY,farm_id TEXT NOT NULL,ts REAL NOT NULL,chosen TEXT NOT NULL,predicted_value REAL NOT NULL,confidence REAL NOT NULL,status TEXT NOT NULL,actual_value REAL,settled_at REAL,actual_best_value REAL,regret_eur_kwh REAL,energy_cost_eur_kwh REAL)")
+        for col in ("actual_best_value","regret_eur_kwh","energy_cost_eur_kwh"):
             try:
                 c.execute(f"ALTER TABLE decision_ledger ADD COLUMN {col} REAL")
             except Exception:
@@ -1499,7 +1499,7 @@ def install(app):
         if not c.execute("SELECT 1 FROM synpora_saas_farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
         _ensure_learning_tables(c)
         vals=_economics(x); chosen=max(vals,key=vals.get); did=secrets.token_hex(12)
-        c.execute("INSERT INTO decision_ledger (id,farm_id,ts,chosen,predicted_value,confidence,status,actual_value,settled_at) VALUES(?,?,?,?,?,?,?,?,?)",(did,farm_id,time.time(),chosen,vals[chosen],0.80,"open",None,None))
+        c.execute("INSERT INTO decision_ledger (id,farm_id,ts,chosen,predicted_value,confidence,status,actual_value,settled_at,energy_cost_eur_kwh) VALUES(?,?,?,?,?,?,?,?,?,?)",(did,farm_id,time.time(),chosen,vals[chosen],0.80,"open",None,None,float(x.energy_cost_eur_kwh)))
         try: c.commit()
         except Exception: pass
         return {"decision_id":did,"chosen":chosen,"predicted_value_eur_kwh":round(vals[chosen],6),"confidence":0.80,"status":"open"}
@@ -1904,14 +1904,16 @@ def install(app):
         from datetime import datetime
         import math
         _ensure_market_table(c)
-        # Settle only on a later snapshot whose hashprice, GPU price, FX and energy price
-        # are all independently external. Reference/mixed/unknown snapshots are never training labels.
+        # Market outcomes must be later, fully external global observations. For site energy,
+        # prefer a verified tariff from that observation; otherwise use the tariff captured
+        # with the decision. Never substitute an unrelated regional price.
         snaps=c.execute("SELECT ts,payload FROM market_snapshots ORDER BY ts ASC").fetchall()
-        decisions=c.execute("SELECT id,chosen,predicted_value,ts FROM decision_ledger WHERE farm_id=? AND status='open' ORDER BY ts ASC LIMIT 100",(farm_id,)).fetchall()
+        decisions=c.execute("SELECT id,chosen,predicted_value,ts,energy_cost_eur_kwh FROM decision_ledger WHERE farm_id=? AND status='open' ORDER BY ts ASC LIMIT 100",(farm_id,)).fetchall()
         settled=0
         skipped_invalid=0
         skipped_ineligible=0
         sources_used=set()
+        tariff_basis_used={"verified_site_snapshot":0,"decision_input":0}
         for d in decisions:
             try:
                 decision_ts=float(d[3])
@@ -1927,7 +1929,7 @@ def install(app):
                 except Exception:
                     skipped_invalid+=1
                     continue
-                if not _snapshot_is_learning_eligible(payload):
+                if not _snapshot_is_market_ready(payload):
                     skipped_ineligible+=1
                     continue
                 # Require compute-market inputs after provenance has been validated.
@@ -1950,11 +1952,29 @@ def install(app):
                         return value if math.isfinite(value) and value>=minimum else default
                     except (TypeError,ValueError):
                         return default
+                site_energy=None
+                site_energy_basis=None
+                site_field=(payload.get("data_quality",{}).get("fields",{}).get("site_energy_cost_eur_kwh")
+                    if isinstance(payload.get("data_quality"),dict) else None)
                 try:
-                    site_energy=float(payload["site_energy_cost_eur_kwh"])
-                    if not math.isfinite(site_energy) or not -1.0<=site_energy<=10.0:
-                        raise ValueError("invalid site energy tariff")
-                except (KeyError,TypeError,ValueError):
+                    candidate=float(payload["site_energy_cost_eur_kwh"])
+                    site_age=float(site_field["age_seconds"])
+                    if (isinstance(site_field,dict) and site_field.get("source")=="external" and site_field.get("available") is True
+                        and math.isfinite(candidate) and -1.0<=candidate<=10.0
+                        and math.isfinite(site_age) and 0<=site_age<=7200):
+                        site_energy=candidate
+                        site_energy_basis="verified_site_snapshot"
+                except (KeyError,TypeError,ValueError,OverflowError):
+                    pass
+                if site_energy is None:
+                    try:
+                        candidate=float(d[4])
+                        if math.isfinite(candidate) and -1.0<=candidate<=10.0:
+                            site_energy=candidate
+                            site_energy_basis="decision_input"
+                    except (TypeError,ValueError,OverflowError):
+                        pass
+                if site_energy is None:
                     skipped_invalid+=1
                     continue
                 scenario=ScenarioIn(
@@ -1974,6 +1994,7 @@ def install(app):
                 actual_best=max(economics.values())
                 regret=max(0.0,actual_best-float(actual))
                 sources_used.add(str(payload.get("source") or payload.get("data_quality",{}).get("overall") or "unspecified"))
+                tariff_basis_used[site_energy_basis]+=1
                 c.execute("UPDATE decision_ledger SET actual_value=?,actual_best_value=?,regret_eur_kwh=?,status='settled',settled_at=? WHERE id=? AND status='open'",
                           (float(actual),float(actual_best),float(regret),time.time(),d[0]))
                 settled+=1
@@ -1983,7 +2004,8 @@ def install(app):
         return {"settled_now":settled,"open_remaining":max(0,len(decisions)-settled),
                 "skipped_invalid_snapshots":skipped_invalid,"skipped_ineligible_snapshots":skipped_ineligible,
                 "snapshot_sources_used":sorted(sources_used),
-                "method":"first_later_fully_external_market_snapshot"}
+                "site_energy_tariff_basis_used":tariff_basis_used,
+                "method":"first_later_external_global_market_snapshot"}
 
     def _forecast_learning(c, farm_id):
         _ensure_learning_tables(c)
@@ -2201,7 +2223,7 @@ def install(app):
                 market_data_guidance.append("Missing or non-external required market fields: "+", ".join(missing)+". Reference values do not satisfy production readiness.")
             market_data_guidance.append("Do not lower freshness limits; global readiness requires external hashprice, GPU, and FX observations with source-appropriate freshness.")
         if market_data_ready and market_data_eligible_snapshots==0:
-            market_data_guidance.append("Global market feeds are live, but learning/backtesting is still blocked until verified energy-cost observations appropriate to the decision site are available.")
+            market_data_guidance.append("Global market feeds are live. Historical model fitting/backtesting requires verified site-specific energy-price observations; online paper-trading learning can use the tariff captured with each decision.")
         return {"database_configured":db_configured,"database_reachable":db_reachable,
                 "database_schema_ready":db_schema_ready,"required_database_tables":required_database_tables if "required_database_tables" in locals() else ["market_snapshots","synpora_saas_users","synpora_saas_farms","synpora_saas_assets","synpora_auth_tokens","synpora_auth_rate_limits"],"database_backend":db_backend,"database_error":db_error,
                 "market_data_ready":market_data_ready,"market_data_ready_snapshots_scanned":market_data_ready_snapshots,
