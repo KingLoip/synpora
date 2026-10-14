@@ -1869,7 +1869,7 @@ def install(app):
         return True
 
     def _snapshot_is_learning_eligible(payload):
-        # Learning targets must be independently sourced, numerically valid, and fresh.
+        # Historical model-fitting/backtest targets must be independently sourced, numerically valid, and fresh.
         # Site-specific tariffs are required; another country's spot price is never substituted.
         # Do not let hand-edited/corrupt payload metadata mark stale or nonsensical values eligible.
         import math
@@ -2052,9 +2052,9 @@ def install(app):
         status="missing" if not rows else ("no_eligible_data" if not newest else ("stale" if age>900 else "eligible_data_available"))
         warnings=[]
         if not rows: warnings.append("No market snapshots have been stored.")
-        if not newest: warnings.append("No snapshot has verified external provenance for every learning-critical field.")
+        if not newest: warnings.append("No snapshot has verified external provenance for every historical model/backtesting field, including a site-specific energy tariff.")
         elif age>900: warnings.append("The latest eligible external snapshot is older than 15 minutes.")
-        if excluded: warnings.append("Reference, mixed, incomplete, and unknown-provenance snapshots are excluded from learning and backtesting.")
+        if excluded: warnings.append("Reference, mixed, incomplete, and unknown-provenance snapshots are excluded from historical fitting/backtesting; online learning requires a later globally eligible external snapshot and a recorded or verified site tariff.")
         collection_status=("never_collected" if latest_snapshot_ts is None else
             "recent_snapshot" if latest_snapshot_age is not None and latest_snapshot_age<=1200 else "stale_snapshot")
         latest_quality_fields=(latest_snapshot_payload.get("data_quality",{}).get("fields",{})
