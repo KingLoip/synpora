@@ -163,6 +163,60 @@ def _uid(token):
         return uid if exp>time.time() else None
     except Exception: return None
 
+def _vastai_l40s_offers(api_key, get_json, post_json):
+    """Read-only Vast.ai offer search with a documented POST filter fallback.
+
+    The GET endpoint remains the preferred path. Some deployments reject the GET
+    query with HTTP 400, so retry with the documented filter-object POST endpoint.
+    This helper never creates, updates, or terminates an instance.
+    """
+    import json
+    import urllib.parse
+    import urllib.error
+
+    headers={
+        "User-Agent":"SYNPORA/1.3.0",
+        "Accept":"application/json",
+        "Authorization":"Bearer "+api_key,
+    }
+
+    def offers_from(raw):
+        offers=raw if isinstance(raw,list) else (
+            raw.get("offers",raw.get("bundles",raw.get("results",[])))
+            if isinstance(raw,dict) else []
+        )
+        return offers if isinstance(offers,list) else []
+
+    last_http_error=None
+    for gpu_name in ("NVIDIA_L40S","L40S"):
+        query=urllib.parse.urlencode({"q":json.dumps({"gpu_name":gpu_name})})
+        url="https://cloud.vast.ai/api/v0/bundles/?"+query
+        try:
+            offers=offers_from(get_json(url,headers=headers,ttl_seconds=300))
+            if offers:
+                return offers
+        except urllib.error.HTTPError as exc:
+            last_http_error=exc
+            if exc.code != 400:
+                raise
+
+    # Vast.ai's documented filter-object form supports POST to /api/v0/bundles/.
+    # Include only on-demand, currently rentable offers and filter the model locally too.
+    query={
+        "gpu_name":{"in":["NVIDIA_L40S","NVIDIA L40S","L40S"]},
+        "type":"ondemand",
+        "rentable":{"eq":True},
+        "limit":100,
+    }
+    raw=post_json(
+        "https://console.vast.ai/api/v0/bundles/",
+        query,
+        headers=headers,
+        ttl_seconds=300,
+    )
+    return offers_from(raw)
+
+
 def install(app):
     from fastapi import BackgroundTasks, Header, HTTPException
     from pydantic import BaseModel
@@ -648,6 +702,24 @@ def install(app):
         _provider_json_cache_at[url]=now
         return raw
 
+    def _provider_json_post(url, payload, headers=None, ttl_seconds=300):
+        import urllib.request
+        body=json.dumps(payload,separators=(",",":")).encode("utf-8")
+        cache_key=url+"|POST|"+body.decode("utf-8")
+        now=time.time()
+        if cache_key in _provider_json_cache and now-_provider_json_cache_at.get(cache_key,0)<ttl_seconds:
+            return _provider_json_cache[cache_key]
+        request_headers=dict(headers or {"User-Agent":"SYNPORA/1.3.0","Accept":"application/json"})
+        request_headers["Content-Type"]="application/json"
+        req=urllib.request.Request(url,data=body,headers=request_headers,method="POST")
+        with urllib.request.urlopen(req,timeout=5) as response:
+            raw=json.loads(response.read(262145).decode("utf-8"))
+        if len(json.dumps(raw))>262144:
+            raise ValueError("Provider response is too large")
+        _provider_json_cache[cache_key]=raw
+        _provider_json_cache_at[cache_key]=now
+        return raw
+
     def _parse_provider_timestamp(value):
         from datetime import datetime, timezone
         if isinstance(value,(int,float)):
@@ -833,25 +905,7 @@ def install(app):
             math.isfinite(public_gpu_age) and -60<=public_gpu_age<=900)
         if vast_key and not public_gpu_available:
             try:
-                raw=None
-                offers=[]
-                last_http_error=None
-                # Vast.ai's public examples use provider-specific GPU labels; try the
-                # canonical model label if the NVIDIA-prefixed alias is rejected.
-                for gpu_name in ("NVIDIA_L40S","L40S"):
-                    query=urllib.parse.urlencode({"q":json.dumps({"gpu_name":gpu_name})})
-                    url="https://cloud.vast.ai/api/v0/bundles/?"+query
-                    try:
-                        raw=_provider_json(url,headers={"User-Agent":"SYNPORA/1.2.0","Accept":"application/json","Authorization":"Bearer "+vast_key},ttl_seconds=300)
-                        offers=raw if isinstance(raw,list) else raw.get("offers",raw.get("bundles",raw.get("results",[])))
-                        last_http_error=None
-                        break
-                    except urllib.error.HTTPError as exc:
-                        last_http_error=exc
-                        if exc.code != 400:
-                            raise
-                if last_http_error is not None:
-                    raise last_http_error
+                offers=_vastai_l40s_offers(vast_key,_provider_json,_provider_json_post)
                 prices=[]
                 for offer in offers if isinstance(offers,list) else []:
                     if not isinstance(offer,dict):
