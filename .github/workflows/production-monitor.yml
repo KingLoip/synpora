@@ -126,8 +126,7 @@ jobs:
             (.market_data_field_diagnostics.gpu_l40s_usd_hour |
               .available == true and .source == "external" and (.age_seconds | type) == "number" and .age_seconds >= -60 and .age_seconds <= 900) and
             (.market_data_field_diagnostics.eur_usd |
-              .available == true and .source == "external" and (.age_seconds | type) == "number" and .age_seconds >= -60 and .age_seconds <= 345600) and
-            true
+              .available == true and .source == "external" and (.age_seconds | type) == "number" and .age_seconds >= -60 and .age_seconds <= 345600)
           ' /tmp/readiness.json >/dev/null
 
           jq -e '
