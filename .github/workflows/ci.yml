@@ -510,7 +510,17 @@ jobs:
           assert bt["method"]=="strict_walk_forward_next_snapshot_v1", bt
           assert bt["status"]=="evaluated" and bt["evaluated_pairs"]>=2, bt
           assert bt["metrics"]["mean_regret_eur_kwh"] is not None, bt
+          assert bt["energy_cost_mode"]=="per_snapshot_verified_site_tariff", bt
           assert bt["recommendation_only"] is True and bt["hardware_write"] is False, bt
+          # International backtests can use an explicit constant site tariff when no site-price history exists.
+          fixed_tariff_backtest=c.post(f"/api/v1/farms/{farm}/backtest",headers=h,json={"min_samples":1,"max_snapshots":100,"energy_cost_eur_kwh":-0.05})
+          assert fixed_tariff_backtest.status_code==200, fixed_tariff_backtest.text
+          fbt=fixed_tariff_backtest.json()
+          assert fbt["status"]=="evaluated" and fbt["evaluated_pairs"]>=2, fbt
+          assert fbt["energy_cost_mode"]=="user_supplied_constant" and fbt["energy_cost_eur_kwh"]==-0.05, fbt
+          assert fbt["recommendation_only"] is True and fbt["hardware_write"] is False, fbt
+          invalid_tariff_backtest=c.post(f"/api/v1/farms/{farm}/backtest",headers=h,json={"energy_cost_eur_kwh":20})
+          assert invalid_tariff_backtest.status_code==422, invalid_tariff_backtest.text
           benchmark=c.get(f"/api/v1/farms/{farm}/benchmark",headers=h)
           assert benchmark.status_code==200, benchmark.text
           bm=benchmark.json()
@@ -940,7 +950,7 @@ jobs:
           found=0
           for attempt in $(seq 1 60); do
             release=$(curl --silent --show-error --max-time 8 --fail "$BASE_URL/api/v1/system/release" 2>/dev/null || true)
-            if printf '%s' "$release" | jq -e --arg sha "$EXPECTED_SHA" ' .release == "1.3.2" and .build_commit == $sha and .hardware_write == false and .autonomous_control == false and (.features | index("password_recovery") != null)' >/dev/null 2>&1; then
+            if printf '%s' "$release" | jq -e --arg sha "$EXPECTED_SHA" ' .release == "1.3.3" and .build_commit == $sha and .hardware_write == false and .autonomous_control == false and (.features | index("password_recovery") != null)' >/dev/null 2>&1; then
               found=1
               break
             fi
