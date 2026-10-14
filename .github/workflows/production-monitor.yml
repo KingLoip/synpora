@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: "7,22,37,52 * * * *"
   workflow_dispatch:
+  # Run a fresh read-only production check after main CI has completed, even when
+  # GitHub's scheduled-event queue is delayed. Only successful main-branch CI runs qualify.
+  workflow_run:
+    workflows: ["SYNPORA CI"]
+    types: [completed]
   pull_request:
     paths:
       - ".github/workflows/production-monitor.yml"
@@ -19,7 +24,7 @@ jobs:
   live-market-health:
     # Never gate a pull request on production state from code that has not been deployed yet.
     # Scheduled/manual runs continue to validate the live deployment after rollout.
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && (github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'))
     name: Live readiness and collector freshness
     runs-on: ubuntu-latest
     timeout-minutes: 4
