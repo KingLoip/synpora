@@ -85,6 +85,21 @@ class ProviderRetryTests(unittest.TestCase):
         urlopen.assert_called_once()
         sleep.assert_not_called()
 
+
+    @patch("time.sleep")
+    @patch("urllib.request.urlopen")
+    def test_malformed_retry_after_preserves_http_error(self, urlopen, sleep):
+        error = HTTPError("https://provider.example/data", 429, "rate limited",
+                          {"Retry-After": "not-a-date"}, BytesIO(b""))
+        urlopen.side_effect = error
+
+        with self.assertRaises(HTTPError) as caught:
+            _provider_request_json("https://provider.example/data", attempts=3)
+
+        self.assertEqual(caught.exception.code, 429)
+        urlopen.assert_called_once()
+        sleep.assert_not_called()
+
     def test_error_label_reports_http_status_without_response_body(self):
         error = HTTPError("https://provider.example/data?token=secret", 429, "rate limited", {}, BytesIO(b"secret-body"))
 
