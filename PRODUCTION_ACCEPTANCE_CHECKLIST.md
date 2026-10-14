@@ -2,13 +2,20 @@
 
 This checklist is the release gate for the live Railway deployment. A green CI run proves the tested code path and build; it does not by itself prove delivery to a mailbox, long-term feed reliability, persistence after restart, or business-model accuracy.
 
-## Live release status — 2026-10-13
+## Live release status — 2026-10-14
 
-**Not fully production-ready yet.** The latest successful live smoke test (2026-10-13 around 16:40 UTC) observed `status: ready`; the GPU field was external (`Zarobit L40S on-demand listing median`, observation age 318.4 seconds), and the latest eligible snapshot age was 298.3 seconds. CI's syntax, PostgreSQL integration, live smoke and CodeQL jobs passed for the latest checked commit. PostgreSQL and security/configuration checks also passed; safety flags remained off (`hardware_write=false`, `autonomous_control=false`).
+**Production candidate; business acceptance is still incomplete.** The current main commit `daa5ce2dc9ad732062d626c03f204ee0f1e3f6be` was deployed successfully to Railway production at approximately 08:59:50 UTC. The application and PostgreSQL were subsequently reported online with no Railway warning/critical issues and no pending deployment work.
 
-This is a successful point-in-time recovery, not proof of sustained provider reliability. Earlier collector cycles had six Zarobit L40S offers but zero fresh offers, and one cycle reported no fresh Austrian Energy-Charts observation. No Vast.ai key or custom feed was configured at the time of the successful smoke test, so the built-in Zarobit feed briefly supplied eligible data. Keep monitoring repeated collector cycles and confirm the latest eligible snapshot stays within 900 seconds before calling the service fully production-ready.
+Verified evidence for this release:
+- [Production CI and live smoke test](https://github.com/KingLoip/synpora/actions/runs/38539016356) passed, including syntax/unit tests, API and dashboard smoke tests, Docker build, release invariants, PostgreSQL persistence/migration integration, and the live production smoke test.
+- [CodeQL](https://github.com/KingLoip/synpora/actions/runs/38539016634) passed.
+- [Production monitor PR run](https://github.com/KingLoip/synpora/actions/runs/38538892591) passed against production after adding checks for the Railway health endpoint, the canonical `synpora.com` homepage, and `synpora.com/ops`.
+- The recurring read-only monitor is merged and configured for a 15-minute schedule. At the time of this checklist update, a post-merge scheduled invocation had not yet been confirmed; the successful monitor run above was triggered by the pull request.
+- The monitor enforces PostgreSQL readiness, external provenance and per-field freshness limits, successful/live collector status, zero consecutive collector failures, and the safety invariants `hardware_write=false` and `autonomous_control=false`.
 
-**Next operational action:** no secret is needed if the built-in feed continues to provide fresh external prices. If it becomes stale again, configure a legitimate `SYNPORA_VAST_API_KEY` in Railway Variables or a controlled HTTPS feed with an exact hostname allowlist. Never paste secrets into chat or GitHub. See [GPU market-data recovery runbook](GPU_MARKET_DATA_RECOVERY.md).
+These checks are point-in-time evidence, not proof of sustained provider reliability, actual email delivery, restart persistence in production, backup recoverability, or business-model accuracy. Do not mark the product fully production-ready until the applicable manual gates below have recorded evidence.
+
+**Next operational action:** continue observing scheduled monitor runs and repeated collector cycles. No secret is needed while the built-in feed supplies fresh external prices. If the GPU field becomes stale, configure a legitimate `SYNPORA_VAST_API_KEY` in Railway Variables or a controlled HTTPS feed with an exact hostname allowlist. Never paste secrets into chat or GitHub. See [GPU market-data recovery runbook](GPU_MARKET_DATA_RECOVERY.md).
 
 ## Safety invariants — must always pass
 
@@ -19,11 +26,13 @@ This is a successful point-in-time recovery, not proof of sustained provider rel
 
 ## Automated checks
 
-- [ ] GitHub Actions syntax, import, API end-to-end, JWT/auth regression, dashboard, Docker build and release invariant checks pass.
-- [ ] PostgreSQL integration tests pass, including persistence and repeatable/idempotent market migrations.
-- [ ] CodeQL finishes successfully.
-- [ ] Live production smoke test sees the expected commit on the public Railway URL.
-- [ ] `/health`, `/api/v1/system/production-readiness`, `/api/v1/market/data-health` and `/ops` return their expected contracts.
+- [x] GitHub Actions syntax, import, API end-to-end, JWT/auth regression, dashboard, Docker build and release invariant checks pass (2026-10-14; [CI run](https://github.com/KingLoip/synpora/actions/runs/38539016356)).
+- [x] PostgreSQL integration tests pass, including persistence and repeatable/idempotent market migrations (2026-10-14; same CI run).
+- [x] CodeQL finishes successfully (2026-10-14; [CodeQL run](https://github.com/KingLoip/synpora/actions/runs/38539016634)).
+- [x] Live production smoke test sees the expected commit on the public Railway URL (2026-10-14; same CI run).
+- [x] The read-only monitor's production PR check validated the Railway health endpoint, `synpora.com/`, and `synpora.com/ops` (2026-10-14; [monitor run](https://github.com/KingLoip/synpora/actions/runs/38538892591)).
+- [ ] Confirm at least one successful post-merge scheduled monitor invocation (15-minute schedule).
+- [ ] `/health`, `/api/v1/system/production-readiness`, `/api/v1/market/data-health` and `/ops` return their expected contracts in repeated scheduled runs.
 - [ ] `/api/v1/system/collector-status` exposes attempt/success timestamps, quality, failure count and bounded retry timing; degraded data must not advance the last-success timestamp.
 - [ ] The unauthenticated `POST /api/v1/system/email-connection-test` is rejected (403); this endpoint must remain protected.
 
