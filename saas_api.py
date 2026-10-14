@@ -48,7 +48,7 @@ def _provider_request_json(url, headers=None, timeout=5, attempts=3, data=None, 
                             retry_at=retry_at.replace(tzinfo=timezone.utc)
                         delay=max(0.0,(retry_at-datetime.now(timezone.utc)).total_seconds())
                     except (TypeError,ValueError,OverflowError):
-                        raise
+                        raise exc
                 # This request has a short timeout; defer longer waits to the collector's
                 # backoff instead of tying up a worker or retrying before Retry-After.
                 if delay>timeout:
