@@ -2215,7 +2215,11 @@ def install(app):
         hours=max(1,min(72,x.horizon_hours))
         btc_fc,btc_w=_ensemble_forecast(c,"btc",hours,x.btc_hashprice_usd_ph_day)
         gpu_fc,gpu_w=_ensemble_forecast(c,"gpu",hours,x.gpu_hourly_usd)
-        energy_fc,energy_w=_ensemble_forecast(c,"energy",hours,x.energy_cost_eur_kwh)
+        # Energy tariffs are site-specific user inputs. Do not forecast them from historical
+        # Austrian spot prices or other users' locations; hold the supplied tariff constant
+        # until a verified site-specific tariff time series exists.
+        energy_fc=[float(x.energy_cost_eur_kwh)]*hours
+        energy_w={"method":"user_supplied_site_tariff","weights":{}}
         import math
         rows=[]
         for h in range(hours):
@@ -2234,6 +2238,7 @@ def install(app):
                          "btc_hashprice_usd_ph_day":round(btc,4),"gpu_value_eur_kwh":round(gpu_v,5),"forecast_energy_cost_eur_kwh":round(energy,5),
                          "btc_value_eur_kwh":round(btc_v,5),"best_option":"AI Compute" if gpu_v>=btc_v else "BTC Mining"})
         forecast_quality=_forecast_quality(rows,models,conf,hours)
+        forecast_quality["warnings"].append("Energy cost is held at the supplied site tariff; no location-independent electricity-price forecast is applied.")
         snapshot_freshness=_market_snapshot_freshness(c)
         forecast_quality["market_snapshot_freshness"]=snapshot_freshness
         forecast_quality["warnings"] += snapshot_freshness["warnings"]
@@ -2253,10 +2258,15 @@ def install(app):
         assets=[dict(r) for r in c.execute("SELECT id,name,kind,power_kw FROM synpora_saas_assets WHERE farm_id=? ORDER BY created_at",(farm_id,)).fetchall()]
         hours=max(1,min(72,x.horizon_hours)); dt=max(0.25,x.interval_hours)
         try:
-            btc_fc,_=_ensemble_forecast(c,"btc",hours,x.btc_hashprice_usd_ph_day); gpu_fc,_=_ensemble_forecast(c,"gpu",hours,x.gpu_hourly_usd); energy_fc,_=_ensemble_forecast(c,"energy",hours,x.energy_cost_eur_kwh)
-            forecast_source="adaptive_ensemble"
+            btc_fc,_=_ensemble_forecast(c,"btc",hours,x.btc_hashprice_usd_ph_day)
+            gpu_fc,_=_ensemble_forecast(c,"gpu",hours,x.gpu_hourly_usd)
+            forecast_source="adaptive_market_with_site_tariff_input"
         except Exception:
-            btc_fc=[x.btc_hashprice_usd_ph_day]*hours; gpu_fc=[x.gpu_hourly_usd]*hours; energy_fc=[x.energy_cost_eur_kwh]*hours; forecast_source="input_fallback"
+            btc_fc=[x.btc_hashprice_usd_ph_day]*hours
+            gpu_fc=[x.gpu_hourly_usd]*hours
+            forecast_source="input_fallback"
+        # Never apply an Austrian or cross-user energy forecast to this farm.
+        energy_fc=[float(x.energy_cost_eur_kwh)]*hours
         reserve=max(0,min(100,x.battery_reserve_pct)); cap=max(0,x.battery_capacity_kwh); soc=max(cap*reserve/100,min(cap,cap*x.battery_soc_pct/100))
         power=max(0,x.battery_power_kw); ce=max(.01,min(1,x.battery_charge_efficiency)); de=max(.01,min(1,x.battery_discharge_efficiency)); soc_min=cap*reserve/100; initial_soc=soc
         import math
