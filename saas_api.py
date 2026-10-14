@@ -403,8 +403,9 @@ def install(app):
         now=time.time()
         ext_quality=_market_quality(ext,now)
         fields=ext_quality["fields"]
+        # Only globally applicable feeds gate collection success. Regional energy prices are optional.
         all_critical_external=all(fields[k]["source"]=="external" for k in
-            ("btc_hashprice_usd_ph_day","gpu_l40s_usd_hour","eur_usd","austria_spot_eur_kwh"))
+            ("btc_hashprice_usd_ph_day","gpu_l40s_usd_hour","eur_usd"))
         snap={"timestamp":now,
               "btc_price_usd":ext.get("btcPrice"),
               "btc_hashprice_usd_ph_day":fields["btc_hashprice_usd_ph_day"]["value"],
