@@ -10,6 +10,7 @@ Verified evidence for this release:
 - [Production CI and live smoke test](https://github.com/KingLoip/synpora/actions/runs/38539016356) passed, including syntax/unit tests, API and dashboard smoke tests, Docker build, release invariants, PostgreSQL persistence/migration integration, and the live production smoke test.
 - [CodeQL](https://github.com/KingLoip/synpora/actions/runs/38539016634) passed.
 - [Production monitor PR run](https://github.com/KingLoip/synpora/actions/runs/38538892591) passed against production after adding checks for the Railway health endpoint, the canonical `synpora.com` homepage, and `synpora.com/ops`.
+- [Proposed secret/config-path probes](https://github.com/KingLoip/synpora/actions/runs/38553898132) also passed against production: `/.env`, `/.env.production`, `/.git/config`, and `/.git-credentials` all returned HTTP 404. These extra probes are in [PR #16](https://github.com/KingLoip/synpora/pull/16) and are not yet part of the scheduled `main` workflow.
 - The recurring read-only monitor is merged and configured for a 15-minute schedule. At the time of this checklist update, a post-merge scheduled invocation had not yet been confirmed; the successful monitor run above was triggered by the pull request.
 - The monitor enforces PostgreSQL readiness, external provenance and per-field freshness limits, successful/live collector status, zero consecutive collector failures, and the safety invariants `hardware_write=false` and `autonomous_control=false`.
 
