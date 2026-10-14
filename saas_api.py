@@ -32,6 +32,29 @@ def _provider_request_json(url, headers=None, timeout=5, attempts=3, data=None, 
             retryable=exc.code in (429,500,502,503,504)
             if not retryable or attempt+1>=max_attempts:
                 raise
+            if exc.code == 429:
+                # Respect provider rate limits; don't immediately amplify a 429.
+                retry_after=exc.headers.get("Retry-After") if exc.headers else None
+                if not retry_after:
+                    raise
+                try:
+                    delay=max(0.0,float(retry_after))
+                except (TypeError,ValueError):
+                    try:
+                        from datetime import datetime, timezone
+                        from email.utils import parsedate_to_datetime
+                        retry_at=parsedate_to_datetime(retry_after)
+                        if retry_at.tzinfo is None:
+                            retry_at=retry_at.replace(tzinfo=timezone.utc)
+                        delay=max(0.0,(retry_at-datetime.now(timezone.utc)).total_seconds())
+                    except (TypeError,ValueError,OverflowError):
+                        raise
+                # This request has a short timeout; defer longer waits to the collector's
+                # backoff instead of tying up a worker or retrying before Retry-After.
+                if delay>timeout:
+                    raise
+                time.sleep(delay)
+                continue
         except (urllib.error.URLError, TimeoutError, ConnectionError, OSError):
             if attempt+1>=max_attempts:
                 raise
