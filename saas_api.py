@@ -1904,6 +1904,7 @@ def install(app):
         from datetime import datetime
         import math
         _ensure_market_table(c)
+        _ensure_learning_tables(c)
         # Market outcomes must be later, fully external global observations. For site energy,
         # prefer a verified tariff from that observation; otherwise use the tariff captured
         # with the decision. Never substitute an unrelated regional price.
