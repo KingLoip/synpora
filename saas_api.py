@@ -103,6 +103,11 @@ def _lium_l40s_price_observation(raw, now, max_age_seconds=900):
         model = str(node.get("gpu_model") or "").upper()
         if "L40S" not in model:
             continue
+        # The primary Zarobit source is on-demand. Do not mix reclaimable spot
+        # listings or rows with unknown pricing tier into that comparable median.
+        tier = str(node.get("tier") or "").strip().lower()
+        if tier not in ("secure", "on_demand", "ondemand"):
+            continue
         available = node.get("available_gpu_count")
         if available is not None:
             try:
