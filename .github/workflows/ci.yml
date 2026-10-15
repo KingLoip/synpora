@@ -349,7 +349,14 @@ jobs:
           snap_again=c.post("/api/v1/market/snapshot",headers={"X-SYNPORA-MARKET-TOKEN":"ci-market-secret"})
           assert snap_again.status_code==200, snap_again.text
           # Market API must disclose provenance instead of presenting reference prices as live.
-          market=c.get("/api/v1/market/live")
+          # Make this contract test deterministic even after the live-provider adapter tests above.
+          old_disable_for_live=os.environ.get("SYNPORA_DISABLE_BUILTIN_MARKET_SOURCES")
+          os.environ["SYNPORA_DISABLE_BUILTIN_MARKET_SOURCES"]="1"
+          try:
+              market=c.get("/api/v1/market/live")
+          finally:
+              if old_disable_for_live is None: os.environ.pop("SYNPORA_DISABLE_BUILTIN_MARKET_SOURCES",None)
+              else: os.environ["SYNPORA_DISABLE_BUILTIN_MARKET_SOURCES"]=old_disable_for_live
           assert market.status_code==200, market.text
           mq=market.json()["data_quality"]
           assert mq["overall"] in {"live","partial","fallback"}, mq
