@@ -385,10 +385,6 @@ jobs:
                       "timestamp":datetime.datetime.fromtimestamp(now,datetime.timezone.utc).isoformat()})
               if "frankfurter.dev" in url:
                   return BuiltinResponse({"date":datetime.datetime.now(datetime.timezone.utc).date().isoformat(),"base":"EUR","quote":"USD","rate":1.12})
-              if "energy-charts.info" in url:
-                  return BuiltinResponse({"series":[{"id":"price","name":"Price","unit":"EUR/MWh"}],
-                      "data":[{"timestamp":datetime.datetime.fromtimestamp(now-300,datetime.timezone.utc).isoformat(),"values":{"price":75.0}}],
-                      "attributes":{"valid_until":datetime.datetime.fromtimestamp(now+1800,datetime.timezone.utc).isoformat()}})
               if "zarobit.com" in url:
                   return BuiltinResponse({"data":[
                       {"gpu_model":"L40S","price_type":"on_demand","price_usd_per_gpu_hour":"1.20","collected_at":datetime.datetime.fromtimestamp(now,datetime.timezone.utc).isoformat()},
@@ -410,10 +406,9 @@ jobs:
               assert bm["data_quality"]["details"]["fields"]["eur_usd"]["source"]=="external", bm["data_quality"]
               assert bm["data_quality"]["details"]["fields"]["eur_usd"]["provider"].startswith("Frankfurter"), bm["data_quality"]
               energy_field=bm["data_quality"]["details"]["fields"]["austria_spot_eur_kwh"]
-              assert energy_field["source"]=="external", bm["data_quality"]
-              assert energy_field["source_url"].startswith("https://api.energy-charts.info/"), energy_field
-              assert "CC BY 4.0" in energy_field["license"], energy_field
-              assert abs(bm["austria_spot_eur_kwh"]-0.075)<0.00001, bm["austria_spot_eur_kwh"]
+              assert energy_field["source"]=="reference", bm["data_quality"]
+              assert "source_url" not in energy_field, energy_field
+              assert abs(bm["austria_spot_eur_kwh"]-0.2055)<0.00001, bm["austria_spot_eur_kwh"]
               gpu_field=bm["data_quality"]["details"]["fields"]["gpu_l40s_usd_hour"]
               assert gpu_field["source"]=="external", bm["data_quality"]
               assert gpu_field["provider"].startswith("Zarobit"), gpu_field
@@ -800,13 +795,14 @@ jobs:
           assert 'SYNPORA_MARKET_DATA_API_KEY' in s
           assert 'SYNPORA_VAST_API_KEY' in s
           assert 'api.frankfurter.dev/v2/providers/ecb/rate/eur/usd' in s
-          assert 'api.energy-charts.info/v2/price_current?bzn=AT' in s
+          assert 'api.energy-charts.info/v2/price_current?bzn=AT' not in s
+          assert 'Regional electricity prices are deliberately not fetched as global market data.' in s
           assert 'api.zarobit.com/api/v1/prices/current?gpu_model=L40S' in s
           assert 'stratumv2.com/api/hashprice' in s
           assert 'Stratum V2 hashprice API' in s
           assert 'attribute Zarobit' in s
           assert 'cloud.vast.ai/api/v0/bundles/' in s
-          assert '"source_url"' in s and '"license":"CC BY 4.0; attribute Energy-Charts.info"' in s
+          assert '"source_url"' in s and '"license":"CC BY 4.0; attribute Zarobit"' in s
           assert 'gpu_capex_eur' in s and 'btc_capex_eur' in s
           assert 'depreciation_and_maintenance_eur_kwh' in s
           assert 'def _market_feed_host_allowed' in s
