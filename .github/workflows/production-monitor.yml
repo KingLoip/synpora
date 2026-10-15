@@ -9,6 +9,8 @@ on:
   workflow_run:
     workflows: ["SYNPORA CI"]
     types: [completed]
+    # Filter upstream PR checks here, before they can compete with scheduled live runs.
+    branches: [main]
   pull_request:
     paths:
       - ".github/workflows/production-monitor.yml"
@@ -17,7 +19,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: synpora-production-monitor
+  # Keep schedule, manual, upstream-CI, and pull-request checks in separate groups.
+  # A skipped/non-main workflow_run must not cancel an in-progress scheduled live check.
+  group: synpora-production-monitor-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:
