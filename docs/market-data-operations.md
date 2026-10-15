@@ -14,7 +14,7 @@ The POST fallback uses `type: ondemand`, `rentable: true`, and a bounded result 
 
 ## Collector cadence and freshness margin
 
-The internal collector retries a successful live cycle every 12 minutes, leaving a 3-minute margin against the 15-minute freshness gate. Provider-specific cache TTLs remain independent; in particular, the anonymous Zarobit feed is still polled no more often than its 15-minute cache/quota window. Degraded collection uses bounded backoff and must never advance the last-success timestamp.
+The internal collector retries a successful live cycle every 12 minutes, leaving a 3-minute margin against the 15-minute freshness gate. Provider-specific cache TTLs remain independent; in particular, the anonymous Zarobit feed is still polled no more often than its 15-minute cache/quota window. If Zarobit's listing timestamps are stale, the collector falls back to Lium's public rentable-node feed, which carries a generated timestamp and is rebuilt at most once per minute. Only current, available L40S offers with finite positive per-GPU prices count; missing/stale timestamps, reference prices, and unavailable nodes are rejected. Degraded collection uses bounded backoff and must never advance the last-success timestamp.
 
 ## Production checks
 
