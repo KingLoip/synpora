@@ -920,48 +920,9 @@ def install(app):
             logger.warning("Market provider %s failed (%s).", "frankfurter_eur_usd", _provider_error_label(exc))
         if not frankfurter_ok:
             logger.warning("Market provider %s returned no fresh usable observation.", "frankfurter_eur_usd")
-        # Fraunhofer ISE Energy-Charts: current Austrian day-ahead spot interval.
-        energy_charts_ok=False
-        try:
-            raw=_provider_json("https://api.energy-charts.info/v2/price_current?bzn=AT",ttl_seconds=300)
-            series=raw.get("series",[]) if isinstance(raw,dict) else []
-            data=raw.get("data",[]) if isinstance(raw,dict) else []
-            price_series=next((s for s in series if "price" in str(s.get("id","")).lower() or "price" in str(s.get("name","")).lower()),None)
-            price_value=None; interval_ts=None
-            for point in data:
-                values=point.get("values",{}) if isinstance(point,dict) else {}
-                key=price_series.get("id") if price_series else None
-                candidate=values.get(key) if key else None
-                if candidate is None and len(values)==1:
-                    candidate=next(iter(values.values()))
-                if candidate is not None:
-                    try:
-                        number=float(candidate)
-                        if math.isfinite(number):
-                            price_value=number
-                            interval_ts=_parse_provider_timestamp(point.get("timestamp"))
-                    except Exception:
-                        continue
-            attrs=raw.get("attributes",{}) if isinstance(raw,dict) else {}
-            valid_until_value=attrs.get("valid_until") or raw.get("valid_until") or raw.get("available_until")
-            valid_until=_parse_provider_timestamp(valid_until_value) if valid_until_value else None
-            unit=str((price_series or {}).get("unit") or raw.get("unit") or "EUR/MWh").lower()
-            if price_value is not None and interval_ts is not None and valid_until is not None and interval_ts<=now+60 and now-interval_ts<=7200 and valid_until>now:
-                if "mwh" in unit:
-                    price_value/=1000.0
-                elif "kwh" not in unit:
-                    raise ValueError("Unknown electricity price unit")
-                if -1.0<=price_value<=10.0:
-                    out["austriaSpotEurKwh"]=price_value
-                    energy_charts_ok=True
-                    meta["austriaSpotEurKwh"]={"source":"external","provider":"Energy-Charts.info (Fraunhofer ISE), Austria day-ahead",
-                        "source_url":"https://api.energy-charts.info/v2/price_current?bzn=AT",
-                        "license":"CC BY 4.0; attribute Energy-Charts.info",
-                        "observed_at":interval_ts,"valid_until":valid_until,"age_seconds":round(now-interval_ts,1),"valid":True}
-        except Exception as exc:
-            logger.warning("Market provider %s failed (%s).", "energy_charts_austria", _provider_error_label(exc))
-        if not energy_charts_ok:
-            logger.warning("Market provider %s returned no fresh usable observation.", "energy_charts_austria")
+        # Regional electricity prices are deliberately not fetched as global market data.
+        # The legacy Austria field remains a reference-only compatibility field; it is never
+        # treated as a site tariff or used to qualify international market snapshots.
         # Zarobit publishes an anonymous, provenance-tagged GPU rental listing API.
         # Poll at most every 15 minutes to stay within its documented anonymous daily quota.
         zarobit_ok=False
@@ -2112,7 +2073,9 @@ def install(app):
     def market_data_health():
         c=init_db(); _ensure_market_table(c)
         rows=c.execute("SELECT ts,payload FROM market_snapshots ORDER BY ts DESC LIMIT ?",(500,)).fetchall()
-        now=time.time(); eligible=[]; excluded=0; latest_quality=None; latest_source=None
+        now=time.time()
+        eligible=[]; market_ready=[]; excluded=0; missing_site_tariff=0
+        latest_quality=None; latest_source=None
         latest_snapshot_ts=float(rows[0][0]) if rows else None
         latest_snapshot_age=max(0.0,now-latest_snapshot_ts) if latest_snapshot_ts is not None else None
         latest_snapshot_payload={}
@@ -2127,38 +2090,89 @@ def install(app):
             try:
                 payload=json.loads(row[1] or "{}")
                 if not isinstance(payload,dict):
-                    excluded+=1; continue
+                    excluded+=1
+                    continue
                 if latest_quality is None:
-                    latest_quality=payload.get("data_quality"); latest_source=payload.get("source","unknown")
-                if _snapshot_is_learning_eligible(payload):
+                    latest_quality=payload.get("data_quality")
+                    latest_source=payload.get("source","unknown")
+                globally_ready=_snapshot_is_market_ready(payload)
+                site_eligible=_snapshot_is_learning_eligible(payload)
+                if globally_ready:
+                    market_ready.append({"ts":float(row[0]),"payload":payload})
+                if site_eligible:
                     eligible.append({"ts":float(row[0]),"payload":payload})
                 else:
                     excluded+=1
+                    # Distinguish a missing site tariff from genuinely unusable global data.
+                    if globally_ready:
+                        fields=(payload.get("data_quality",{}).get("fields",{})
+                            if isinstance(payload.get("data_quality"),dict) else {})
+                        field=fields.get("site_energy_cost_eur_kwh") if isinstance(fields,dict) else None
+                        try:
+                            tariff=float(payload["site_energy_cost_eur_kwh"])
+                            age=float(field["age_seconds"])
+                            valid=(isinstance(field,dict) and field.get("source")=="external"
+                                and field.get("available") is True and __import__("math").isfinite(tariff)
+                                and -1.0<=tariff<=10.0 and __import__("math").isfinite(age) and 0<=age<=7200)
+                        except (KeyError,TypeError,ValueError,OverflowError):
+                            valid=False
+                        if not valid:
+                            missing_site_tariff+=1
             except (TypeError,ValueError,json.JSONDecodeError):
                 excluded+=1
         newest=eligible[0] if eligible else None
         age=max(0.0,now-newest["ts"]) if newest else None
+        newest_market=market_ready[0] if market_ready else None
+        market_age=max(0.0,now-newest_market["ts"]) if newest_market else None
         status="missing" if not rows else ("no_eligible_data" if not newest else ("stale" if age>900 else "eligible_data_available"))
         warnings=[]
-        if not rows: warnings.append("No market snapshots have been stored.")
-        if not newest: warnings.append("No snapshot has verified external provenance for every historical model/backtesting field, including a site-specific energy tariff.")
-        elif age>900: warnings.append("The latest eligible external snapshot is older than 15 minutes.")
-        if excluded: warnings.append("Reference, mixed, incomplete, and unknown-provenance snapshots are excluded from historical fitting/backtesting; online learning requires a later globally eligible external snapshot and a recorded or verified site tariff.")
+        if not rows:
+            warnings.append("No market snapshots have been stored.")
+        if not newest:
+            if market_ready:
+                warnings.append(
+                    f"No historical snapshot has a verified site-specific tariff. {len(market_ready)} globally eligible market snapshots can still be backtested with an explicit constant tariff; no tariff is inferred or assumed automatically."
+                )
+            else:
+                warnings.append("No snapshot has verified external provenance for all required market fields.")
+        elif age>900:
+            warnings.append("The latest eligible external snapshot with a site tariff is older than 15 minutes.")
+        if excluded:
+            warnings.append("Reference, mixed, incomplete, and unknown-provenance snapshots are excluded from site-tariff learning. International walk-forward backtests may use an explicitly supplied constant tariff.")
         collection_status=("never_collected" if latest_snapshot_ts is None else
             "recent_snapshot" if latest_snapshot_age is not None and latest_snapshot_age<=1200 else "stale_snapshot")
         latest_quality_fields=(latest_snapshot_payload.get("data_quality",{}).get("fields",{})
             if isinstance(latest_snapshot_payload.get("data_quality",{}),dict) else {})
-        return {"status":status,"snapshots_scanned":len(rows),"eligible_snapshots":len(eligible),
-            "excluded_or_invalid_snapshots":excluded,"latest_snapshot_source":latest_source,
-            "latest_snapshot_quality":latest_quality,"latest_snapshot_timestamp":latest_snapshot_ts,
+        return {
+            "status":status,
+            "snapshots_scanned":len(rows),
+            "eligible_snapshots":len(eligible),
+            "site_tariff_eligible_snapshots":len(eligible),
+            "market_ready_snapshots":len(market_ready),
+            "snapshots_missing_site_tariff":missing_site_tariff,
+            "excluded_or_invalid_snapshots":excluded,
+            "latest_snapshot_source":latest_source,
+            "latest_snapshot_quality":latest_quality,
+            "latest_snapshot_timestamp":latest_snapshot_ts,
             "latest_snapshot_age_seconds":round(latest_snapshot_age,1) if latest_snapshot_age is not None else None,
             "collection_status":collection_status,
             "latest_snapshot_providers":latest_snapshot_payload.get("providers",[]),
             "latest_snapshot_fields":latest_quality_fields,
             "latest_eligible_timestamp":newest["ts"] if newest else None,
             "latest_eligible_age_seconds":round(age,1) if age is not None else None,
+            "latest_market_ready_timestamp":newest_market["ts"] if newest_market else None,
+            "latest_market_ready_age_seconds":round(market_age,1) if market_age is not None else None,
             "learning_fields_required":["btc_hashprice_usd_ph_day","gpu_l40s_usd_hour","eur_usd","site_energy_cost_eur_kwh"],
-            "warnings":warnings,"recommendation_only":True,"hardware_write":False}
+            "backtest_capabilities":{
+                "explicit_constant_tariff_supported":True,
+                "tariff_range_eur_kwh":{"minimum":-1.0,"maximum":10.0},
+                "mode":"user_supplied_constant",
+                "site_tariff_required_for_unassumed_learning":True
+            },
+            "warnings":warnings,
+            "recommendation_only":True,
+            "hardware_write":False
+        }
 
     @app.get("/api/v1/farms/{farm_id}/paper-trading")
     def paper_trading_status(farm_id:str,authorization:str|None=Header(default=None)):
