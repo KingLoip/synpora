@@ -1,5 +1,11 @@
 # SYNPORA market-data operations
 
+## International market data and site tariffs
+
+Global market readiness uses only fresh, externally sourced Bitcoin hashprice, L40S rental pricing, and EUR/USD. Regional electricity feeds are not fetched as a universal price: the legacy Austria spot field is reference-only for backwards compatibility and must never be used as a farm's site tariff. The collector and data-health endpoint distinguish globally eligible market snapshots from snapshots that also contain a verified site tariff.
+
+International walk-forward backtests can use an explicitly supplied constant `energy_cost_eur_kwh` (range -1.0 to 10.0 EUR/kWh). The result is assumption-based and reports `energy_cost_mode=user_supplied_constant`; it is not evidence that the tariff matches a real site. Site-specific online learning must use a tariff supplied with a decision or a verified site-tariff observation. Never invent a tariff.
+
 ## GPU rental price source
 
 SYNPORA reads GPU rental prices only. The Vast.ai integration is read-only: it searches bundle offers and extracts per-GPU hourly prices; it must not create, modify, or terminate instances.
