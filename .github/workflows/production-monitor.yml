@@ -19,8 +19,9 @@ permissions:
   contents: read
 
 concurrency:
-  # Pull-request validation must never cancel a scheduled/manual live-production check.
-  group: synpora-production-monitor-${{ github.event_name == 'pull_request' && 'pull-request' || 'live' }}
+  # Keep schedule, manual, upstream-CI, and pull-request checks in separate groups.
+  # A skipped/non-main workflow_run must not cancel an in-progress scheduled live check.
+  group: synpora-production-monitor-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:
