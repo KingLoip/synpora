@@ -12,6 +12,10 @@ Lookup order:
 
 The POST fallback uses `type: ondemand`, `rentable: true`, and a bounded result limit. The request is cached for five minutes and response size remains capped. HTTP 401/403 errors are not retried as query-schema errors; verify the operator's API key and read permissions.
 
+## Collector cadence and freshness margin
+
+The internal collector retries a successful live cycle every 12 minutes, leaving a 3-minute margin against the 15-minute freshness gate. Provider-specific cache TTLs remain independent; in particular, the anonymous Zarobit feed is still polled no more often than its 15-minute cache/quota window. Degraded collection uses bounded backoff and must never advance the last-success timestamp.
+
 ## Production checks
 
 - `/health`: process liveness only; not proof of market-data quality.
