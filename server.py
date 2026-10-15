@@ -167,10 +167,14 @@ async function refresh(){
     if(results.some(r=>!r.ok))throw new Error('Ein Status-Endpunkt ist nicht erreichbar.');
     const [r,m,v,k]=await Promise.all(results.map(x=>x.json()));
     show('ready',r.status==='ready'?'Bereit':'Konfiguration prüfen',r.status==='ready'?'ok':'warn',JSON.stringify(r,null,2));
-    const eligible=m.eligible_snapshots||0,excluded=m.excluded_or_invalid_snapshots||0;
-    const marketKind=(m.latest_eligible_age_seconds!==null&&m.latest_eligible_age_seconds!==undefined&&m.latest_eligible_age_seconds<=900&&eligible>0)?'ok':'warn';
-    show('market',marketKind==='ok'?'Externe Daten vorhanden':'Datenqualität prüfen',marketKind,JSON.stringify(m,null,2));
-    show('learning',eligible>0?'Geeignete Snapshots: '+eligible:'Noch keine geeigneten Snapshots',eligible>0?'ok':'warn','Ausgeschlossen: '+excluded+'\nLetzter geeigneter Snapshot (Alter Sekunden): '+(m.latest_eligible_age_seconds??'—')+'\nWarnungen: '+JSON.stringify(m.warnings||[]));
+    const eligible=m.site_tariff_eligible_snapshots??m.eligible_snapshots??0,excluded=m.excluded_or_invalid_snapshots||0;
+    const globalReady=m.market_ready_snapshots||0;
+    const marketKind=(m.latest_market_ready_age_seconds!==null&&m.latest_market_ready_age_seconds!==undefined&&m.latest_market_ready_age_seconds<=900&&globalReady>0)?'ok':'warn';
+    show('market',marketKind==='ok'?'Globale Marktdaten frisch':'Datenqualität prüfen',marketKind,JSON.stringify(m,null,2));
+    const explicitBacktest=m.backtest_capabilities?.explicit_constant_tariff_supported===true&&globalReady>=2;
+    const learningTitle=eligible>0?'Standorttarif verifiziert: '+eligible:(explicitBacktest?'Globaldaten bereit · Tarif erforderlich':'Historische Datenbasis unvollständig');
+    const learningKind=eligible>0?'ok':'warn';
+    show('learning',learningTitle,learningKind,'Globale Marktsnapshots: '+globalReady+'\\nMit verifiziertem Standorttarif: '+eligible+'\\nOhne verifizierten Standorttarif: '+(m.snapshots_missing_site_tariff??'—')+'\\nInternationaler Backtest: '+(explicitBacktest?'mit explizitem konstantem Tarif möglich':'noch nicht genügend globale Snapshots')+'\\nAusgeschlossen: '+excluded+'\\nLetzter globaler Snapshot (Alter Sekunden): '+(m.latest_market_ready_age_seconds??'—')+'\\nLetzter tarifgeeigneter Snapshot (Alter Sekunden): '+(m.latest_eligible_age_seconds??'—')+'\\nWarnungen: '+JSON.stringify(m.warnings||[]));
     const successAge=k.last_success_at?Math.max(0,Date.now()/1000-k.last_success_at):null;
     const collectorOk=k.enabled&&k.last_attempt_result==='success'&&successAge!==null&&successAge<=900&&k.last_quality==='live';
     const collectorDegraded=k.last_attempt_result==='degraded'||k.last_attempt_result==='failure';
