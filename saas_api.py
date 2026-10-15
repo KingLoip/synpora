@@ -70,6 +70,27 @@ def _provider_error_label(exc):
     return type(exc).__name__
 
 
+def _is_fresh_public_gpu_observation(meta, max_age_seconds=900):
+    """Keep a fresh public provider quote ahead of the optional keyed fallback."""
+    import math
+
+    if not isinstance(meta, dict):
+        return False
+    provider = str(meta.get("provider", ""))
+    if not (provider.startswith("Zarobit") or provider.startswith("Lium")):
+        return False
+    try:
+        age = float(meta.get("age_seconds"))
+    except (TypeError, ValueError):
+        return False
+    return (
+        meta.get("source") == "external"
+        and meta.get("valid", False) is True
+        and math.isfinite(age)
+        and -60 <= age <= max_age_seconds
+    )
+
+
 def _lium_l40s_price_observation(raw, now, max_age_seconds=900):
     """Return a fresh median from Lium's timestamped, currently rentable nodes feed.
 
@@ -994,21 +1015,14 @@ def install(app):
             except Exception as exc:
                 logger.warning("Market provider %s failed (%s).","lium_l40s",_provider_error_label(exc))
         if not zarobit_ok and not lium_ok:
-            logger.warning("Market providers returned no fresh usable L40S offers; Zarobit counts=%s.",
+            logger.warning("No fresh usable L40S offers from public feeds; checking Vast.ai fallback if configured. Zarobit counts=%s.",
                 counts if "counts" in locals() else {"response":"unavailable"})
         # Vast.ai offer sampling is optional and requires the operator's own API key.
         vast_key=os.getenv("SYNPORA_VAST_API_KEY","").strip()
         # Prefer the fresh, timestamped public market median. Vast.ai is an operator-key
         # fallback only when the public source did not yield a valid fresh observation.
         public_gpu_meta=meta.get("gpuHourlyUsd",{})
-        try:
-            public_gpu_age=float(public_gpu_meta.get("age_seconds",float("inf"))) if isinstance(public_gpu_meta,dict) else float("inf")
-        except (TypeError,ValueError):
-            public_gpu_age=float("inf")
-        public_gpu_available=(zarobit_ok and isinstance(public_gpu_meta,dict) and
-            str(public_gpu_meta.get("provider","")).startswith("Zarobit") and
-            public_gpu_meta.get("source")=="external" and public_gpu_meta.get("valid",False) and
-            math.isfinite(public_gpu_age) and -60<=public_gpu_age<=900)
+        public_gpu_available=_is_fresh_public_gpu_observation(public_gpu_meta)
         if vast_key and not public_gpu_available:
             try:
                 offers=_vastai_l40s_offers(vast_key,_provider_json,_provider_json_post)
@@ -1033,6 +1047,8 @@ def install(app):
                     meta["gpuHourlyUsd"]={"source":"external","provider":"Vast.ai L40S marketplace median",
                         "source_url":"https://vast.ai/developers/api",
                         "observed_at":now,"age_seconds":0.0,"offer_count":len(prices),"valid":True}
+                    logger.info("Market provider %s supplied %s current rentable L40S offers.",
+                        "vastai_l40s",len(prices))
                 else:
                     logger.warning("Market provider %s returned no usable L40S prices; response_offers=%s.",
                         "vastai_l40s", len(offers) if isinstance(offers,list) else 0)

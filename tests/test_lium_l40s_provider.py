@@ -1,7 +1,7 @@
 import unittest
 from datetime import datetime, timedelta, timezone
 
-from saas_api import _lium_l40s_price_observation
+from saas_api import _is_fresh_public_gpu_observation, _lium_l40s_price_observation
 
 
 def timestamp_at(moment):
@@ -9,6 +9,27 @@ def timestamp_at(moment):
 
 
 class LiumL40SProviderTests(unittest.TestCase):
+    def test_fresh_lium_public_quote_prevents_keyed_fallback_override(self):
+        self.assertTrue(_is_fresh_public_gpu_observation({
+            "source": "external",
+            "provider": "Lium public L40S rentable-node median",
+            "age_seconds": 45,
+            "valid": True,
+        }))
+
+    def test_stale_reference_or_unknown_provider_does_not_prevent_fallback(self):
+        base = {
+            "source": "external",
+            "provider": "Lium public L40S rentable-node median",
+            "age_seconds": 901,
+            "valid": True,
+        }
+        self.assertFalse(_is_fresh_public_gpu_observation(base))
+        base.update({"age_seconds": 45, "source": "reference"})
+        self.assertFalse(_is_fresh_public_gpu_observation(base))
+        base.update({"source": "external", "provider": "unknown"})
+        self.assertFalse(_is_fresh_public_gpu_observation(base))
+
     def test_uses_median_of_fresh_available_l40s_offers_only(self):
         now = datetime(2026, 10, 15, 13, 40, tzinfo=timezone.utc).timestamp()
         payload = {

@@ -2,17 +2,20 @@
 
 This checklist is the release gate for the live Railway deployment. A green CI run proves the tested code path and build; it does not by itself prove delivery to a mailbox, long-term feed reliability, persistence after restart, or business-model accuracy.
 
-## Live release status — 2026-10-14
+## Live release status — 2026-10-15
 
-**Still a production candidate, not fully production-ready.** The international-readiness change was merged as `03810cf9cf61605e17f2d1c06cd8e54036ff6a5a` and deployed successfully. The bounded provider-retry change was then merged as `0d4366dfdda1827258ef60e6d4fc147666c853cd` and also deployed successfully. PostgreSQL and the application are online; Railway reports no current warnings, critical issues, crashed replicas, or failed deployments.
+**Status: production candidate; full business acceptance is not yet complete.** Main commit `cbfaa9c86ebce58d3e37881cfbbd4a91330b3fc7` is deployed to Railway (deployment `30febc50-2033-4758-b1e0-fc583de9ac86`). Main CI, CodeQL, and the post-deploy live production monitor passed. The monitor verified the public Railway endpoint and `synpora.com`, the operations dashboard, secret/config path blocking, PostgreSQL readiness, fresh global market data, and the safety invariants. Railway reports the app and PostgreSQL online, with no active warnings/criticals or recent failed deployments. In the last 24 hours, 1,887 HTTP requests were recorded with 0 HTTP 5xx responses; client errors are excluded from that server-error metric.
 
-The PR checks for the latest code passed: syntax/provider unit tests, import/API smoke, JWT regression, dashboard smoke, Docker build, release invariants, PostgreSQL integration, and CodeQL. After deployment, the health, release, production-readiness, data-health, collector-status, and operations routes returned HTTP 200; the unauthenticated SMTP diagnostic correctly returned HTTP 403. Railway recorded **0 HTTP 5xx responses over the last hour**. This is good operational evidence, but not a substitute for checking response payloads or a sustained observation window.
+**Market-data status:** Global readiness is separate from site-specific learning. The last verified post-deploy monitor found fresh externally sourced hashprice, L40S pricing, and EUR/USD; it reported 272 globally market-ready historical snapshots. It also reported 0 site-tariff-eligible snapshots and 500 excluded/invalid snapshots. The production collector has observed stale Zarobit listing timestamps, so repeated fresh cycles—not a single successful monitor—must still be confirmed. The configured Vast.ai key is present as a Railway variable, but its secret value is not exposed or independently inspected.
 
-**International data policy:** Austrian/aWATTar prices are no longer a global market-readiness requirement. Energy cost remains essential for profitability, but must be supplied for the actual site/tariff. Forecast plans hold the supplied site tariff constant rather than forecasting from Austrian history. Learning/backtesting is deliberately not considered validated until verified, site-appropriate energy-cost labels are available.
+**Business acceptance still open:** no verified real site-specific electricity tariff has been supplied, no end-to-end verification email has been confirmed received in a controlled mailbox, and production PostgreSQL persistence after a controlled restart plus a backup/restore test have not been demonstrated. These cannot be inferred from CI or HTTP 200 responses. Do not mark SYNPORA fully production-ready until applicable gates below have evidence. Keep the product in recommendation-only mode.
 
-The Austrian Energy-Charts provider still returned HTTP 503 during a collection cycle; older Zarobit listings have also been stale. These regional/provider failures must not be mistaken for global market failure, but they do reinforce the need to verify repeated successful collection cycles and fresh GPU pricing. The latest observed collector POST returned HTTP 200; one cycle alone does not prove durable feed reliability. The post-merge scheduled production-monitor result has not yet been independently confirmed in this checklist.
+## Next operational action
 
-**Next operational action:** verify the scheduled production monitor and repeated collector freshness. If GPU prices become stale, validate the configured `SYNPORA_VAST_API_KEY` directly in Railway Variables or use a controlled HTTPS feed with an exact hostname allowlist. Never paste secrets into chat or GitHub. See [GPU market-data recovery runbook](GPU_MARKET_DATA_RECOVERY.md).
+1. Observe repeated scheduled live-monitor runs and collector cycles, and investigate any L40S freshness regression without lowering provenance or age thresholds.
+2. Supply a verified site-specific electricity tariff for the farm to evaluate real profitability and site-specific learning; explicit constant-tariff backtests remain assumption-based.
+3. Complete an authorized end-to-end email-verification test to a controlled mailbox.
+4. Verify production persistence after a controlled application restart and test PostgreSQL backup/restore before relying on production data.
 
 ## Safety invariants — must always pass
 
