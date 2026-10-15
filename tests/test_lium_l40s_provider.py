@@ -16,6 +16,7 @@ class LiumL40SProviderTests(unittest.TestCase):
             "nodes": [
                 {"gpu_model": "L40S", "tier": "secure", "available_gpu_count": 1, "price_per_gpu_hour": 0.38},
                 {"gpu_model": "NVIDIA L40S", "tier": "secure", "available_gpu_count": 2, "price_per_gpu_hour": "0.42"},
+                {"gpu_model": "L40S", "tier": "spot", "available_gpu_count": 1, "price_per_gpu_hour": 0.10},
                 {"gpu_model": "L40", "available_gpu_count": 1, "price_per_gpu_hour": 0.33},
                 {"gpu_model": "L40S", "tier": "secure", "available_gpu_count": 0, "price_per_gpu_hour": 0.31},
                 {"gpu_model": "L40S", "tier": "secure", "available_gpu_count": 1, "price_per_gpu_hour": 0},
