@@ -14,12 +14,12 @@ class LiumL40SProviderTests(unittest.TestCase):
         payload = {
             "generated_at": timestamp_at(datetime.fromtimestamp(now, timezone.utc) - timedelta(seconds=45)),
             "nodes": [
-                {"gpu_model": "L40S", "available_gpu_count": 1, "price_per_gpu_hour": 0.38},
-                {"gpu_model": "NVIDIA L40S", "available_gpu_count": 2, "price_per_gpu_hour": "0.42"},
+                {"gpu_model": "L40S", "tier": "secure", "available_gpu_count": 1, "price_per_gpu_hour": 0.38},
+                {"gpu_model": "NVIDIA L40S", "tier": "secure", "available_gpu_count": 2, "price_per_gpu_hour": "0.42"},
                 {"gpu_model": "L40", "available_gpu_count": 1, "price_per_gpu_hour": 0.33},
-                {"gpu_model": "L40S", "available_gpu_count": 0, "price_per_gpu_hour": 0.31},
-                {"gpu_model": "L40S", "available_gpu_count": 1, "price_per_gpu_hour": 0},
-                {"gpu_model": "L40S", "available_gpu_count": 1, "price_per_gpu_hour": "invalid"},
+                {"gpu_model": "L40S", "tier": "secure", "available_gpu_count": 0, "price_per_gpu_hour": 0.31},
+                {"gpu_model": "L40S", "tier": "secure", "available_gpu_count": 1, "price_per_gpu_hour": 0},
+                {"gpu_model": "L40S", "tier": "secure", "available_gpu_count": 1, "price_per_gpu_hour": "invalid"},
             ],
         }
 
