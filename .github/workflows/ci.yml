@@ -531,6 +531,11 @@ jobs:
           assert data_health.status_code==200, data_health.text
           dh=data_health.json()
           assert dh["eligible_snapshots"]>=3 and dh["excluded_or_invalid_snapshots"]>=2, dh
+          assert dh["site_tariff_eligible_snapshots"]==dh["eligible_snapshots"], dh
+          assert dh["market_ready_snapshots"]>=dh["site_tariff_eligible_snapshots"], dh
+          assert dh["snapshots_missing_site_tariff"]>=0, dh
+          assert dh["backtest_capabilities"]["explicit_constant_tariff_supported"] is True, dh
+          assert dh["backtest_capabilities"]["site_tariff_required_for_unassumed_learning"] is True, dh
           assert dh["latest_snapshot_timestamp"] is not None, dh
           assert dh["latest_snapshot_age_seconds"]>=0, dh
           assert dh["collection_status"] in {"recent_snapshot","stale_snapshot","never_collected"}, dh
