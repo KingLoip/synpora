@@ -55,7 +55,7 @@ def market_collector_status():
     return status
 
 def _market_loop():
-    # Collect every 15 minutes on success; retry failures with bounded exponential backoff.
+    # Collect at the configured interval on success; retry failures with bounded exponential backoff.
     # Never log credentials or exception messages.
     import logging
     logger=logging.getLogger("synpora.market_collection")
