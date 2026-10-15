@@ -1018,7 +1018,7 @@ def install(app):
                 if lium_observation:
                     out["gpuHourlyUsd"]=lium_observation["price_usd_per_gpu_hour"]
                     meta["gpuHourlyUsd"]={"source":"external","provider":"Lium public L40S rentable-node median",
-                        "source_url":lium_url,"license":"Lium public nodes feed terms",
+                        "source_url":lium_url,
                         "observed_at":lium_observation["observed_at"],
                         "age_seconds":lium_observation["age_seconds"],
                         "offer_count":lium_observation["offer_count"],"valid":True}
