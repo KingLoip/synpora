@@ -70,6 +70,72 @@ def _provider_error_label(exc):
     return type(exc).__name__
 
 
+def _lium_l40s_price_observation(raw, now, max_age_seconds=900):
+    """Return a fresh median from Lium's timestamped, currently rentable nodes feed.
+
+    The feed timestamp gates the whole snapshot. Only explicit L40S nodes with a
+    finite positive per-GPU hourly ask and no explicit zero-availability flag count.
+    Reference prices and stale snapshots are never promoted to live observations.
+    """
+    import math
+    from datetime import datetime, timezone
+
+    if not isinstance(raw, dict) or not isinstance(raw.get("nodes"), list):
+        return None
+    generated_at = raw.get("generated_at")
+    if not isinstance(generated_at, str) or not generated_at:
+        return None
+    try:
+        parsed = datetime.fromisoformat(generated_at.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        observed_at = parsed.timestamp()
+    except (TypeError, ValueError, OverflowError):
+        return None
+    age_seconds = float(now) - observed_at
+    if not math.isfinite(age_seconds) or age_seconds < -60 or age_seconds > max_age_seconds:
+        return None
+
+    prices = []
+    for node in raw["nodes"]:
+        if not isinstance(node, dict):
+            continue
+        model = str(node.get("gpu_model") or "").upper()
+        if "L40S" not in model:
+            continue
+        # The primary Zarobit source is on-demand. Do not mix reclaimable spot
+        # listings or rows with unknown pricing tier into that comparable median.
+        tier = str(node.get("tier") or "").strip().lower()
+        if tier not in ("secure", "on_demand", "ondemand"):
+            continue
+        available = node.get("available_gpu_count")
+        if available is not None:
+            try:
+                available_count = float(available)
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(available_count) or available_count <= 0:
+                continue
+        try:
+            price = float(node.get("price_per_gpu_hour"))
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(price) and price > 0:
+            prices.append(price)
+
+    if not prices:
+        return None
+    prices.sort()
+    middle = len(prices) // 2
+    median = prices[middle] if len(prices) % 2 else (prices[middle - 1] + prices[middle]) / 2
+    return {
+        "price_usd_per_gpu_hour": median,
+        "observed_at": observed_at,
+        "age_seconds": round(age_seconds, 1),
+        "offer_count": len(prices),
+    }
+
+
 def _track_connection(conn):
     active=_REQUEST_CONNECTIONS.get()
     if active is not None:
@@ -944,9 +1010,31 @@ def install(app):
                     "offer_count":len(prices),"valid":True}
         except Exception as exc:
             logger.warning("Market provider %s failed (%s).", "zarobit_l40s", _provider_error_label(exc))
+        lium_ok=False
+        # Zarobit's current-listing timestamps can lag even while its API returns HTTP 200.
+        # Use Lium's public, timestamped rentable-node feed as a no-key live fallback.
         if not zarobit_ok:
-            logger.warning("Market provider %s returned no fresh usable L40S offers; counts=%s.",
-                "zarobit_l40s", counts if "counts" in locals() else {"response":"unavailable"})
+            try:
+                lium_url="https://lium.io/api/public/v1/nodes"
+                lium_raw=_provider_json(lium_url,
+                    headers={"User-Agent":"SYNPORA/1.3.0","Accept":"application/json"},
+                    ttl_seconds=60)
+                lium_observation=_lium_l40s_price_observation(lium_raw,time.time())
+                if lium_observation:
+                    out["gpuHourlyUsd"]=lium_observation["price_usd_per_gpu_hour"]
+                    meta["gpuHourlyUsd"]={"source":"external","provider":"Lium public L40S rentable-node median",
+                        "source_url":lium_url,
+                        "observed_at":lium_observation["observed_at"],
+                        "age_seconds":lium_observation["age_seconds"],
+                        "offer_count":lium_observation["offer_count"],"valid":True}
+                    lium_ok=True
+                    logger.info("Market provider %s supplied %s fresh rentable L40S offers (age=%ss).",
+                        "lium_l40s",lium_observation["offer_count"],lium_observation["age_seconds"])
+            except Exception as exc:
+                logger.warning("Market provider %s failed (%s).","lium_l40s",_provider_error_label(exc))
+        if not zarobit_ok and not lium_ok:
+            logger.warning("Market providers returned no fresh usable L40S offers; Zarobit counts=%s.",
+                counts if "counts" in locals() else {"response":"unavailable"})
         # Vast.ai offer sampling is optional and requires the operator's own API key.
         vast_key=os.getenv("SYNPORA_VAST_API_KEY","").strip()
         # Prefer the fresh, timestamped public market median. Vast.ai is an operator-key
