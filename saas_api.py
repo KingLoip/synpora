@@ -1022,10 +1022,6 @@ def install(app):
         # Prefer the fresh, timestamped public market median. Vast.ai is an operator-key
         # fallback only when the public source did not yield a valid fresh observation.
         public_gpu_meta=meta.get("gpuHourlyUsd",{})
-        try:
-            public_gpu_age=float(public_gpu_meta.get("age_seconds",float("inf"))) if isinstance(public_gpu_meta,dict) else float("inf")
-        except (TypeError,ValueError):
-            public_gpu_age=float("inf")
         public_gpu_available=_is_fresh_public_gpu_observation(public_gpu_meta)
         if vast_key and not public_gpu_available:
             try:
