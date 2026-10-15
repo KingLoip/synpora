@@ -27,7 +27,9 @@ async def security_headers(request, call_next):
         response.headers["Pragma"] = "no-cache"
     return response
 
-MARKET_COLLECTION_INTERVAL_SECONDS=900
+# Collect every 12 minutes so 15-minute freshness gates retain a 3-minute buffer.
+# Provider-specific TTLs (including Zarobit's 15-minute quota-aware cache) remain independent.
+MARKET_COLLECTION_INTERVAL_SECONDS=720
 _market_status_lock=threading.Lock()
 app.state.market_collector_status={
     "enabled":bool(__import__("os").getenv("SYNPORA_MARKET_ADMIN_TOKEN","").strip()),
