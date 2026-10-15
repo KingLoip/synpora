@@ -14,14 +14,17 @@ All farm endpoints require a valid bearer token and ownership of the farm. The m
 
 ## Eligibility requirements
 
-A snapshot is eligible only when all four fields below have an explicit `data_quality.fields.<field>.source = "external"` and `available = true`:
+Global market readiness and site-specific learning are separate gates.
+
+A globally market-ready snapshot requires fresh, finite, explicitly external values for these three fields:
 
 - `btc_hashprice_usd_ph_day`
 - `gpu_l40s_usd_hour`
 - `eur_usd`
-- `austria_spot_eur_kwh`
 
-A mixed snapshot is not partially used for training/backtesting. Reference-only and legacy snapshots remain visible for diagnosis but are excluded from model fitting, walk-forward backtesting and learning settlement.
+Site-specific model fitting and snapshot-priced benchmarks additionally require a verified, time-aligned `site_energy_cost_eur_kwh` value for the actual farm tariff. The legacy `austria_spot_eur_kwh` field is reference-only for compatibility and must never be silently treated as a site tariff or international training label.
+
+A walk-forward backtest may alternatively accept an explicit constant `energy_cost_eur_kwh` supplied by the operator. Its result is conditional on that assumption; it does not verify the real site's tariff. Reference-only and legacy observations are excluded from training/backtesting.
 
 ## Suggested validation sequence
 
@@ -33,10 +36,10 @@ A mixed snapshot is not partially used for training/backtesting. Reference-only 
 
 ## Important limitations
 
-- The current Startmining collector can provide selected Bitcoin market fields, but EUR/USD, Austrian spot energy and GPU pricing remain reference values unless a verified external provider supplies them. A response marked `partial` or `fallback` is not an eligible learning label.
-- Built-in adapters use Startmining for Bitcoin market indicators, Frankfurter's ECB daily EUR/USD rate (up to 96 hours old), and Fraunhofer ISE Energy-Charts for the current Austrian day-ahead spot-price interval. Energy-Charts is CC BY 4.0 and requires attribution when republishing.
+- The collector uses Startmining for Bitcoin market indicators, Frankfurter's ECB daily EUR/USD rate, and external GPU rental-price providers (Zarobit, Lium public nodes, and operator-keyed Vast.ai). Austrian spot electricity is no longer fetched as a global market input; the legacy Austria field remains reference-only. Global market readiness does not prove site-specific profitability. A verified site tariff is still required for site-specific learning; a backtest may use an explicitly supplied constant tariff and must label the result as assumption-based.
+- Built-in adapters use Startmining for Bitcoin market indicators, Frankfurter's ECB daily EUR/USD rate (up to 96 hours old), and external L40S pricing from Zarobit, Lium public nodes, or Vast.ai when configured. Austrian spot electricity is no longer fetched as a global input; the legacy Austria field is reference-only.
 - Set `SYNPORA_VAST_API_KEY` to sample current L40S offers from Vast.ai; SYNPORA uses the median per-GPU hourly rate, not a guaranteed realized revenue. Without the key, GPU prices remain reference values unless a verified custom feed supplies them.
-- Operators can configure `SYNPORA_MARKET_DATA_URL` to an HTTPS JSON endpoint and must set `SYNPORA_MARKET_DATA_ALLOWED_HOSTS` to an exact comma-separated hostname allowlist. Private/non-public DNS targets and redirects are rejected. An optional `SYNPORA_MARKET_DATA_API_KEY` is sent as a Bearer token. The feed must provide a recent Unix `timestamp` (seconds or milliseconds) and verified values for all four required fields. Data older than 15 minutes is rejected. Provider configuration alone does not prove that the endpoint returns trustworthy data; monitor `data-health` and field-level provenance.
+- Operators can configure `SYNPORA_MARKET_DATA_URL` to an HTTPS JSON endpoint and must set `SYNPORA_MARKET_DATA_ALLOWED_HOSTS` to an exact comma-separated hostname allowlist. Private/non-public DNS targets and redirects are rejected. An optional `SYNPORA_MARKET_DATA_API_KEY` is sent as a Bearer token. The feed must provide a recent Unix `timestamp` (seconds or milliseconds) and verified values for the three global fields `btc_hashprice_usd_ph_day`, `gpu_l40s_usd_hour`, and `eur_usd` to support global readiness. Data older than 15 minutes is rejected. A verified `site_energy_cost_eur_kwh` may also be supplied for site-specific history; `austria_spot_eur_kwh` is optional legacy compatibility data and is not a substitute for a site tariff. Provider configuration alone does not prove that the endpoint returns trustworthy data; monitor `data-health` and field-level provenance.
 - Risk analysis now includes P05, a lower-tail expected-shortfall metric, probability of negative outcomes, and four deterministic stress cases. `risk_gate` is a warning based on simulated assumptions, not a safety guarantee.
 - A successful API response or CI test does not prove that a live provider is available, that Railway secrets are set, or that production PostgreSQL persists data after restart.
 - Scenario economics accepts hardware capex (`gpu_capex_eur`, `btc_capex_eur`), expected life in years, annual maintenance in EUR, uptime, pool fee and an operator-entered `tax_rate` from 0 to 1. Capital and maintenance are spread over calendar energy capacity; uptime reduces realized revenue and consumed energy. Review `cost_model` in each response. These fields default to zero for capex, maintenance and tax for backward compatibility, so a realistic comparison requires supplying your own figures. The tax input is not tax advice.
