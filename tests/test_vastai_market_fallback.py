@@ -44,7 +44,8 @@ class VastAIOfferFallbackTests(unittest.TestCase):
         self.assertEqual(offers, expected)
         self.assertEqual(get_json.call_count, 2)
         post_json.assert_called_once()
-        self.assertNotIn("test-key", repr(post_json.call_args))
+        post_args, _ = post_json.call_args
+        self.assertNotIn("test-key", repr(post_args[1]))
 
     def test_successful_get_avoids_post(self):
         expected = [{"gpu_name": "L40S", "dph_total": 0.9}]
