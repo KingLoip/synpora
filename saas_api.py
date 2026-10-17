@@ -2467,6 +2467,26 @@ def install(app):
         except Exception as exc:
             raise HTTPException(503,{"email_delivery":"unavailable","error_class":type(exc).__name__})
 
+    @app.post("/api/v1/system/email-delivery-test")
+    def email_delivery_test(x_market_token:str|None=Header(default=None,alias="X-SYNPORA-MARKET-TOKEN")):
+        # Sends exactly one harmless test message to a preconfigured, controlled mailbox.
+        require_market_admin(x_market_token)
+        recipient=os.getenv("SYNPORA_EMAIL_TEST_RECIPIENT","").strip()
+        if not recipient:
+            raise HTTPException(503,{"email_delivery":"unavailable","error":"test_recipient_not_configured"})
+        try:
+            settings=_email_provider_settings()
+            if not settings["configured"]:
+                raise RuntimeError("Email provider is not configured")
+            _send_security_email(recipient,"SYNPORA – E-Mail-Zustellungstest",
+                "Dies ist eine einmalige technische Testnachricht von SYNPORA. "
+                "Sie prueft den tatsaechlichen Versand ueber den konfigurierten E-Mail-Dienst. "
+                "Es ist keine Aktion erforderlich.")
+            return {"email_delivery":"accepted","email_provider":settings["provider"],
+                    "test_recipient_configured":True}
+        except Exception as exc:
+            raise HTTPException(503,{"email_delivery":"unavailable","error_class":type(exc).__name__})
+
     @app.get("/api/v1/farms/{farm_id}/ai-status")
     def ai_status(farm_id:str,authorization:str|None=Header(default=None)):
         uid=user(authorization); c=init_db()
