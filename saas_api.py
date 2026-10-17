@@ -958,6 +958,7 @@ def install(app):
         # Source adapters use public APIs with bounded caching and explicit provenance.
         import math, urllib.parse, urllib.error, logging
         logger=logging.getLogger("synpora.market_provider")
+        logger.setLevel(logging.INFO)
         now=time.time()
         meta=out.setdefault("_fieldMeta",{})
         if os.getenv("SYNPORA_DISABLE_BUILTIN_MARKET_SOURCES","").strip().lower() in ("1","true","yes"):
