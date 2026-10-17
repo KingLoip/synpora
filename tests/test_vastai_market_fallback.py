@@ -34,7 +34,7 @@ class VastAIOfferFallbackTests(unittest.TestCase):
         # usable L40S quote. Such a response must not suppress the POST fallback.
         get_json = Mock(side_effect=[
             {"offers": [{"gpu_name": "NVIDIA A100", "dph_total": 1.25}]},
-            {"offers": [{"gpu_name": "NVIDIA L40S", "dph_total": 0}]},
+            {"offers": [{"gpu_name": "NVIDIA L40S", "dph_total": 0, "rentable": True, "type": "ondemand"}]},
         ])
         expected = [{"gpu_name": "NVIDIA L40S", "dph_total": 0.95}]
         post_json = Mock(return_value={"offers": expected})
@@ -46,6 +46,20 @@ class VastAIOfferFallbackTests(unittest.TestCase):
         post_json.assert_called_once()
         post_args, _ = post_json.call_args
         self.assertNotIn("test-key", repr(post_args[1]))
+
+    def test_nonrentable_or_bid_l40s_offer_does_not_suppress_fallback(self):
+        get_json = Mock(side_effect=[
+            {"offers": [{"gpu_name": "NVIDIA L40S", "dph_total": 0.9, "rentable": False, "type": "bid"}]},
+            {"offers": []},
+        ])
+        expected = [{"gpu_name": "NVIDIA L40S", "dph_total": 0.95}]
+        post_json = Mock(return_value={"offers": expected})
+
+        offers = _vastai_l40s_offers("test-key", get_json, post_json)
+
+        self.assertEqual(offers, expected)
+        self.assertEqual(get_json.call_count, 2)
+        post_json.assert_called_once()
 
     def test_successful_get_avoids_post(self):
         expected = [{"gpu_name": "L40S", "dph_total": 0.9}]
