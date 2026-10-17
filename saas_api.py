@@ -347,6 +347,13 @@ def _vastai_l40s_offers(api_key, get_json, post_json):
             gpu_name = str(offer.get("gpu_name", offer.get("gpu_name_display", ""))).upper()
             if "L40S" not in gpu_name:
                 continue
+            # GET responses are locally re-checked too: don't let an explicitly
+            # non-rentable or spot/bid offer suppress the documented POST fallback.
+            if offer.get("rentable") is False:
+                continue
+            offer_type = str(offer.get("type", offer.get("pricing_type", "ondemand"))).lower().replace("-", "_")
+            if offer_type not in ("ondemand", "on_demand", "hourly"):
+                continue
             try:
                 hourly = float(offer.get("dph_total", offer.get("dph")))
                 count = max(1, int(offer.get("num_gpus", offer.get("gpu_count", 1)) or 1))
@@ -357,7 +364,11 @@ def _vastai_l40s_offers(api_key, get_json, post_json):
         return False
 
     for gpu_name in ("NVIDIA_L40S","L40S"):
-        query=urllib.parse.urlencode({"q":json.dumps({"gpu_name":gpu_name})})
+        query=urllib.parse.urlencode({"q":json.dumps({
+            "gpu_name":gpu_name,
+            "type":"ondemand",
+            "rentable":{"eq":True},
+        })})
         url="https://cloud.vast.ai/api/v0/bundles/?"+query
         try:
             offers=offers_from(get_json(url,headers=headers,ttl_seconds=300))
