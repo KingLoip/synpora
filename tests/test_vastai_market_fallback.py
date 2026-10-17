@@ -29,6 +29,23 @@ class VastAIOfferFallbackTests(unittest.TestCase):
         self.assertEqual(post_kwargs["ttl_seconds"], 300)
         self.assertNotIn("test-key", repr(post_args[1]))
 
+    def test_unusable_nonempty_get_responses_fall_through_to_post(self):
+        # A provider can return a non-empty response that still contains no
+        # usable L40S quote. Such a response must not suppress the POST fallback.
+        get_json = Mock(side_effect=[
+            {"offers": [{"gpu_name": "NVIDIA A100", "dph_total": 1.25}]},
+            {"offers": [{"gpu_name": "NVIDIA L40S", "dph_total": 0}]},
+        ])
+        expected = [{"gpu_name": "NVIDIA L40S", "dph_total": 0.95}]
+        post_json = Mock(return_value={"offers": expected})
+
+        offers = _vastai_l40s_offers("test-key", get_json, post_json)
+
+        self.assertEqual(offers, expected)
+        self.assertEqual(get_json.call_count, 2)
+        post_json.assert_called_once()
+        self.assertNotIn("test-key", repr(post_json.call_args))
+
     def test_successful_get_avoids_post(self):
         expected = [{"gpu_name": "L40S", "dph_total": 0.9}]
         get_json = Mock(return_value={"offers": expected})
