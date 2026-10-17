@@ -1,0 +1,4 @@
+FROM python:3.12-slim
+WORKDIR /app
+COPY scripts/send_email_smoke.py /app/scripts/send_email_smoke.py
+CMD ["python", "/app/scripts/send_email_smoke.py"]
