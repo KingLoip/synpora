@@ -1093,7 +1093,10 @@ def install(app):
             except Exception as exc:
                 logger.warning("Market provider %s failed (%s).","lium_l40s",_provider_error_label(exc))
         if not zarobit_ok and not lium_ok:
-            logger.warning("No fresh usable L40S offers from public feeds; checking Vast.ai fallback if configured. Zarobit counts=%s.",
+            # Public-feed staleness is an expected fallback condition, not by itself a
+            # collector failure. Log it at INFO; the keyed fallback below records its own
+            # explicit warning if it cannot supply a valid current price.
+            logger.info("No fresh usable L40S offers from public feeds; attempting Vast.ai fallback if configured. Zarobit counts=%s.",
                 counts if "counts" in locals() else {"response":"unavailable"})
         # Vast.ai offer sampling is optional and requires the operator's own API key.
         vast_key=os.getenv("SYNPORA_VAST_API_KEY","").strip()
