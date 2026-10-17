@@ -336,16 +336,45 @@ def _vastai_l40s_offers(api_key, get_json, post_json):
         )
         return offers if isinstance(offers,list) else []
 
-    last_http_error=None
+    def has_usable_l40s_price(offers):
+        # A non-empty search response is not enough: broad or stale API filters can
+        # return unrelated GPUs or offers without a usable hourly price. Only short-
+        # circuit the fallback chain when at least one L40S price can be consumed.
+        import math
+        for offer in offers if isinstance(offers, list) else []:
+            if not isinstance(offer, dict):
+                continue
+            gpu_name = str(offer.get("gpu_name", offer.get("gpu_name_display", ""))).upper()
+            if "L40S" not in gpu_name:
+                continue
+            # GET responses are locally re-checked too: don't let an explicitly
+            # non-rentable or spot/bid offer suppress the documented POST fallback.
+            if offer.get("rentable") is False:
+                continue
+            offer_type = str(offer.get("type", offer.get("pricing_type", "ondemand"))).lower().replace("-", "_")
+            if offer_type not in ("ondemand", "on_demand", "hourly"):
+                continue
+            try:
+                hourly = float(offer.get("dph_total", offer.get("dph")))
+                count = max(1, int(offer.get("num_gpus", offer.get("gpu_count", 1)) or 1))
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if math.isfinite(hourly) and hourly > 0 and math.isfinite(hourly / count) and hourly / count > 0:
+                return True
+        return False
+
     for gpu_name in ("NVIDIA_L40S","L40S"):
-        query=urllib.parse.urlencode({"q":json.dumps({"gpu_name":gpu_name})})
+        query=urllib.parse.urlencode({"q":json.dumps({
+            "gpu_name":gpu_name,
+            "type":"ondemand",
+            "rentable":{"eq":True},
+        })})
         url="https://cloud.vast.ai/api/v0/bundles/?"+query
         try:
             offers=offers_from(get_json(url,headers=headers,ttl_seconds=300))
-            if offers:
+            if has_usable_l40s_price(offers):
                 return offers
         except urllib.error.HTTPError as exc:
-            last_http_error=exc
             if exc.code != 400:
                 raise
 
