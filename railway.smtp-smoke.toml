@@ -1,0 +1,7 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile.smtp-smoke"
+
+[deploy]
+startCommand = "python /app/scripts/send_email_smoke.py"
+restartPolicyType = "NEVER"
