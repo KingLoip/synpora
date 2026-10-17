@@ -1,0 +1,90 @@
+name: SYNPORA Isolated PostgreSQL Recovery Test
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/postgres-recovery-test.yml"
+  pull_request:
+    paths:
+      - ".github/workflows/postgres-recovery-test.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  isolated-postgres-recovery:
+    name: Restart persistence and backup/restore
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: synpora
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d synpora"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: synpora
+    steps:
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+      - name: Seed deterministic recovery fixture
+        run: |
+          set -euo pipefail
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE TABLE recovery_probe (
+            id integer PRIMARY KEY,
+            marker text NOT NULL,
+            created_at timestamptz NOT NULL DEFAULT now()
+          );
+          INSERT INTO recovery_probe(id, marker)
+          VALUES (1, 'synpora-isolated-recovery-fixture');
+          SQL
+          test "$(psql -Atqc "SELECT marker FROM recovery_probe WHERE id=1")" = "synpora-isolated-recovery-fixture"
+      - name: Create and verify an isolated logical backup
+        run: |
+          set -euo pipefail
+          pg_dump --format=custom --no-owner --file=/tmp/synpora-recovery.dump synpora
+          test -s /tmp/synpora-recovery.dump
+          createdb synpora_restore
+          pg_restore --dbname=synpora_restore --no-owner --exit-on-error /tmp/synpora-recovery.dump
+          original="$(psql -Atqc "SELECT id || ':' || marker FROM recovery_probe ORDER BY id")"
+          restored="$(psql --dbname=synpora_restore -Atqc "SELECT id || ':' || marker FROM recovery_probe ORDER BY id")"
+          test "$original" = "$restored"
+          echo "Logical backup/restore round-trip: PASS"
+      - name: Restart only the disposable PostgreSQL service container
+        run: |
+          set -euo pipefail
+          container_id="$(docker ps --filter 'ancestor=postgres:16' --format '{{.ID}}' | head -n 1)"
+          test -n "$container_id"
+          docker restart "$container_id"
+          ready=0
+          for attempt in $(seq 1 30); do
+            if pg_isready -h 127.0.0.1 -p 5432 -U postgres -d synpora >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+          test "$ready" -eq 1
+          original="$(psql -Atqc "SELECT id || ':' || marker FROM recovery_probe ORDER BY id")"
+          restored="$(psql --dbname=synpora_restore -Atqc "SELECT id || ':' || marker FROM recovery_probe ORDER BY id")"
+          test "$original" = "1:synpora-isolated-recovery-fixture"
+          test "$restored" = "$original"
+          echo "PostgreSQL restart persistence: PASS"
+          echo "Restored database after restart: PASS"
