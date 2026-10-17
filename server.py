@@ -85,9 +85,14 @@ def _market_loop():
                 quality=payload.get("data_quality",{})
                 completed_at=time.time()
                 quality_status=quality.get("status","unknown")
-                logger.info("Market collection response received; source=%s quality=%s external_fields=%s reference_fields=%s",
+                fields=quality.get("fields",{}) if isinstance(quality,dict) else {}
+                gpu=fields.get("gpu_l40s_usd_hour",{}) if isinstance(fields,dict) else {}
+                hashprice=fields.get("btc_hashprice_usd_ph_day",{}) if isinstance(fields,dict) else {}
+                logger.info("Market collection response received; source=%s quality=%s external_fields=%s reference_fields=%s gpu_source=%s gpu_provider=%s gpu_age_seconds=%s hashprice_source=%s hashprice_age_seconds=%s",
                     payload.get("source","unknown"),quality_status,
-                    quality.get("external_fields",0),quality.get("reference_fields",0))
+                    quality.get("external_fields",0),quality.get("reference_fields",0),
+                    gpu.get("source","unknown"),gpu.get("provider","unknown"),gpu.get("age_seconds"),
+                    hashprice.get("source","unknown"),hashprice.get("age_seconds"))
                 duration_ms=round((time.monotonic()-attempt_started)*1000)
                 if quality_status=="live":
                     next_attempt=completed_at+MARKET_COLLECTION_INTERVAL_SECONDS
