@@ -69,6 +69,55 @@ def _provider_error_label(exc):
         return type(reason).__name__
     return type(exc).__name__
 
+def _email_provider_settings():
+    """Resolve email provider configuration without exposing secret values."""
+    selected=os.getenv("SYNPORA_EMAIL_PROVIDER","auto").strip().lower() or "auto"
+    resend_key=os.getenv("SYNPORA_RESEND_API_KEY","").strip() or os.getenv("RESEND_API_KEY","").strip()
+    sender=os.getenv("SYNPORA_EMAIL_FROM","").strip() or os.getenv("SYNPORA_SMTP_FROM","").strip()
+    public_url=os.getenv("SYNPORA_PUBLIC_URL","").strip().rstrip("/")
+    smtp_host=os.getenv("SYNPORA_SMTP_HOST","").strip()
+    smtp_username=os.getenv("SYNPORA_SMTP_USERNAME","").strip()
+    smtp_password=os.getenv("SYNPORA_SMTP_PASSWORD","")
+    try: smtp_port=int(os.getenv("SYNPORA_SMTP_PORT","587"))
+    except (TypeError,ValueError): smtp_port=0
+    smtp_configured=bool(smtp_host and smtp_username and smtp_password and sender and 1<=smtp_port<=65535 and public_url.startswith("https://"))
+    resend_configured=bool(resend_key and sender and public_url.startswith("https://"))
+    if selected not in ("auto","resend","smtp"): selected="invalid"
+    if selected=="resend": provider="resend"; configured=resend_configured
+    elif selected=="smtp": provider="smtp"; configured=smtp_configured
+    elif selected=="auto" and resend_configured: provider="resend"; configured=True
+    elif selected=="auto" and smtp_configured: provider="smtp"; configured=True
+    else: provider=selected if selected!="auto" else "resend"; configured=False
+    return {"provider":provider,"configured":configured,"resend_configured":resend_configured,
+            "smtp_configured":smtp_configured,"resend_key":resend_key,"sender":sender,
+            "public_url":public_url,"smtp_host":smtp_host,"smtp_username":smtp_username,
+            "smtp_password":smtp_password,"smtp_port":smtp_port}
+
+
+def _resend_api_request(method,path,api_key,payload=None,timeout=8):
+    """Call Resend over HTTPS and keep provider response details out of logs."""
+    import urllib.request, urllib.error
+    data=json.dumps(payload).encode("utf-8") if payload is not None else None
+    req=urllib.request.Request("https://api.resend.com"+path,data=data,method=method,
+        headers={"Authorization":"Bearer "+api_key,"Accept":"application/json",
+                 "Content-Type":"application/json","User-Agent":"SYNPORA/1.3"})
+    try:
+        with urllib.request.urlopen(req,timeout=timeout) as response:
+            raw=response.read(65537)
+            if len(raw)>65536: raise RuntimeError("Email provider response too large")
+            return json.loads(raw.decode("utf-8")) if raw else {}
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError("Email provider HTTP %d" % exc.code) from None
+
+
+def _send_resend_email(api_key,sender,recipient,subject,body,timeout=10):
+    result=_resend_api_request("POST","/emails",api_key,
+        {"from":sender,"to":[recipient],"subject":subject,"text":body},timeout=timeout)
+    if not isinstance(result,dict) or not result.get("id"):
+        raise RuntimeError("Email provider did not confirm message acceptance")
+    return {"email_id":result["id"]}
+
+
 
 def _is_fresh_public_gpu_observation(meta, max_age_seconds=900):
     """Keep a fresh public provider quote ahead of the optional keyed fallback."""
@@ -2343,20 +2392,13 @@ def install(app):
             if c is not None:
                 try: c.close()
                 except Exception: pass
-        smtp_host=os.getenv("SYNPORA_SMTP_HOST","").strip()
-        smtp_port_raw=os.getenv("SYNPORA_SMTP_PORT","587").strip()
-        smtp_username=os.getenv("SYNPORA_SMTP_USERNAME","").strip()
-        smtp_password=os.getenv("SYNPORA_SMTP_PASSWORD","")
-        smtp_from=os.getenv("SYNPORA_SMTP_FROM","").strip()
-        public_url=os.getenv("SYNPORA_PUBLIC_URL","").strip()
-        try:
-            smtp_port=int(smtp_port_raw)
-            smtp_port_valid=1<=smtp_port<=65535
-        except Exception:
-            smtp_port_valid=False
-        smtp_configured=bool(smtp_host and smtp_port_valid and smtp_username and smtp_password and smtp_from and public_url.startswith("https://"))
+        email_settings=_email_provider_settings()
+        smtp_host=email_settings["smtp_host"]; smtp_username=email_settings["smtp_username"]
+        smtp_password=email_settings["smtp_password"]; smtp_from=email_settings["sender"]
+        public_url=email_settings["public_url"]; smtp_configured=email_settings["smtp_configured"]
+        email_delivery_configured=email_settings["configured"]; email_provider=email_settings["provider"]
         email_verification_required=os.getenv("SYNPORA_REQUIRE_EMAIL_VERIFICATION","1" if _database_required() else "0").strip().lower() in ("1","true","yes")
-        ready=bool(db_configured and db_reachable and db_schema_ready and jwt_configured and jwt_secret_strong and market_token_configured and market_token_strong and smtp_configured and (not email_verification_required or smtp_configured) and market_data_ready)
+        ready=bool(db_configured and db_reachable and db_schema_ready and jwt_configured and jwt_secret_strong and market_token_configured and market_token_strong and email_delivery_configured and market_data_ready)
         market_data_guidance=[]
         if not market_data_ready:
             gpu_diag=market_data_field_diagnostics.get("gpu_l40s_usd_hour",{})
@@ -2384,6 +2426,8 @@ def install(app):
                 "jwt_secret_configured":jwt_configured,"jwt_secret_strong":jwt_secret_strong,
                 "smtp_configured":smtp_configured,"smtp_host_configured":bool(smtp_host),
                 "smtp_auth_configured":bool(smtp_username and smtp_password),"smtp_from_configured":bool(smtp_from),
+                "email_provider":email_provider,"email_delivery_configured":email_delivery_configured,
+                "resend_api_key_configured":bool(email_settings["resend_key"]),
                 "public_url_https":public_url.startswith("https://"),"email_verification_required":email_verification_required,
                 "market_admin_token_configured":market_token_configured,"market_admin_token_strong":market_token_strong,
                 "market_data_feed_configured":bool(os.getenv("SYNPORA_MARKET_DATA_URL","").strip()),
@@ -2401,26 +2445,25 @@ def install(app):
 
     @app.post("/api/v1/system/email-connection-test")
     def email_connection_test(x_market_token:str|None=Header(default=None,alias="X-SYNPORA-MARKET-TOKEN")):
-        # Admin-only diagnostic: validates SMTP/TLS/auth without sending a message or
-        # exposing credentials/provider error text to callers.
+        # Admin-only diagnostic validates the configured provider without sending mail.
         require_market_admin(x_market_token)
         try:
+            settings=_email_provider_settings()
+            if not settings["configured"]: raise RuntimeError("Email provider is not configured")
+            if settings["provider"]=="resend":
+                _resend_api_request("GET","/domains",settings["resend_key"],timeout=8)
+                return {"email_delivery":"connected","email_provider":"resend","api_authenticated":True}
             import smtplib, ssl
-            host,port,username,password,sender,public_url=_smtp_configuration()
+            host=settings["smtp_host"]; port=settings["smtp_port"]
             if port==465:
                 with smtplib.SMTP_SSL(host,port,timeout=8,context=ssl.create_default_context()) as smtp:
-                    smtp.login(username,password)
-                    code,_=smtp.noop()
+                    smtp.login(settings["smtp_username"],settings["smtp_password"]); code,_=smtp.noop()
             else:
                 with smtplib.SMTP(host,port,timeout=8) as smtp:
-                    smtp.ehlo()
-                    smtp.starttls(context=ssl.create_default_context())
-                    smtp.ehlo()
-                    smtp.login(username,password)
-                    code,_=smtp.noop()
-            if int(code)<200 or int(code)>=400:
-                raise RuntimeError("SMTP health check rejected")
-            return {"email_delivery":"connected","smtp_authenticated":True,"tls_required":True}
+                    smtp.ehlo(); smtp.starttls(context=ssl.create_default_context()); smtp.ehlo()
+                    smtp.login(settings["smtp_username"],settings["smtp_password"]); code,_=smtp.noop()
+            if int(code)<200 or int(code)>=400: raise RuntimeError("SMTP health check rejected")
+            return {"email_delivery":"connected","email_provider":"smtp","smtp_authenticated":True,"tls_required":True}
         except Exception as exc:
             raise HTTPException(503,{"email_delivery":"unavailable","error_class":type(exc).__name__})
 
@@ -2747,19 +2790,18 @@ def install(app):
         new_password: str
 
     def _smtp_configuration():
-        import smtplib
-        host=os.getenv("SYNPORA_SMTP_HOST","").strip()
-        username=os.getenv("SYNPORA_SMTP_USERNAME","").strip()
-        password=os.getenv("SYNPORA_SMTP_PASSWORD","")
-        sender=os.getenv("SYNPORA_SMTP_FROM","").strip()
-        public_url=os.getenv("SYNPORA_PUBLIC_URL","").strip().rstrip("/")
-        try: port=int(os.getenv("SYNPORA_SMTP_PORT","587"))
-        except Exception: port=0
-        if not (host and username and password and sender and public_url.startswith("https://") and 1<=port<=65535):
-            raise RuntimeError("Email delivery is not configured")
-        return host,port,username,password,sender,public_url
+        settings=_email_provider_settings()
+        if not settings["configured"] or settings["provider"]!="smtp":
+            raise RuntimeError("SMTP email delivery is not configured")
+        return (settings["smtp_host"],settings["smtp_port"],settings["smtp_username"],
+                settings["smtp_password"],settings["sender"],settings["public_url"])
 
     def _send_security_email(recipient,subject,body):
+        settings=_email_provider_settings()
+        if not settings["configured"]: raise RuntimeError("Email delivery is not configured")
+        if settings["provider"]=="resend":
+            _send_resend_email(settings["resend_key"],settings["sender"],recipient,subject,body)
+            return
         import smtplib, ssl
         from email.message import EmailMessage
         host,port,username,password,sender,public_url=_smtp_configuration()
@@ -2770,15 +2812,11 @@ def install(app):
         message.set_content(body)
         if port==465:
             with smtplib.SMTP_SSL(host,port,timeout=10,context=ssl.create_default_context()) as smtp:
-                smtp.login(username,password)
-                smtp.send_message(message)
+                smtp.login(username,password); smtp.send_message(message)
         else:
             with smtplib.SMTP(host,port,timeout=10) as smtp:
-                smtp.ehlo()
-                smtp.starttls(context=ssl.create_default_context())
-                smtp.ehlo()
-                smtp.login(username,password)
-                smtp.send_message(message)
+                smtp.ehlo(); smtp.starttls(context=ssl.create_default_context()); smtp.ehlo()
+                smtp.login(username,password); smtp.send_message(message)
 
     def _send_security_email_safely(recipient,subject,body):
         # Send after the HTTP response; log only the exception class, never email
@@ -2833,9 +2871,8 @@ def install(app):
         if not _email_action_allowed(email,"register"):
             raise HTTPException(429,"Too many account creation attempts. Try again later.",headers={"Retry-After":"3600"})
         verification_required=os.getenv("SYNPORA_REQUIRE_EMAIL_VERIFICATION","1" if _database_required() else "0").strip().lower() in ("1","true","yes")
-        if verification_required:
-            try: _smtp_configuration()
-            except Exception: raise HTTPException(503,"Email delivery is not configured; registration is temporarily unavailable")
+        if verification_required and not _email_provider_settings()["configured"]:
+            raise HTTPException(503,"Email delivery is not configured; registration is temporarily unavailable")
         c=init_db(); uid=secrets.token_hex(12); farm_id=secrets.token_hex(12)
         try:
             # Account and initial farm must be created atomically; never leave a half-created account.
