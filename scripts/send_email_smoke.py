@@ -25,7 +25,7 @@ def main() -> int:
         port = 0
 
     if not (host and username and password and sender and recipient and 1 <= port <= 65535):
-        print("SMTP delivery smoke test blocked: required configuration is missing or invalid.", file=sys.stderr)
+        print("SMTP delivery smoke test blocked: required configuration is missing or invalid.", file=sys.stderr, flush=True)
         return 2
 
     message = EmailMessage()
@@ -39,25 +39,30 @@ def main() -> int:
     )
 
     try:
+        print("SMTP delivery smoke test: configuration present; connecting.", flush=True)
         if port == 465:
             with smtplib.SMTP_SSL(host, port, timeout=10, context=ssl.create_default_context()) as smtp:
+                print("SMTP delivery smoke test: TLS connection established; authenticating.", flush=True)
                 smtp.login(username, password)
+                print("SMTP delivery smoke test: authenticated; sending one message.", flush=True)
                 refused = smtp.send_message(message)
         else:
             with smtplib.SMTP(host, port, timeout=10) as smtp:
                 smtp.ehlo()
                 smtp.starttls(context=ssl.create_default_context())
                 smtp.ehlo()
+                print("SMTP delivery smoke test: TLS connection established; authenticating.", flush=True)
                 smtp.login(username, password)
+                print("SMTP delivery smoke test: authenticated; sending one message.", flush=True)
                 refused = smtp.send_message(message)
         if refused:
-            print("SMTP delivery smoke test failed: recipient rejected.", file=sys.stderr)
+            print("SMTP delivery smoke test failed: recipient rejected.", file=sys.stderr, flush=True)
             return 1
-        print("SMTP delivery smoke test: message accepted by SMTP server.")
+        print("SMTP delivery smoke test: message accepted by SMTP server.", flush=True)
         return 0
     except Exception as exc:
         # Deliberately omit host details, addresses, credentials, and provider response text.
-        print("SMTP delivery smoke test failed: " + type(exc).__name__, file=sys.stderr)
+        print("SMTP delivery smoke test failed: " + type(exc).__name__, file=sys.stderr, flush=True)
         return 1
 
 
