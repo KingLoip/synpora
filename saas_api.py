@@ -1093,7 +1093,10 @@ def install(app):
             except Exception as exc:
                 logger.warning("Market provider %s failed (%s).","lium_l40s",_provider_error_label(exc))
         if not zarobit_ok and not lium_ok:
-            logger.warning("No fresh usable L40S offers from public feeds; checking Vast.ai fallback if configured. Zarobit counts=%s.",
+            # Public-feed staleness is an expected fallback condition, not by itself a
+            # collector failure. Log it at INFO; the keyed fallback below records its own
+            # explicit warning if it cannot supply a valid current price.
+            logger.info("No fresh usable L40S offers from public feeds; attempting Vast.ai fallback if configured. Zarobit counts=%s.",
                 counts if "counts" in locals() else {"response":"unavailable"})
         # Vast.ai offer sampling is optional and requires the operator's own API key.
         vast_key=os.getenv("SYNPORA_VAST_API_KEY","").strip()
@@ -1101,6 +1104,8 @@ def install(app):
         # fallback only when the public source did not yield a valid fresh observation.
         public_gpu_meta=meta.get("gpuHourlyUsd",{})
         public_gpu_available=_is_fresh_public_gpu_observation(public_gpu_meta)
+        if not public_gpu_available and not vast_key:
+            logger.warning("No fresh public L40S quote and Vast.ai fallback is disabled because SYNPORA_VAST_API_KEY is missing; GPU pricing will remain reference-only.")
         if vast_key and not public_gpu_available:
             try:
                 offers=_vastai_l40s_offers(vast_key,_provider_json,_provider_json_post)

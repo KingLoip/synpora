@@ -2,7 +2,7 @@ name: SYNPORA Production Monitor
 
 on:
   schedule:
-    - cron: "7,22,37,52 * * * *"
+    - cron: "*/5 * * * *"
   workflow_dispatch:
   # Run a fresh read-only production check after main CI has completed, even when
   # GitHub's scheduled-event queue is delayed. Only successful main-branch CI runs qualify.
@@ -22,7 +22,9 @@ concurrency:
   # Keep schedule, manual, upstream-CI, and pull-request checks in separate groups.
   # A skipped/non-main workflow_run must not cancel an in-progress scheduled live check.
   group: synpora-production-monitor-${{ github.event_name }}
-  cancel-in-progress: true
+  # Never cancel an in-flight live check when the scheduler emits another event.
+  # The job has a 4-minute timeout and the schedule is every 5 minutes.
+  cancel-in-progress: false
 
 jobs:
   live-market-health:
