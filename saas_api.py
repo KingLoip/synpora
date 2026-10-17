@@ -1104,6 +1104,8 @@ def install(app):
         # fallback only when the public source did not yield a valid fresh observation.
         public_gpu_meta=meta.get("gpuHourlyUsd",{})
         public_gpu_available=_is_fresh_public_gpu_observation(public_gpu_meta)
+        if not public_gpu_available and not vast_key:
+            logger.warning("No fresh public L40S quote and Vast.ai fallback is disabled because SYNPORA_VAST_API_KEY is missing; GPU pricing will remain reference-only.")
         if vast_key and not public_gpu_available:
             try:
                 offers=_vastai_l40s_offers(vast_key,_provider_json,_provider_json_post)
