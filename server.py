@@ -59,6 +59,7 @@ def _market_loop():
     # Never log credentials or exception messages.
     import logging
     logger=logging.getLogger("synpora.market_collection")
+    logger.setLevel(logging.INFO)
     time.sleep(10)  # Let the ASGI server begin accepting requests before the first collection.
     missing_token_warned=False
     retry_delay=60
