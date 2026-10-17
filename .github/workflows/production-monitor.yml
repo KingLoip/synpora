@@ -101,9 +101,37 @@ jobs:
           fetch_json "$BASE_URL/api/v1/system/release" /tmp/release.json
           jq -e '.hardware_write == false and .autonomous_control == false' /tmp/release.json >/dev/null
 
+          # A new Railway replica starts with an empty in-memory collector heartbeat.
+          # Wait for one verified live collection instead of falsely failing the monitor
+          # during the first seconds after a rollout. Freshness limits remain unchanged.
+          collector_live=0
+          for attempt in $(seq 1 24); do
+            if curl --silent --show-error --fail --connect-timeout 2 --max-time 2 \
+              "$BASE_URL/api/v1/system/collector-status" --output /tmp/collector.json; then
+              if jq -e '
+                .enabled == true and
+                .last_attempt_result == "success" and
+                .last_quality == "live" and
+                (.last_success_at | type) == "number" and
+                (now - .last_success_at) >= -30 and
+                (now - .last_success_at) <= 900 and
+                .consecutive_failures == 0
+              ' /tmp/collector.json >/dev/null; then
+                collector_live=1
+                break
+              fi
+            fi
+            sleep 5
+          done
+          if [ "$collector_live" -ne 1 ]; then
+            echo "Collector did not recover to fresh live data within the bounded startup window." >&2
+            cat /tmp/collector.json 2>/dev/null || true
+            exit 1
+          fi
+
+          # Readiness can change when the first post-startup snapshot is stored.
           fetch_json "$BASE_URL/api/v1/system/production-readiness" /tmp/readiness.json
           fetch_json "$BASE_URL/api/v1/market/data-health" /tmp/data-health.json
-          fetch_json "$BASE_URL/api/v1/system/collector-status" /tmp/collector.json
 
           echo "Public entrypoints:"
           echo "  Railway health: PASS"
