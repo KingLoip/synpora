@@ -31,10 +31,11 @@ jobs:
           z = zipfile.ZipFile("SYNPORA_1_0_1_DEPLOY_READY.zip")
           z.extractall("/tmp/synpora-package")
           source = Path("/tmp/synpora-package/synpora_deploy/synpora_v71_90_work/frontend")
-          target = Path("/app/frontend")
-          target.mkdir(parents=True, exist_ok=True)
+          target = Path("/tmp/synpora-frontend-source")
           shutil.copytree(source, target, dirs_exist_ok=True)
           PY
+          sudo mkdir -p /app/frontend
+          sudo cp -a /tmp/synpora-frontend-source/. /app/frontend/
           sudo python synpora_enhancement.py
           test "$(find /app/frontend -name '*.html' | wc -l)" -ge 1
 
