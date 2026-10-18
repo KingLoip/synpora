@@ -254,6 +254,16 @@ SCRIPT = r"""
     document.documentElement.lang="en";
     const intro=[...document.querySelectorAll("p")].find(el=>(el.textContent||"").includes("Welche Verwendung deines Stroms"));
     if(intro) intro.textContent="Which use of your electricity creates the most economic value right now? SYNPORA compares Bitcoin mining, AI compute, batteries and grid export using transparent assumptions — without automatic hardware control.";
+    const addHeadingNote=(pattern,cls,copy)=>{
+      const heading=[...document.querySelectorAll("h2,h3")].find(el=>pattern.test(el.textContent||""));
+      if(heading&&!heading.parentElement.querySelector("."+cls)){
+        const note=document.createElement("p");note.className=cls+" sp-muted";note.textContent=copy;
+        heading.insertAdjacentElement("afterend",note);
+      }
+    };
+    addHeadingNote(/^Value per kWh$/i,"sp-value-help","Results appear when the required market inputs and assumptions are available. Missing or stale data is not treated as verified.");
+    addHeadingNote(/^AI Decision Center$/i,"sp-decision-help","Recommendations are decision support only. Review the assumptions and confidence before acting.");
+    addHeadingNote(/^What-if Lab$/i,"sp-whatif-help","Change the inputs and run a simulation to compare scenarios. Results depend on the values and data sources available.");
     const demo=[...document.querySelectorAll("button,a")].find(el=>/Demo Farm laden/i.test(el.textContent||""));
     if(demo) demo.textContent="Load demo farm";
     const bootstrap=[...document.querySelectorAll("input")].find(el=>/railway bootstrap/i.test(el.placeholder||""));
