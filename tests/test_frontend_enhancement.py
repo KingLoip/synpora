@@ -50,6 +50,12 @@ class FrontendEnhancementTests(unittest.TestCase):
         self.assertIn("Open workspace", self.script)
         self.assertNotIn("dein Railway Bootstrap-Passwort", self.script)
 
+    def test_demo_scenario_works_without_login_and_workspace_requires_tariff(self):
+        self.assertIn("ILLUSTRATIVE DEMO SCENARIO", self.script)
+        self.assertIn("Workspace scenarios require your own tariff", self.script)
+        self.assertIn('energy_cost_eur_kwh:tariff', self.script)
+        self.assertIn("Enter your actual electricity tariff", self.script)
+
     def test_empty_data_states_explain_what_is_missing(self):
         self.assertIn("required market inputs and assumptions are available", self.script)
         self.assertIn("unknown or stale data is not treated as verified", self.script)
