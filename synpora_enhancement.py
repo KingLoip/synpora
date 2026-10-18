@@ -32,7 +32,7 @@ SCRIPT = r"""
     #sp-modal.show{display:flex}
     .sp-modal-card{width:min(520px,100%);background:#0b151e;border:1px solid #294253;border-radius:18px;padding:24px;box-shadow:0 30px 100px #000b}
     .sp-input{width:100%;box-sizing:border-box;background:#08111a;border:1px solid #294253;color:#eef8ff;border-radius:10px;padding:12px;margin:7px 0 12px}
-    .sp-mini{font-size:13px;color:#7f9db2}
+    .sp-mini{font-size:13px;color:#9bb1c2}.sp-status{font-size:13px;min-height:18px;color:#c5d5e2;margin:8px 0}.sp-field{display:block;font-size:13px;color:#a9c6d9;margin-top:10px}.sp-field input{display:block;width:100%;box-sizing:border-box;background:#08111a;border:1px solid #294253;color:#eef8ff;border-radius:10px;padding:12px;margin-top:6px}.sp-demo-note{border:1px solid #66572c;background:#241f12;color:#f3dfa2;border-radius:10px;padding:12px;margin:0 0 14px}.sp-muted{color:#9bb1c2;font-size:13px}
     @media(max-width:700px){#synpora-nav{padding:0 12px}.sp-grid{grid-template-columns:1fr}#sp-account{width:100%;margin-left:0}}
   `;
   document.head.insertAdjacentHTML("beforeend","<style>"+css+"</style>");
@@ -50,11 +50,14 @@ SCRIPT = r"""
     <div class="sp-modal-card">
       <div class="sp-label">SYNPORA ACCOUNT</div>
       <h2 style="margin:6px 0 8px">Workspace öffnen</h2>
-      <p class="sp-mini">Sicherer Workspace-Zugang über die SYNPORA API. Dein Session-Token bleibt nur in diesem Browser gespeichert.</p>
-      <label class="sp-mini">E-Mail</label>
-      <input id="sp-email" class="sp-input" type="email" placeholder="you@company.com">
-      <label class="sp-mini">Farm / Workspace</label>
-      <input id="sp-farm" class="sp-input" placeholder="Meine Energy Farm">
+      <p class="sp-mini">Create a workspace or sign in with an existing account. New accounts may require email verification. Your session is stored in this browser, so use a trusted device.</p>
+      <label class="sp-mini" for="sp-email">Email address</label>
+      <input id="sp-email" class="sp-input" type="email" autocomplete="email" placeholder="you@company.com" required>
+      <label class="sp-mini" for="sp-farm">Workspace name (optional)</label>
+      <input id="sp-farm" class="sp-input" autocomplete="organization" placeholder="My energy farm">
+      <label class="sp-mini" for="sp-password">Password (at least 8 characters)</label>
+      <input id="sp-password" class="sp-input" type="password" autocomplete="current-password" minlength="8" maxlength="1024" placeholder="Enter your password" required>
+      <p id="sp-auth-status" class="sp-status" role="status" aria-live="polite"></p>
       <div style="display:flex;gap:8px;justify-content:flex-end">
         <button class="sp-action" id="sp-cancel">Abbrechen</button>
         <button class="sp-action" id="sp-logout" style="display:none">Abmelden</button><button class="sp-action" id="sp-enter">Workspace verbinden</button>
@@ -66,22 +69,24 @@ SCRIPT = r"""
   panel.id="synpora-panel";
   panel.innerHTML=`
     <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:14px">
-      <div><div class="sp-label">SYNPORA Workspace</div><h2 style="margin:4px 0">Demo Farm Control Center</h2></div>
-      <button class="sp-action" id="sp-close">Close</button>
+      <div><div class="sp-label">SYNPORA · DECISION SUPPORT</div><h2 style="margin:4px 0">Demo workspace · sample values</h2></div>
+      <button class="sp-action" id="sp-close">Close workspace</button>
     </div>
+    <div class="sp-demo-note" role="note"><strong>Illustrative demo data — not live telemetry.</strong><div class="sp-muted">These figures demonstrate the workflow only. They are not a forecast, verified savings, or a recommendation for your site.</div></div>
     <div class="sp-grid">
-      <div class="sp-card"><div class="sp-label">PV production</div><div class="sp-value sp-good">18.4 kW</div><div>Solar forecast: 92%</div></div>
-      <div class="sp-card"><div class="sp-label">Battery</div><div class="sp-value">74%</div><div>12.1 kWh available</div></div>
-      <div class="sp-card"><div class="sp-label">Compute capacity</div><div class="sp-value">42.0 kW</div><div>AI + BTC pool</div></div>
-      <div class="sp-card"><div class="sp-label">Today's modeled uplift</div><div class="sp-value sp-good">+€18.70</div><div>vs. BTC-only baseline</div></div>
+      <div class="sp-card"><div class="sp-label">Solar production · example</div><div class="sp-value sp-good">18.4 kW</div><div>Illustrative forecast: 92%</div></div>
+      <div class="sp-card"><div class="sp-label">Battery charge · example</div><div class="sp-value">74%</div><div>Example available energy: 12.1 kWh</div></div>
+      <div class="sp-card"><div class="sp-label">Compute capacity · example</div><div class="sp-value">42.0 kW</div><div>Illustrative AI + BTC setup</div></div>
+      <div class="sp-card"><div class="sp-label">Modeled uplift · example only</div><div class="sp-value sp-good">+€18.70</div><div>Illustrative comparison with BTC-only baseline; not a verified result</div></div>
     </div>
     <div style="margin-top:18px">
-      <div class="sp-row"><span>AI Compute</span><strong class="sp-good">0.135 €/kWh</strong></div>
-      <div class="sp-row"><span>BTC Mining</span><strong>0.083 €/kWh</strong></div>
-      <div class="sp-row"><span>Battery / Grid</span><strong>0.071 €/kWh</strong></div>
-      <button class="sp-action" id="sp-sim">Open What-if Simulation</button>
-    </div>`;
-  
+      <div class="sp-row"><span>AI compute · example</span><strong class="sp-good">0.135 €/kWh</strong></div>
+      <div class="sp-row"><span>Bitcoin mining · example</span><strong>0.083 €/kWh</strong></div>
+      <div class="sp-row"><span>Battery / grid export · example</span><strong>0.071 €/kWh</strong></div>
+      <label class="sp-field" for="sp-energy-kwh">Energy to compare (kWh)<input id="sp-energy-kwh" type="number" min="0.1" max="1000000" step="0.1" value="100" inputmode="decimal"></label>
+      <p class="sp-muted">Check your assumptions before acting. SYNPORA provides decision support and does not control hardware automatically.</p>
+      <button class="sp-action" id="sp-sim">Run example simulation</button>
+    </div>
   const nav = document.createElement("nav");
   nav.id="synpora-nav";
   ["Overview","Assets","Economics","AI Decision","Simulation","Reports"].forEach((name,i)=>{
@@ -187,7 +192,8 @@ SCRIPT = r"""
     if(!acc?.token){toast("Bitte zuerst Workspace verbinden");return}
     const farms=await fetch("/api/v1/farms",{headers:{Authorization:"Bearer "+acc.token}}).then(r=>r.json());
     if(!farms[0]) return;
-    const energy=Number(window.prompt("Szenario-Energie in kWh","100")||100);
+    const energy=Number(document.getElementById("sp-energy-kwh")?.value||100);
+    if(!Number.isFinite(energy)||energy<=0||energy>1000000){toast("Enter an energy amount between 0.1 and 1,000,000 kWh");return}
     const base={energy_kwh:energy,energy_cost_eur_kwh:0.05};
     const res=await fetch("/api/v1/farms/"+farms[0].id+"/scenario",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+acc.token},body:JSON.stringify(base)});
     const d=await res.json(); if(!res.ok){toast(d.detail||"Szenario fehlgeschlagen");return}
@@ -243,6 +249,38 @@ SCRIPT = r"""
     toast("Asset gespeichert"); loadAssets();
   }
 
+  function polishBaseUI(){
+    document.documentElement.lang="en";
+    const intro=[...document.querySelectorAll("p")].find(el=>(el.textContent||"").includes("Welche Verwendung deines Stroms"));
+    if(intro) intro.textContent="Which use of your electricity creates the most economic value right now? SYNPORA compares Bitcoin mining, AI compute, batteries and grid export using transparent assumptions — without automatic hardware control.";
+    const demo=[...document.querySelectorAll("button,a")].find(el=>/Demo Farm laden/i.test(el.textContent||""));
+    if(demo) demo.textContent="Load demo farm";
+    const bootstrap=[...document.querySelectorAll("input")].find(el=>/railway bootstrap/i.test(el.placeholder||""));
+    if(bootstrap){
+      const candidates=[...document.querySelectorAll("section,article,form,div")].filter(el=>el.contains(bootstrap)&&(el.textContent||"").includes("Account & Pilot Access")&&!el.querySelector("h1")&&!([...el.querySelectorAll("button")].some(b=>/Demo Farm laden|Load demo farm/i.test(b.textContent||""))));
+      candidates.sort((a,b)=>a.querySelectorAll("*").length-b.querySelectorAll("*").length);
+      const section=candidates[0];
+      if(section){
+        section.innerHTML='<h2>Account & pilot access</h2><p>Try the demo without an account. To create or open a workspace, use the Pilot Login button above. SYNPORA provides recommendations only and does not control hardware automatically.</p><button type="button" class="sp-action" id="sp-open-account-inline">Open workspace</button>';
+      }else{
+        bootstrap.placeholder="Password (at least 8 characters)";
+        const label=bootstrap.labels&&bootstrap.labels[0];if(label)label.textContent="Password";
+      }
+    }
+    const connectorHeading=[...document.querySelectorAll("h2,h3")].find(el=>/Connector Center/i.test(el.textContent||""));
+    if(connectorHeading){
+      let box=connectorHeading.parentElement;
+      for(let i=0;i<3&&box&&box.parentElement;i++,box=box.parentElement){
+        if((box.textContent||"").includes("Connector Center")&&box.querySelectorAll("*").length>1)break;
+      }
+      if(box&&!box.querySelector(".sp-connector-help")){
+        const note=document.createElement("p");note.className="sp-connector-help sp-muted";note.textContent="No connector is required to explore the demo. Live farm data is only available after a supported source is configured; unknown or stale data is not treated as verified.";box.appendChild(note);
+      }
+    }
+    const inline=document.getElementById("sp-open-account-inline");
+    if(inline)inline.onclick=()=>modal.classList.add("show");
+  }
+
   function mount(){
     if(!document.body || document.getElementById("synpora-nav")) return;
     const main=document.querySelector("main")||document.body.firstElementChild;
@@ -259,40 +297,56 @@ SCRIPT = r"""
     if(main && main.parentNode) main.parentNode.insertBefore(panel,main);
     else document.body.insertBefore(panel,nav.nextSibling);
 
-    const demo=[...document.querySelectorAll("button,a")].find(el=>/Demo Farm laden/i.test(el.textContent||""));
+    polishBaseUI();
+    const demo=[...document.querySelectorAll("button,a")].find(el=>/Demo Farm laden|Load demo farm/i.test(el.textContent||""));
     if(demo) demo.addEventListener("click",()=>{
       localStorage.setItem("synpora_demo_farm","1");
-      toast("Demo Farm geladen · SYNPORA ist bereit für Simulationen");
+      toast("Demo workspace loaded. Sample values are illustrative, not live telemetry.");
       panel.classList.add("show");
       panel.scrollIntoView({behavior:"smooth",block:"start"});
     });
     document.getElementById("sp-close").onclick=()=>panel.classList.remove("show");
-    document.getElementById("sp-account-btn").onclick=()=>modal.classList.add("show");
+    document.getElementById("sp-account-btn").onclick=()=>{document.getElementById("sp-auth-status").textContent="";modal.classList.add("show");};
     document.getElementById("sp-cancel").onclick=()=>modal.classList.remove("show");
     document.getElementById("sp-logout").onclick=()=>{localStorage.removeItem("synpora_account");modal.classList.remove("show");location.reload()};
     document.getElementById("sp-enter").onclick=async()=>{
       const email=document.getElementById("sp-email").value.trim();
       const farm=document.getElementById("sp-farm").value.trim()||"Demo Farm";
-      const password=window.prompt("Passwort für den Pilot-Account (mind. 8 Zeichen):")||"";
-      if(!email||password.length<8){toast("E-Mail und Passwort (mind. 8 Zeichen) erforderlich");return}
+      const password=document.getElementById("sp-password").value;
+      const status=document.getElementById("sp-auth-status");
+      const submit=document.getElementById("sp-enter");
+      if(!email||password.length<8){status.textContent="Enter a valid email address and a password with at least 8 characters.";return}
+      submit.disabled=true; submit.textContent="Please wait…"; status.textContent="Checking your account…";
       try{
         let res=await fetch("/api/v1/auth/register",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email,password})});
-        let data=await res.json();
+        let data=await res.json().catch(()=>({detail:"The server returned an unexpected response."}));
         if(!res.ok && res.status===409){
           res=await fetch("/api/v1/auth/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email,password})});
-          data=await res.json();
+          data=await res.json().catch(()=>({detail:"The server returned an unexpected response."}));
         }
-        if(!res.ok) throw new Error(data.detail||"Account konnte nicht erstellt werden");
+        if(!res.ok){
+          const detail=String(data.detail||"Could not open the workspace.");
+          if(res.status===403 && /verification/i.test(detail)) throw new Error("Please verify your email using the link we sent, then sign in again.");
+          if(res.status===503 && /email delivery/i.test(detail)) throw new Error("Sign-up is temporarily unavailable because email verification is not configured. Please contact the SYNPORA team.");
+          if(res.status===429) throw new Error("Too many attempts. Please wait before trying again.");
+          throw new Error(detail);
+        }
+        if(data.verification_required || !data.token){
+          status.textContent="Account created. Check your email for the verification link, then return here and sign in. If you do not see it, check your spam folder.";
+          toast("Check your email to verify your account");
+          return;
+        }
         localStorage.setItem("synpora_account",JSON.stringify({email,farm,token:data.token,user:data.user}));
         modal.classList.remove("show");
-        toast("Workspace "+farm+" ist verbunden");
+        toast("Workspace connected");
         const label=account.querySelector(".sp-mini");
         if(label) label.textContent=farm;
         else account.insertAdjacentHTML("afterbegin",'<span class="sp-mini">'+farm+'</span>');
         document.getElementById("sp-account-btn").textContent="Workspace";
         panel.classList.add("show");
         panel.scrollIntoView({behavior:"smooth",block:"start"});
-      }catch(e){toast(e.message)}
+      }catch(e){status.textContent=e.message;toast(e.message)}
+      finally{submit.disabled=false;submit.textContent="Continue"}
     };
     document.getElementById("sp-sim").onclick=()=>runScenarioLab();
   }
