@@ -1,3 +1,4 @@
+# The CI suite also runs Node.js syntax validation on the injected browser script.
 """Regression checks for the browser enhancement injected into the frontend."""
 import re
 import shutil
