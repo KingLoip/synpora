@@ -44,6 +44,8 @@ SCRIPT = r"""
     window.__spToast=setTimeout(()=>t.classList.remove("show"),2600);
   };
 
+  const escapeHtml=(value)=>String(value??"").replace(/[&<>"\']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","\'":"&#39;"}[ch]));
+
   const modal = document.createElement("div");
   modal.id="sp-modal";
   modal.innerHTML=`
@@ -123,7 +125,7 @@ SCRIPT = r"""
     const old=panel.querySelector(".sp-learning"); if(old)old.remove();
     const box=document.createElement("div");box.className="sp-learning sp-card";box.style.marginTop="18px";
     const btc=fh.btc||{},gpu=fh.gpu||{};
-    box.innerHTML="<div class='sp-label'>SELF-LEARNING CORE</div><div class='sp-value'>"+(ai.status||"unknown")+"</div><div style='margin-top:8px'>Samples: "+d.samples+" · Settled: "+d.settled+" · AI Core: "+(ai.total_settled_samples||0)+" settled</div><div class='sp-mini'>MAE: "+(d.mae_eur_kwh==null?"–":d.mae_eur_kwh.toFixed(4)+" €/kWh")+"</div><div class='sp-row' style='margin-top:10px'><span>BTC learning</span><strong>"+(btc.samples||0)+" samples · "+(btc.forecast_hit_rate==null?"–":Math.round(btc.forecast_hit_rate*100)+"% hit")+"</strong></div><div class='sp-row'><span>GPU learning</span><strong>"+(gpu.samples||0)+" samples · "+(gpu.forecast_hit_rate==null?"–":Math.round(gpu.forecast_hit_rate*100)+"% hit")+"</strong></div><button class='sp-action' id='sp-learn-update' style='margin-top:10px'>Update Learning</button>";
+    box.innerHTML="<div class='sp-label'>SELF-LEARNING CORE</div><div class='sp-value'>"+escapeHtml(ai.status||"unknown")+"</div><div style='margin-top:8px'>Samples: "+d.samples+" · Settled: "+d.settled+" · AI Core: "+(ai.total_settled_samples||0)+" settled</div><div class='sp-mini'>MAE: "+(d.mae_eur_kwh==null?"–":d.mae_eur_kwh.toFixed(4)+" €/kWh")+"</div><div class='sp-row' style='margin-top:10px'><span>BTC learning</span><strong>"+(btc.samples||0)+" samples · "+(btc.forecast_hit_rate==null?"–":Math.round(btc.forecast_hit_rate*100)+"% hit")+"</strong></div><div class='sp-row'><span>GPU learning</span><strong>"+(gpu.samples||0)+" samples · "+(gpu.forecast_hit_rate==null?"–":Math.round(gpu.forecast_hit_rate*100)+"% hit")+"</strong></div><button class='sp-action' id='sp-learn-update' style='margin-top:10px'>Update Learning</button>";
     panel.appendChild(box);
     document.getElementById("sp-learn-update").onclick=async()=>{
       const r=await fetch("/api/v1/farms/"+id+"/learning/update",{method:"POST",headers:{Authorization:"Bearer "+acc.token}});
@@ -161,7 +163,7 @@ SCRIPT = r"""
     const old=panel.querySelector(".sp-dispatch");if(old)old.remove();
     const summary=d.summary||{};
     const box=document.createElement("div");box.className="sp-dispatch sp-card";box.style.marginTop="18px";
-    box.innerHTML="<div class='sp-label'>24H MULTI-PERIOD DISPATCH</div><div class='sp-value sp-good'>€"+Number(summary.net_value_eur||0).toFixed(2)+" modeled net</div>"+(d.plan||[]).slice(0,16).map(r=>"<div class='sp-row'><span>"+String(r.hour).padStart(2,"0")+":00 · "+r.asset+" · "+r.action+"</span><strong>"+Number(r.pv_kwh||0).toFixed(1)+" kWh · "+Number(r.value_eur_kwh||0).toFixed(3)+" €/kWh</strong></div>").join("")+"<div class='sp-mini' style='margin-top:8px'>BTC: "+Number(summary.btc_kwh||0).toFixed(1)+" kWh · GPU: "+Number(summary.gpu_kwh||0).toFixed(1)+" kWh · Grid: "+Number(summary.grid_export_kwh||0).toFixed(1)+" kWh · Recommendation only</div>";
+    box.innerHTML="<div class='sp-label'>24H MULTI-PERIOD DISPATCH</div><div class='sp-value sp-good'>€"+Number(summary.net_value_eur||0).toFixed(2)+" modeled net</div>"+(d.plan||[]).slice(0,16).map(r=>"<div class='sp-row'><span>"+String(r.hour).padStart(2,"0")+":00 · "+escapeHtml(r.asset)+" · "+escapeHtml(r.action)+"</span><strong>"+Number(r.pv_kwh||0).toFixed(1)+" kWh · "+Number(r.value_eur_kwh||0).toFixed(3)+" €/kWh</strong></div>").join("")+"<div class='sp-mini' style='margin-top:8px'>BTC: "+Number(summary.btc_kwh||0).toFixed(1)+" kWh · GPU: "+Number(summary.gpu_kwh||0).toFixed(1)+" kWh · Grid: "+Number(summary.grid_export_kwh||0).toFixed(1)+" kWh · Recommendation only</div>";
     panel.appendChild(box);
   }
 
@@ -175,7 +177,7 @@ SCRIPT = r"""
     const old=panel.querySelector(".sp-risk");if(old)old.remove();
     if(d.detail){toast(d.detail);return}
     const box=document.createElement("div");box.className="sp-risk sp-card";box.style.marginTop="18px";
-    box.innerHTML="<div class='sp-label'>UNIFIED AI DECISION · RISK + REGRET</div><div class='sp-value sp-good'>"+d.recommended+"</div><div class='sp-mini'>Confidence "+Math.round(Number(d.confidence||0)*100)+"% · Risk Aversion "+Number(d.risk_aversion||0).toFixed(2)+" · "+d.samples+" Monte-Carlo scenarios</div><div class='sp-row'><span>Expected value</span><strong>"+Number(d.decision?.expected_value_eur_kwh||0).toFixed(4)+" €/kWh</strong></div><div class='sp-row'><span>P05</span><strong>"+Number(d.decision?.p05_eur_kwh||0).toFixed(4)+" €/kWh</strong></div><div class='sp-row'><span>Win probability</span><strong>"+Math.round(Number(d.decision?.win_probability||0)*100)+"%</strong></div><div class='sp-row'><span>Expected regret</span><strong>"+Number(d.decision?.expected_regret_eur_kwh||0).toFixed(4)+" €/kWh</strong></div><div class='sp-mini' style='margin-top:10px'>Fallback: "+(d.fallback||"—")+" · Recommendation only · No hardware action</div>";
+    box.innerHTML="<div class='sp-label'>UNIFIED AI DECISION · RISK + REGRET</div><div class='sp-value sp-good'>"+escapeHtml(d.recommended)+"</div><div class='sp-mini'>Confidence "+Math.round(Number(d.confidence||0)*100)+"% · Risk Aversion "+Number(d.risk_aversion||0).toFixed(2)+" · "+d.samples+" Monte-Carlo scenarios</div><div class='sp-row'><span>Expected value</span><strong>"+Number(d.decision?.expected_value_eur_kwh||0).toFixed(4)+" €/kWh</strong></div><div class='sp-row'><span>P05</span><strong>"+Number(d.decision?.p05_eur_kwh||0).toFixed(4)+" €/kWh</strong></div><div class='sp-row'><span>Win probability</span><strong>"+Math.round(Number(d.decision?.win_probability||0)*100)+"%</strong></div><div class='sp-row'><span>Expected regret</span><strong>"+Number(d.decision?.expected_regret_eur_kwh||0).toFixed(4)+" €/kWh</strong></div><div class='sp-mini' style='margin-top:10px'>Fallback: "+escapeHtml(d.fallback||"—")+" · Recommendation only · No hardware action</div>";
     panel.appendChild(box);
   }
 
@@ -186,7 +188,7 @@ SCRIPT = r"""
     const d=await fetch("/api/v1/farms/"+farms[0].id+"/portfolio-optimize",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+acc.token},body:JSON.stringify({energy_kwh:energy,horizon_hours:1,energy_cost_eur_kwh:0.05})}).then(r=>r.json());
     const old=panel.querySelector(".sp-portfolio");if(old)old.remove();
     const box=document.createElement("div");box.className="sp-portfolio sp-card";box.style.marginTop="18px";
-    box.innerHTML="<div class='sp-label'>PORTFOLIO OPTIMIZER</div><div class='sp-value sp-good'>€"+d.total_net_eur.toFixed(2)+" net</div>"+d.allocation.map(a=>"<div class='sp-row'><span>"+a.asset+" · "+a.kind+"</span><strong>"+a.allocated_kwh.toFixed(1)+" kWh · €"+a.net_eur.toFixed(2)+"</strong></div>").join("")+"<div class='sp-mini' style='margin-top:8px'>Unallocated: "+d.unallocated_kwh.toFixed(1)+" kWh · Recommendation only</div>";
+    box.innerHTML="<div class='sp-label'>PORTFOLIO OPTIMIZER</div><div class='sp-value sp-good'>€"+d.total_net_eur.toFixed(2)+" net</div>"+d.allocation.map(a=>"<div class='sp-row'><span>"+escapeHtml(a.asset)+" · "+escapeHtml(a.kind)+"</span><strong>"+a.allocated_kwh.toFixed(1)+" kWh · €"+a.net_eur.toFixed(2)+"</strong></div>").join("")+"<div class='sp-mini' style='margin-top:8px'>Unallocated: "+d.unallocated_kwh.toFixed(1)+" kWh · Recommendation only</div>";
     panel.appendChild(box);
   }
 
@@ -245,7 +247,7 @@ SCRIPT = r"""
     const acc=JSON.parse(localStorage.getItem("synpora_account")||"null"); const farms=await fetch("/api/v1/farms",{headers:{Authorization:"Bearer "+acc.token}}).then(r=>r.json());
     const d=await fetch("/api/v1/farms/"+farms[0].id+"/backtest",{method:"POST",headers:{Authorization:"Bearer "+acc.token}}).then(r=>r.json());
     const box=document.querySelector(".sp-scenario"); if(!box)return;
-    const wins=Object.entries(d.wins).map(([k,v])=>"<div class='sp-row'><span>"+k+"</span><strong>"+v+"/7 Szenarien</strong></div>").join("");
+    const wins=Object.entries(d.wins).map(([k,v])=>"<div class='sp-row'><span>"+escapeHtml(k)+"</span><strong>"+v+"/7 scenarios</strong></div>").join("");
     box.insertAdjacentHTML("beforeend","<div style='margin-top:16px'><div class='sp-label'>MARKET SENSITIVITY</div>"+wins+"<div class='sp-card' style='margin-top:10px'>AI cumulative: €"+d.cumulative_net_eur.ai.toFixed(2)+" · BTC cumulative: €"+d.cumulative_net_eur.btc.toFixed(2)+" · AI delta: €"+d.cumulative_net_eur.delta_ai_vs_btc.toFixed(2)+"</div></div>");
     toast("Sensitivitäts-Backtest abgeschlossen");
   }
@@ -260,9 +262,9 @@ SCRIPT = r"""
     const d=await r.json(); if(!r.ok){toast(d.detail||"Optimierung fehlgeschlagen");return}
     panel.querySelector(".sp-opt")?.remove();
     const box=document.createElement("div");box.className="sp-opt";box.style.marginTop="18px";
-    box.innerHTML="<div class='sp-label'>AI VALUE OPTIMIZER</div><div class='sp-card'><div class='sp-label'>BEST OPTION</div><div class='sp-value sp-good'>"+d.best.option+"</div><div>"+d.best.value_eur_kwh.toFixed(3)+" €/kWh · Netto €"+d.net_value_eur.toFixed(2)+" · Confidence "+Math.round(d.confidence*100)+"%</div></div><div class='sp-row'><span>BTC Mining</span><strong>"+d.alternatives.find(x=>x.option==="BTC Mining").value_eur_kwh.toFixed(3)+" €/kWh</strong></div><div class='sp-row'><span>Battery</span><strong>"+d.alternatives.find(x=>x.option==="Battery").value_eur_kwh.toFixed(3)+" €/kWh</strong></div>";
+    box.innerHTML="<div class='sp-label'>AI VALUE OPTIMIZER</div><div class='sp-card'><div class='sp-label'>BEST OPTION</div><div class='sp-value sp-good'>"+escapeHtml(d.best.option)+"</div><div>"+d.best.value_eur_kwh.toFixed(3)+" €/kWh · Netto €"+d.net_value_eur.toFixed(2)+" · Confidence "+Math.round(d.confidence*100)+"%</div></div><div class='sp-row'><span>BTC Mining</span><strong>"+d.alternatives.find(x=>x.option==="BTC Mining").value_eur_kwh.toFixed(3)+" €/kWh</strong></div><div class='sp-row'><span>Battery</span><strong>"+d.alternatives.find(x=>x.option==="Battery").value_eur_kwh.toFixed(3)+" €/kWh</strong></div>";
     panel.appendChild(box);
-    const intel=document.createElement("div");intel.className="sp-card";intel.style.marginTop="12px";intel.innerHTML="<div class='sp-label'>DECISION INTELLIGENCE</div><div class='sp-value'>"+(d.decision_score??"—")+"/100</div><div class='sp-mini'>"+(d.explanation?.primary_reason||"Model-driven recommendation")+" · margin "+(d.explanation?.value_margin_eur_kwh??0)+" €/kWh · confidence "+Math.round((d.confidence||0)*100)+"%</div>";panel.appendChild(intel);
+    const intel=document.createElement("div");intel.className="sp-card";intel.style.marginTop="12px";intel.innerHTML="<div class='sp-label'>DECISION INTELLIGENCE</div><div class='sp-value'>"+(d.decision_score??"—")+"/100</div><div class='sp-mini'>"+escapeHtml(d.explanation?.primary_reason||"Model-driven recommendation")+" · margin "+(d.explanation?.value_margin_eur_kwh??0)+" €/kWh · confidence "+Math.round((d.confidence||0)*100)+"%</div>";panel.appendChild(intel);
   }
 
   async function loadAssets(){
@@ -273,7 +275,7 @@ SCRIPT = r"""
     const assets=await fetch("/api/v1/farms/"+farm.id+"/assets",{headers:{Authorization:"Bearer "+acc.token}}).then(r=>r.json());
     const box=panel.querySelector(".sp-assets")||document.createElement("div");
     box.className="sp-assets"; box.style.marginTop="18px";
-    const rows=assets.map(a=>"<div class='sp-row'><span>"+a.name+" · "+a.kind+"</span><strong>"+Number(a.power_kw).toFixed(1)+" kW</strong></div>").join("");
+    const rows=assets.map(a=>"<div class='sp-row'><span>"+escapeHtml(a.name)+" · "+escapeHtml(a.kind)+"</span><strong>"+Number(a.power_kw).toFixed(1)+" kW</strong></div>").join("");
     box.innerHTML="<div class='sp-label'>CONNECTED ASSETS</div>"+(rows||"<div class='sp-mini'>Noch keine Assets.</div>")+"<button class='sp-action' id='sp-add-asset'>+ Asset hinzufügen</button>";
     panel.appendChild(box); document.getElementById("sp-add-asset").onclick=addAsset;
   }
@@ -338,7 +340,7 @@ SCRIPT = r"""
     const saved=JSON.parse(localStorage.getItem("synpora_account")||"null");
     const logoutBtn=document.getElementById("sp-logout"); if(logoutBtn) logoutBtn.style.display=saved?"inline-block":"none";
     account.innerHTML=saved
-      ? '<span class="sp-mini">'+(saved.farm||"Demo Farm")+'</span><button id="sp-account-btn">Workspace</button>'
+      ? '<span class="sp-mini">'+escapeHtml(saved.farm||"Demo Farm") +'</span><button id="sp-account-btn">Workspace</button>'
       : '<button id="sp-account-btn">Pilot Login</button>';
     nav.appendChild(account);
     if(main && main.parentNode) main.parentNode.insertBefore(nav,main);
@@ -390,7 +392,7 @@ SCRIPT = r"""
         toast("Workspace connected");
         const label=account.querySelector(".sp-mini");
         if(label) label.textContent=farm;
-        else account.insertAdjacentHTML("afterbegin",'<span class="sp-mini">'+farm+'</span>');
+        else account.insertAdjacentHTML("afterbegin",'<span class="sp-mini">'+escapeHtml(farm)+'</span>');
         document.getElementById("sp-account-btn").textContent="Workspace";
         panel.classList.add("show");
         panel.scrollIntoView({behavior:"smooth",block:"start"});
