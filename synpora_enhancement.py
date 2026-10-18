@@ -51,7 +51,7 @@ SCRIPT = r"""
   modal.innerHTML=`
     <div class="sp-modal-card">
       <div class="sp-label">SYNPORA ACCOUNT</div>
-      <h2 style="margin:6px 0 8px">Workspace öffnen</h2>
+      <h2 style="margin:6px 0 8px">Open workspace</h2>
       <p class="sp-mini">Create a workspace or sign in with an existing account. New accounts may require email verification. Your session is stored in this browser, so use a trusted device.</p>
       <label class="sp-mini" for="sp-email">Email address</label>
       <input id="sp-email" class="sp-input" type="email" autocomplete="email" placeholder="you@company.com" required>
@@ -142,7 +142,7 @@ SCRIPT = r"""
     const box=document.createElement("div");box.className="sp-quality sp-card";box.style.marginTop="18px";
     const hit=d.winner_accuracy==null?"–":Math.round(Number(d.winner_accuracy)*100)+"%";
     const regret=d.avg_regret_eur_kwh==null?"–":Number(d.avg_regret_eur_kwh).toFixed(4)+" €/kWh";
-    box.innerHTML="<div class='sp-label'>DECISION QUALITY</div><div class='sp-grid'><div><div class='sp-label'>Winner accuracy</div><div class='sp-value'>"+hit+"</div></div><div><div class='sp-label'>Average regret</div><div class='sp-value'>"+regret+"</div></div><div><div class='sp-label'>Settled decisions</div><div class='sp-value'>"+Number(d.settled||0)+"</div></div></div><div class='sp-mini' style='margin-top:10px'>Regret misst den entgangenen Wert gegenüber der tatsächlich besten Option im Nachhinein.</div>";
+    box.innerHTML="<div class='sp-label'>DECISION QUALITY</div><div class='sp-grid'><div><div class='sp-label'>Winner accuracy</div><div class='sp-value'>"+hit+"</div></div><div><div class='sp-label'>Average regret</div><div class='sp-value'>"+regret+"</div></div><div><div class='sp-label'>Settled decisions</div><div class='sp-value'>"+Number(d.settled||0)+"</div></div></div><div class='sp-mini' style='margin-top:10px'>Regret measures the value lost compared with the option that turned out to be best after the fact.</div>";
     panel.appendChild(box);
   }
 
@@ -152,12 +152,12 @@ SCRIPT = r"""
     const d=await fetch("/api/v1/farms/"+farms[0].id+"/benchmark",{headers:{Authorization:"Bearer "+acc.token}}).then(r=>r.json());
     const old=panel.querySelector(".sp-benchmark"); if(old)old.remove();
     const box=document.createElement("div");box.className="sp-benchmark sp-card";box.style.marginTop="18px";
-    box.innerHTML="<div class='sp-label'>HISTORICAL BENCHMARK</div><div class='sp-value'>"+d.samples+" snapshots</div><div style='margin-top:8px'>AI: €"+d.ai_total_net_eur.toFixed(2)+" · BTC: €"+d.btc_total_net_eur.toFixed(2)+"</div><div class='sp-good' style='margin-top:6px'>AI delta vs BTC: €"+d.ai_delta_vs_btc_eur.toFixed(2)+"</div><div class='sp-mini' style='margin-top:6px'>AI war in "+(d.winner_share==null?"–":Math.round(d.winner_share*100)+"%")+" der gespeicherten Zeitpunkte besser.</div>";
+    box.innerHTML="<div class='sp-label'>HISTORICAL BENCHMARK</div><div class='sp-value'>"+d.samples+" snapshots</div><div style='margin-top:8px'>AI: €"+d.ai_total_net_eur.toFixed(2)+" · BTC: €"+d.btc_total_net_eur.toFixed(2)+"</div><div class='sp-good' style='margin-top:6px'>AI delta vs BTC: €"+d.ai_delta_vs_btc_eur.toFixed(2)+"</div><div class='sp-mini' style='margin-top:6px'>AI was better at "+(d.winner_share==null?"–":Math.round(d.winner_share*100)+"%")+" of the saved time points.</div>";
     panel.appendChild(box);
   }
 
   async function runDispatch(){
-    const acc=JSON.parse(localStorage.getItem("synpora_account")||"null"); if(!acc?.token){toast("Bitte zuerst Workspace verbinden");return}
+    const acc=JSON.parse(localStorage.getItem("synpora_account")||"null"); if(!acc?.token){toast("Please sign in to open your workspace.");return}
     const farms=await fetch("/api/v1/farms",{headers:{Authorization:"Bearer "+acc.token}}).then(r=>r.json()); if(!farms[0])return;
     const d=await fetch("/api/v1/farms/"+farms[0].id+"/dispatch-plan",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+acc.token},body:JSON.stringify({horizon_hours:24,interval_hours:1,energy_cost_eur_kwh:0.05,pv_kwh:100,battery_soc_pct:74,battery_capacity_kwh:50,battery_reserve_pct:20})}).then(r=>r.json());
     const old=panel.querySelector(".sp-dispatch");if(old)old.remove();
@@ -249,20 +249,20 @@ SCRIPT = r"""
     const box=document.querySelector(".sp-scenario"); if(!box)return;
     const wins=Object.entries(d.wins).map(([k,v])=>"<div class='sp-row'><span>"+escapeHtml(k)+"</span><strong>"+v+"/7 scenarios</strong></div>").join("");
     box.insertAdjacentHTML("beforeend","<div style='margin-top:16px'><div class='sp-label'>MARKET SENSITIVITY</div>"+wins+"<div class='sp-card' style='margin-top:10px'>AI cumulative: €"+d.cumulative_net_eur.ai.toFixed(2)+" · BTC cumulative: €"+d.cumulative_net_eur.btc.toFixed(2)+" · AI delta: €"+d.cumulative_net_eur.delta_ai_vs_btc.toFixed(2)+"</div></div>");
-    toast("Sensitivitäts-Backtest abgeschlossen");
+    toast("Market sensitivity check completed.");
   }
 
   async function runOptimizer(){
     const acc=JSON.parse(localStorage.getItem("synpora_account")||"null");
     if(!acc?.token){toast("Bitte zuerst Workspace verbinden");return}
     const farms=await fetch("/api/v1/farms",{headers:{Authorization:"Bearer "+acc.token}}).then(r=>r.json());
-    if(!farms[0]){toast("Keine Farm vorhanden");return}
+    if(!farms[0]){toast("No farm found.");return}
     const energy=Number(window.prompt("Verfügbare Energie in kWh","10")||10);
     const market=await fetch("/api/v1/market/live").then(r=>r.json()); const r=await fetch("/api/v1/farms/"+farms[0].id+"/optimize",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+acc.token},body:JSON.stringify({energy_kwh:energy,btc_hashprice_usd_ph_day:market.btc_hashprice_usd_ph_day,eur_usd:market.eur_usd,gpu_hourly_usd:(market.gpu||{}).hourly_usd||1.09,gpu_power_kw:(market.gpu||{}).power_kw||0.35,gpu_utilization:(market.gpu||{}).utilization||0.70,gpu_platform_fee:(market.gpu||{}).platform_fee||0.15})});
-    const d=await r.json(); if(!r.ok){toast(d.detail||"Optimierung fehlgeschlagen");return}
+    const d=await r.json(); if(!r.ok){toast(d.detail||"Optimization failed.");return}
     panel.querySelector(".sp-opt")?.remove();
     const box=document.createElement("div");box.className="sp-opt";box.style.marginTop="18px";
-    box.innerHTML="<div class='sp-label'>AI VALUE OPTIMIZER</div><div class='sp-card'><div class='sp-label'>BEST OPTION</div><div class='sp-value sp-good'>"+escapeHtml(d.best.option)+"</div><div>"+d.best.value_eur_kwh.toFixed(3)+" €/kWh · Netto €"+d.net_value_eur.toFixed(2)+" · Confidence "+Math.round(d.confidence*100)+"%</div></div><div class='sp-row'><span>BTC Mining</span><strong>"+d.alternatives.find(x=>x.option==="BTC Mining").value_eur_kwh.toFixed(3)+" €/kWh</strong></div><div class='sp-row'><span>Battery</span><strong>"+d.alternatives.find(x=>x.option==="Battery").value_eur_kwh.toFixed(3)+" €/kWh</strong></div>";
+    box.innerHTML="<div class='sp-label'>AI VALUE OPTIMIZER</div><div class='sp-card'><div class='sp-label'>BEST OPTION</div><div class='sp-value sp-good'>"+escapeHtml(d.best.option)+"</div><div>"+d.best.value_eur_kwh.toFixed(3)+" €/kWh · Net €"+d.net_value_eur.toFixed(2)+" · Confidence "+Math.round(d.confidence*100)+"%</div></div><div class='sp-row'><span>BTC Mining</span><strong>"+d.alternatives.find(x=>x.option==="BTC Mining").value_eur_kwh.toFixed(3)+" €/kWh</strong></div><div class='sp-row'><span>Battery</span><strong>"+d.alternatives.find(x=>x.option==="Battery").value_eur_kwh.toFixed(3)+" €/kWh</strong></div>";
     panel.appendChild(box);
     const intel=document.createElement("div");intel.className="sp-card";intel.style.marginTop="12px";intel.innerHTML="<div class='sp-label'>DECISION INTELLIGENCE</div><div class='sp-value'>"+(d.decision_score??"—")+"/100</div><div class='sp-mini'>"+escapeHtml(d.explanation?.primary_reason||"Model-driven recommendation")+" · margin "+(d.explanation?.value_margin_eur_kwh??0)+" €/kWh · confidence "+Math.round((d.confidence||0)*100)+"%</div>";panel.appendChild(intel);
   }
@@ -271,19 +271,19 @@ SCRIPT = r"""
     const acc=JSON.parse(localStorage.getItem("synpora_account")||"null");
     if(!acc?.token){toast("Bitte zuerst Workspace verbinden");return}
     const farms=await fetch("/api/v1/farms",{headers:{Authorization:"Bearer "+acc.token}}).then(r=>r.json());
-    const farm=farms[0]; if(!farm){toast("Noch keine Farm vorhanden");return}
+    const farm=farms[0]; if(!farm){toast("No farm found.");return}
     const assets=await fetch("/api/v1/farms/"+farm.id+"/assets",{headers:{Authorization:"Bearer "+acc.token}}).then(r=>r.json());
     const box=panel.querySelector(".sp-assets")||document.createElement("div");
     box.className="sp-assets"; box.style.marginTop="18px";
     const rows=assets.map(a=>"<div class='sp-row'><span>"+escapeHtml(a.name)+" · "+escapeHtml(a.kind)+"</span><strong>"+Number(a.power_kw).toFixed(1)+" kW</strong></div>").join("");
-    box.innerHTML="<div class='sp-label'>CONNECTED ASSETS</div>"+(rows||"<div class='sp-mini'>Noch keine Assets.</div>")+"<button class='sp-action' id='sp-add-asset'>+ Asset hinzufügen</button>";
+    box.innerHTML="<div class='sp-label'>CONNECTED ASSETS</div>"+(rows||"<div class='sp-mini'>No assets yet.</div>")+"<button class='sp-action' id='sp-add-asset'>+ Add asset</button>";
     panel.appendChild(box); document.getElementById("sp-add-asset").onclick=addAsset;
   }
   async function addAsset(){
     const acc=JSON.parse(localStorage.getItem("synpora_account")||"null"); if(!acc?.token)return;
-    const name=window.prompt("Asset-Name, z.B. GPU Server"); if(!name)return;
-    const kind=window.prompt("Typ: BTC / GPU / PV / BATTERY / GRID / OTHER","GPU"); if(!kind)return;
-    const power=Number(window.prompt("Leistung in kW","10")||0);
+    const name=window.prompt("Asset name, e.g. GPU server"); if(!name)return;
+    const kind=window.prompt("Type: BTC / GPU / PV / BATTERY / GRID / OTHER","GPU"); if(!kind)return;
+    const power=Number(window.prompt("Power in kW","10")||0);
     const farms=await fetch("/api/v1/farms",{headers:{Authorization:"Bearer "+acc.token}}).then(r=>r.json());
     const res=await fetch("/api/v1/farms/"+farms[0].id+"/assets",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+acc.token},body:JSON.stringify({name,kind,power_kw:power})});
     if(!res.ok){toast("Could not save the asset.");return}
@@ -306,6 +306,13 @@ SCRIPT = r"""
     addHeadingNote(/^What-if Lab$/i,"sp-whatif-help","Change the inputs and run a simulation to compare scenarios. Results depend on the values and data sources available.");
     const demo=[...document.querySelectorAll("button,a")].find(el=>/Demo Farm laden/i.test(el.textContent||""));
     if(demo) demo.textContent="Load demo farm";
+    const simulationButton=[...document.querySelectorAll("button")].find(el=>/Simulation berechnen/i.test(el.textContent||""));
+    if(simulationButton)simulationButton.textContent="Run simulation";
+    [...document.querySelectorAll("p,span,div")].filter(el=>el.children.length===0).forEach(el=>{
+      const value=(el.textContent||"").trim();
+      if(value==="Noch keine Simulation.")el.textContent="No simulation yet. Enter the values above and run a simulation to compare options.";
+      if(value==="Noch nicht angemeldet.")el.textContent="Not signed in. The demo is available without an account.";
+    });
     const bootstrap=[...document.querySelectorAll("input")].find(el=>/railway bootstrap/i.test(el.placeholder||""));
     if(bootstrap){
       const candidates=[...document.querySelectorAll("section,article,form,div")].filter(el=>el.contains(bootstrap)&&(el.textContent||"").includes("Account & Pilot Access")&&!el.querySelector("h1")&&!([...el.querySelectorAll("button")].some(b=>/Demo Farm laden|Load demo farm/i.test(b.textContent||""))));
