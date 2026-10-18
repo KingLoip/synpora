@@ -33,7 +33,7 @@ class FrontendEnhancementTests(unittest.TestCase):
     def test_demo_metrics_are_explicitly_illustrative(self):
         self.assertIn("Illustrative demo data — not live telemetry.", self.script)
         self.assertIn("not a verified result", self.script)
-        self.assertIn("not automatic hardware control", self.script)
+        self.assertIn("without automatic hardware control", self.script)
 
     def test_account_flow_uses_password_field_not_browser_prompt(self):
         self.assertIn('id="sp-password"', self.script)
