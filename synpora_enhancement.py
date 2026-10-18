@@ -168,7 +168,7 @@ SCRIPT = r"""
   }
 
   async function runDecisionRisk(){
-    const acc=JSON.parse(localStorage.getItem("synpora_account")||"null"); if(!acc?.token){toast("Bitte zuerst Workspace verbinden");return}
+    const acc=JSON.parse(localStorage.getItem("synpora_account")||"null"); if(!acc?.token){toast("Please sign in to open your workspace.");return}
     const farms=await fetch("/api/v1/farms",{headers:{Authorization:"Bearer "+acc.token}}).then(r=>r.json()); if(!farms[0])return;
     const riskInput=window.prompt("Risk Aversion 0–1","0.75");
     if(riskInput===null)return;
@@ -182,7 +182,7 @@ SCRIPT = r"""
   }
 
   async function runPortfolio(){
-    const acc=JSON.parse(localStorage.getItem("synpora_account")||"null"); if(!acc?.token){toast("Bitte zuerst Workspace verbinden");return}
+    const acc=JSON.parse(localStorage.getItem("synpora_account")||"null"); if(!acc?.token){toast("Please sign in to open your workspace.");return}
     const farms=await fetch("/api/v1/farms",{headers:{Authorization:"Bearer "+acc.token}}).then(r=>r.json()); if(!farms[0])return;
     const energy=Number(window.prompt("Verfügbare Gesamtenergie in kWh","100")||100);
     const d=await fetch("/api/v1/farms/"+farms[0].id+"/portfolio-optimize",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+acc.token},body:JSON.stringify({energy_kwh:energy,horizon_hours:1,energy_cost_eur_kwh:0.05})}).then(r=>r.json());
@@ -254,7 +254,7 @@ SCRIPT = r"""
 
   async function runOptimizer(){
     const acc=JSON.parse(localStorage.getItem("synpora_account")||"null");
-    if(!acc?.token){toast("Bitte zuerst Workspace verbinden");return}
+    if(!acc?.token){toast("Please sign in to open your workspace.");return}
     const farms=await fetch("/api/v1/farms",{headers:{Authorization:"Bearer "+acc.token}}).then(r=>r.json());
     if(!farms[0]){toast("No farm found.");return}
     const energy=Number(window.prompt("Verfügbare Energie in kWh","10")||10);
@@ -269,7 +269,7 @@ SCRIPT = r"""
 
   async function loadAssets(){
     const acc=JSON.parse(localStorage.getItem("synpora_account")||"null");
-    if(!acc?.token){toast("Bitte zuerst Workspace verbinden");return}
+    if(!acc?.token){toast("Please sign in to open your workspace.");return}
     const farms=await fetch("/api/v1/farms",{headers:{Authorization:"Bearer "+acc.token}}).then(r=>r.json());
     const farm=farms[0]; if(!farm){toast("No farm found.");return}
     const assets=await fetch("/api/v1/farms/"+farm.id+"/assets",{headers:{Authorization:"Bearer "+acc.token}}).then(r=>r.json());
