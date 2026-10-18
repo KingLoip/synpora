@@ -56,6 +56,14 @@ class FrontendEnhancementTests(unittest.TestCase):
         self.assertIn('energy_cost_eur_kwh:tariff', self.script)
         self.assertIn("Enter your actual electricity tariff", self.script)
 
+    def test_dynamic_user_and_provider_text_is_html_escaped(self):
+        self.assertIn("const escapeHtml=", self.script)
+        self.assertIn("escapeHtml(a.name)", self.script)
+        self.assertIn("escapeHtml(farm)", self.script)
+        self.assertIn('escapeHtml(saved.farm||"Demo Farm")', self.script)
+        self.assertIn("escapeHtml(r.asset)", self.script)
+        self.assertIn("escapeHtml(d.recommended)", self.script)
+
     def test_empty_data_states_explain_what_is_missing(self):
         self.assertIn("required market inputs and assumptions are available", self.script)
         self.assertIn("unknown or stale data is not treated as verified", self.script)
