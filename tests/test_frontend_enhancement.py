@@ -56,6 +56,13 @@ class FrontendEnhancementTests(unittest.TestCase):
         self.assertIn('energy_cost_eur_kwh:tariff', self.script)
         self.assertIn("Enter your actual electricity tariff", self.script)
 
+    def test_user_facing_dashboard_copy_is_consistent_and_actionable(self):
+        self.assertIn("Open workspace", self.script)
+        self.assertIn("Run simulation", self.script)
+        self.assertIn("No simulation yet.", self.script)
+        self.assertNotIn("Bitte zuerst Workspace verbinden", self.script)
+        self.assertNotIn("Workspace öffnen</h2>", self.script)
+
     def test_dynamic_user_and_provider_text_is_html_escaped(self):
         self.assertIn("const escapeHtml=", self.script)
         self.assertIn("escapeHtml(a.name)", self.script)
