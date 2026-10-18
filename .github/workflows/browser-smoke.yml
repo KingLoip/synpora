@@ -1,0 +1,51 @@
+name: SYNPORA Browser Smoke
+
+on:
+  pull_request:
+  push:
+    branches: ["main"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: synpora-browser-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Extract and patch the actual production frontend
+        run: |
+          python - <<'PY'
+          import shutil, zipfile
+          from pathlib import Path
+          z = zipfile.ZipFile("SYNPORA_1_0_1_DEPLOY_READY.zip")
+          z.extractall("/tmp/synpora-package")
+          source = Path("/tmp/synpora-package/synpora_deploy/synpora_v71_90_work/frontend")
+          target = Path("/tmp/synpora-frontend-source")
+          shutil.copytree(source, target, dirs_exist_ok=True)
+          PY
+          sudo mkdir -p /app/frontend
+          sudo cp -a /tmp/synpora-frontend-source/. /app/frontend/
+          sudo python synpora_enhancement.py
+          test "$(find /app/frontend -name '*.html' | wc -l)" -ge 1
+
+      - name: Install Playwright Chromium
+        run: |
+          python -m pip install --upgrade pip playwright
+          python -m playwright install --with-deps chromium
+
+      - name: Run actual browser click-through and XSS regression
+        run: |
+          python -m http.server 8765 --directory /app/frontend >/tmp/synpora-frontend-server.log 2>&1 &
+          echo $! >/tmp/synpora-frontend-server.pid
+          python tests/browser_smoke.py
