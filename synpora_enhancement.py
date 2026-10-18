@@ -59,8 +59,8 @@ SCRIPT = r"""
       <input id="sp-password" class="sp-input" type="password" autocomplete="current-password" minlength="8" maxlength="1024" placeholder="Enter your password" required>
       <p id="sp-auth-status" class="sp-status" role="status" aria-live="polite"></p>
       <div style="display:flex;gap:8px;justify-content:flex-end">
-        <button class="sp-action" id="sp-cancel">Abbrechen</button>
-        <button class="sp-action" id="sp-logout" style="display:none">Abmelden</button><button class="sp-action" id="sp-enter">Workspace verbinden</button>
+        <button class="sp-action" id="sp-cancel">Cancel</button>
+        <button class="sp-action" id="sp-logout" style="display:none">Sign out</button><button class="sp-action" id="sp-enter">Continue</button>
       </div>
     </div>`;
   document.body.appendChild(modal);
@@ -86,7 +86,8 @@ SCRIPT = r"""
       <label class="sp-field" for="sp-energy-kwh">Energy to compare (kWh)<input id="sp-energy-kwh" type="number" min="0.1" max="1000000" step="0.1" value="100" inputmode="decimal"></label>
       <p class="sp-muted">Check your assumptions before acting. SYNPORA provides decision support and does not control hardware automatically.</p>
       <button class="sp-action" id="sp-sim">Run example simulation</button>
-    </div>
+    </div>`;
+  
   const nav = document.createElement("nav");
   nav.id="synpora-nav";
   ["Overview","Assets","Economics","AI Decision","Simulation","Reports"].forEach((name,i)=>{
@@ -102,7 +103,7 @@ SCRIPT = r"""
       if(name==="Reports"){setTimeout(loadBenchmark,120);setTimeout(loadLearningHealth,180);setTimeout(loadDecisionQuality,240);}
       const titles={Assets:"Asset Registry",Economics:"Economics & Value per kWh","AI Decision":"AI Decision Center",Simulation:"What-if Simulation Lab",Reports:"Reports & Audit Trail"};
       panel.querySelector("h2").textContent=titles[name]||"SYNPORA Workspace";
-      toast(name+" workspace geöffnet");
+      toast(name+" workspace opened");
       panel.scrollIntoView({behavior:"smooth",block:"start"});
     };
     nav.appendChild(b);
@@ -142,7 +143,7 @@ SCRIPT = r"""
   }
 
   async function loadBenchmark(){
-    const acc=JSON.parse(localStorage.getItem("synpora_account")||"null"); if(!acc?.token){toast("Bitte zuerst Workspace verbinden");return}
+    const acc=JSON.parse(localStorage.getItem("synpora_account")||"null"); if(!acc?.token){toast("Please sign in to open your workspace.");return}
     const farms=await fetch("/api/v1/farms",{headers:{Authorization:"Bearer "+acc.token}}).then(r=>r.json()); if(!farms[0])return;
     const d=await fetch("/api/v1/farms/"+farms[0].id+"/benchmark",{headers:{Authorization:"Bearer "+acc.token}}).then(r=>r.json());
     const old=panel.querySelector(".sp-benchmark"); if(old)old.remove();
@@ -245,8 +246,8 @@ SCRIPT = r"""
     const power=Number(window.prompt("Leistung in kW","10")||0);
     const farms=await fetch("/api/v1/farms",{headers:{Authorization:"Bearer "+acc.token}}).then(r=>r.json());
     const res=await fetch("/api/v1/farms/"+farms[0].id+"/assets",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+acc.token},body:JSON.stringify({name,kind,power_kw:power})});
-    if(!res.ok){toast("Asset konnte nicht gespeichert werden");return}
-    toast("Asset gespeichert"); loadAssets();
+    if(!res.ok){toast("Could not save the asset.");return}
+    toast("Asset saved."); loadAssets();
   }
 
   function polishBaseUI(){
