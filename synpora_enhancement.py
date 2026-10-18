@@ -84,6 +84,8 @@ SCRIPT = r"""
       <div class="sp-row"><span>Bitcoin mining · example</span><strong>0.083 €/kWh</strong></div>
       <div class="sp-row"><span>Battery / grid export · example</span><strong>0.071 €/kWh</strong></div>
       <label class="sp-field" for="sp-energy-kwh">Energy to compare (kWh)<input id="sp-energy-kwh" type="number" min="0.1" max="1000000" step="0.1" value="100" inputmode="decimal"></label>
+      <label class="sp-field" for="sp-energy-price">Your electricity tariff (€/kWh)<input id="sp-energy-price" type="number" min="0" max="10" step="0.001" placeholder="Enter your tariff for a workspace run" inputmode="decimal"></label>
+      <p class="sp-muted">Without a workspace, the demo uses an explicitly illustrative €0.05/kWh tariff only when this field is left blank. Workspace scenarios require your own tariff.</p>
       <p class="sp-muted">Check your assumptions before acting. SYNPORA provides decision support and does not control hardware automatically.</p>
       <button class="sp-action" id="sp-sim">Run example simulation</button>
     </div>`;
@@ -190,18 +192,54 @@ SCRIPT = r"""
 
   async function runScenarioLab(){
     const acc=JSON.parse(localStorage.getItem("synpora_account")||"null");
-    if(!acc?.token){toast("Bitte zuerst Workspace verbinden");return}
-    const farms=await fetch("/api/v1/farms",{headers:{Authorization:"Bearer "+acc.token}}).then(r=>r.json());
-    if(!farms[0]) return;
-    const energy=Number(document.getElementById("sp-energy-kwh")?.value||100);
-    if(!Number.isFinite(energy)||energy<=0||energy>1000000){toast("Enter an energy amount between 0.1 and 1,000,000 kWh");return}
-    const base={energy_kwh:energy,energy_cost_eur_kwh:0.05};
-    const res=await fetch("/api/v1/farms/"+farms[0].id+"/scenario",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+acc.token},body:JSON.stringify(base)});
-    const d=await res.json(); if(!res.ok){toast(d.detail||"Szenario fehlgeschlagen");return}
-    const old=panel.querySelector(".sp-scenario"); if(old) old.remove();
-    const box=document.createElement("div"); box.className="sp-scenario"; box.style.marginTop="18px";
-    box.innerHTML="<div class='sp-label'>WHAT-IF SCENARIO · "+energy+" kWh</div>"+d.ranking.map((r,i)=>"<div class='sp-row'><span>"+(i===0?"🏆 ":"")+r.option+"</span><strong>"+r.value_eur_kwh.toFixed(3)+" €/kWh · €"+r.net_eur.toFixed(2)+" net</strong></div>").join("")+"<button class='sp-action' id='sp-backtest'>Run Market Sensitivity</button>";
-    panel.appendChild(box); document.getElementById("sp-backtest").onclick=runBacktest;
+    const energyText=document.getElementById("sp-energy-kwh")?.value?.trim()||"";
+    const energy=Number(energyText);
+    const priceText=document.getElementById("sp-energy-price")?.value?.trim()||"";
+    if(!energyText||!Number.isFinite(energy)||energy<0.1||energy>1000000){toast("Enter an energy amount between 0.1 and 1,000,000 kWh");return}
+    const old=panel.querySelector(".sp-scenario");if(old)old.remove();
+    let ranking=[],title="",note="",workspaceRun=false;
+    if(!acc?.token){
+      const tariff=priceText===""?0.05:Number(priceText);
+      if(!Number.isFinite(tariff)||tariff<0||tariff>10){toast("Enter a tariff between €0 and €10 per kWh");return}
+      ranking=[
+        {option:"AI compute",value_eur_kwh:0.135,net_eur:energy*(0.135-tariff)},
+        {option:"Bitcoin mining",value_eur_kwh:0.083,net_eur:energy*(0.083-tariff)},
+        {option:"Battery / grid export",value_eur_kwh:0.071,net_eur:energy*(0.071-tariff)}
+      ].sort((a,b)=>b.net_eur-a.net_eur);
+      title="ILLUSTRATIVE DEMO SCENARIO · "+energy+" kWh";
+      note="Example values only. Assumed electricity tariff: €"+tariff.toFixed(3)+"/kWh. Not live market data or a site-specific recommendation.";
+    }else{
+      if(priceText===""){toast("Enter your actual electricity tariff before running a workspace scenario.");return}
+      const tariff=Number(priceText);
+      if(!Number.isFinite(tariff)||tariff<0||tariff>10){toast("Enter a tariff between €0 and €10 per kWh");return}
+      try{
+        const farmsRes=await fetch("/api/v1/farms",{headers:{Authorization:"Bearer "+acc.token}});
+        const farms=await farmsRes.json().catch(()=>[]);
+        if(!farmsRes.ok||!farms[0]){toast("Could not load your workspace. Please sign in again.");return}
+        const res=await fetch("/api/v1/farms/"+farms[0].id+"/scenario",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+acc.token},body:JSON.stringify({energy_kwh:energy,energy_cost_eur_kwh:tariff})});
+        const d=await res.json().catch(()=>({detail:"Unexpected server response"}));
+        if(!res.ok){toast(d.detail||"Scenario could not be calculated.");return}
+        if(!Array.isArray(d.ranking)){toast("The scenario response was incomplete.");return}
+        ranking=d.ranking;workspaceRun=true;
+        title="WORKSPACE SCENARIO · "+energy+" kWh";
+        note="Using your entered electricity tariff of €"+tariff.toFixed(3)+"/kWh. Results depend on the available market inputs and their freshness.";
+      }catch(e){toast("Could not calculate the scenario. Please try again.");return}
+    }
+    const box=document.createElement("div");box.className="sp-scenario";box.style.marginTop="18px";
+    const label=document.createElement("div");label.className="sp-label";label.textContent=title;box.appendChild(label);
+    const disclaimer=document.createElement("p");disclaimer.className="sp-muted";disclaimer.textContent=note;box.appendChild(disclaimer);
+    ranking.forEach((r,i)=>{
+      const row=document.createElement("div");row.className="sp-row";
+      const name=document.createElement("span");name.textContent=(i===0?"★ ":"")+String(r.option||"Option");
+      const value=document.createElement("strong");
+      const per=Number(r.value_eur_kwh),net=Number(r.net_eur);
+      value.textContent=(Number.isFinite(per)?per.toFixed(3):"—")+" €/kWh · "+(Number.isFinite(net)?"€"+net.toFixed(2):"—")+" net";
+      row.append(name,value);box.appendChild(row);
+    });
+    if(workspaceRun){
+      const backtest=document.createElement("button");backtest.className="sp-action";backtest.id="sp-backtest";backtest.textContent="Run market sensitivity";box.appendChild(backtest);backtest.onclick=runBacktest;
+    }
+    panel.appendChild(box);
   }
   async function runBacktest(){
     const acc=JSON.parse(localStorage.getItem("synpora_account")||"null"); const farms=await fetch("/api/v1/farms",{headers:{Authorization:"Bearer "+acc.token}}).then(r=>r.json());
