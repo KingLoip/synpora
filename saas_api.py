@@ -921,11 +921,11 @@ def install(app):
     _provider_json_cache={}
     _provider_json_cache_at={}
 
-    def _provider_json(url, headers=None, ttl_seconds=300):
+    def _provider_json(url, headers=None, ttl_seconds=300, timeout=5, attempts=3):
         now=time.time()
         if url in _provider_json_cache and now-_provider_json_cache_at.get(url,0)<ttl_seconds:
             return _provider_json_cache[url]
-        raw=_provider_request_json(url,headers=headers,timeout=5,attempts=3)
+        raw=_provider_request_json(url,headers=headers,timeout=timeout,attempts=attempts)
         _provider_json_cache[url]=raw
         _provider_json_cache_at[url]=time.time()
         return raw
@@ -1077,9 +1077,12 @@ def install(app):
         if not zarobit_ok:
             try:
                 lium_url="https://lium.io/api/public/v1/nodes"
+                # Lium is a best-effort public fallback. Fail fast so an unresponsive
+                # endpoint does not hold up the collector; Zarobit was already checked
+                # and the configured Vast.ai provider is attempted immediately afterward.
                 lium_raw=_provider_json(lium_url,
                     headers={"User-Agent":"SYNPORA/1.3.0","Accept":"application/json"},
-                    ttl_seconds=60)
+                    ttl_seconds=60, timeout=2, attempts=1)
                 lium_observation=_lium_l40s_price_observation(lium_raw,time.time())
                 if lium_observation:
                     out["gpuHourlyUsd"]=lium_observation["price_usd_per_gpu_hour"]
