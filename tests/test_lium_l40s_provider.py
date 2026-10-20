@@ -1,7 +1,8 @@
 import unittest
+from unittest.mock import patch
 from datetime import datetime, timedelta, timezone
 
-from saas_api import _is_fresh_public_gpu_observation, _lium_l40s_price_observation
+from saas_api import _is_fresh_public_gpu_observation, _lium_l40s_price_observation, _provider_request_json
 
 
 def timestamp_at(moment):
@@ -9,6 +10,14 @@ def timestamp_at(moment):
 
 
 class LiumL40SProviderTests(unittest.TestCase):
+
+    def test_provider_request_honors_fast_timeout_without_retry(self):
+        with patch("urllib.request.urlopen", side_effect=TimeoutError("simulated timeout")) as mocked:
+            with self.assertRaises(TimeoutError):
+                _provider_request_json("https://example.invalid/provider", timeout=2, attempts=1)
+        mocked.assert_called_once()
+        self.assertEqual(mocked.call_args.kwargs["timeout"], 2)
+
     def test_fresh_lium_public_quote_prevents_keyed_fallback_override(self):
         self.assertTrue(_is_fresh_public_gpu_observation({
             "source": "external",
