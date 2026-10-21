@@ -965,7 +965,19 @@ jobs:
           fi
           changed_files="$(git diff --name-only "${BEFORE_SHA}" "${AFTER_SHA}")"
           printf 'Files changed in this push:\n%s\n' "${changed_files}"
-          if printf '%s\n' "${changed_files}" | grep -Eq '^(Dockerfile|railway\.toml|server\.py|saas_api\.py|auth_pages\.py|synpora_enhancement\.py|SYNPORA_1_0_1_DEPLOY_READY\.zip)
+          if printf '%s\n' "${changed_files}" | grep -Eq '^(Dockerfile|railway\.toml|server\.py|saas_api\.py|auth_pages\.py|synpora_enhancement\.py|SYNPORA_1_0_1_DEPLOY_READY\.zip)$'; then
+            echo "changed=true" >> "${GITHUB_OUTPUT}"
+            echo "Production runtime changed; live release smoke is required."
+          else
+            echo "changed=false" >> "${GITHUB_OUTPUT}"
+            echo "No production runtime files changed; skip waiting for a new Railway build commit."
+          fi
+
+  production-smoke:
+    name: Live production smoke test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.production-change.outputs.changed == 'true'
+    needs: [syntax, postgres-integration, production-change]
+    runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
       - name: Wait for this release to reach Railway
