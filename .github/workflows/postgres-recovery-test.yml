@@ -5,9 +5,17 @@ on:
     branches: ["main"]
     paths:
       - ".github/workflows/postgres-recovery-test.yml"
+      - "saas_api.py"
+      - "server.py"
+      - "backend/app/**"
+      - "tests/**"
   pull_request:
     paths:
       - ".github/workflows/postgres-recovery-test.yml"
+      - "saas_api.py"
+      - "server.py"
+      - "backend/app/**"
+      - "tests/**"
   workflow_dispatch:
 
 permissions:
