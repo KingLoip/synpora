@@ -942,10 +942,124 @@ jobs:
           PY
 
 
+  production-change:
+    name: Detect production runtime changes
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.filter.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: filter
+        shell: bash
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "${BEFORE_SHA}" =~ ^0+$ ]]; then
+            echo "changed=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          changed_files="$(git diff --name-only "${BEFORE_SHA}" "${AFTER_SHA}")"
+          printf 'Files changed in this push:\n%s\n' "${changed_files}"
+          if printf '%s\n' "${changed_files}" | grep -Eq '^(Dockerfile|railway\.toml|server\.py|saas_api\.py|auth_pages\.py|synpora_enhancement\.py|SYNPORA_1_0_1_DEPLOY_READY\.zip)
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Wait for this release to reach Railway
+        env:
+          BASE_URL: https://synpora-production.up.railway.app
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          found=0
+          for attempt in $(seq 1 60); do
+            release=$(curl --silent --show-error --max-time 8 --fail "$BASE_URL/api/v1/system/release" 2>/dev/null || true)
+            if printf '%s' "$release" | jq -e --arg sha "$EXPECTED_SHA" ' .release == "1.3.3" and .build_commit == $sha and .hardware_write == false and .autonomous_control == false and (.features | index("password_recovery") != null)' >/dev/null 2>&1; then
+              found=1
+              break
+            fi
+            sleep 10
+          done
+          if [ "$found" -ne 1 ]; then
+            echo "The expected SYNPORA release did not become live within 10 minutes."
+            exit 1
+          fi
+          printf '%s' "$release" | jq '{release,mode,hardware_write,autonomous_control,status}'
+      - name: Check live health, readiness and data-health contracts
+        env:
+          BASE_URL: https://synpora-production.up.railway.app
+        run: |
+          set -euo pipefail
+          health=$(curl --silent --show-error --max-time 10 --fail "$BASE_URL/health")
+          printf 'Live health: %s\n' "$health"
+          printf '%s' "$health" | jq -e '.status == "ok"' >/dev/null
+          readiness_code=$(curl --silent --show-error --max-time 15 --output /tmp/synpora-readiness.json --write-out '%{http_code}' "$BASE_URL/api/v1/system/production-readiness")
+          readiness=$(cat /tmp/synpora-readiness.json)
+          printf 'Readiness HTTP %s: %s\n' "$readiness_code" "$readiness"
+          test "$readiness_code" = "200"
+          printf '%s' "$readiness" | jq '{status,database_configured,database_reachable,database_schema_ready,database_backend,jwt_secret_strong,market_admin_token_strong,smtp_configured,market_data_ready,public_url_https,email_verification_required,hardware_write_enabled,autonomous_control_enabled}'
+          # Keep infrastructure/security checks separate from the external-data release gate,
+          # so a missing market provider does not hide the precise live-readiness blocker.
+          printf '%s' "$readiness" | jq -e '.database_configured and .database_reachable and .database_schema_ready and .jwt_secret_strong and .market_admin_token_strong and .smtp_configured == true and .public_url_https == true and .email_verification_required == true and .hardware_write_enabled == false and .autonomous_control_enabled == false' >/dev/null
+          email_guard=$(curl --silent --show-error --max-time 10 --output /dev/null --write-out '%{http_code}' -X POST "$BASE_URL/api/v1/system/email-connection-test")
+          test "$email_guard" = "403"
+          market=$(curl --silent --show-error --max-time 15 --fail "$BASE_URL/api/v1/market/data-health")
+          printf '%s' "$market" | jq -e '.recommendation_only == true and .hardware_write == false and has("latest_eligible_age_seconds")' >/dev/null
+          # A previously stored snapshot alone is not proof that the live collector is running.
+          # Wait for the startup collector (and one bounded retry) to produce a verified live result.
+          collector=""
+          collector_live=0
+          for attempt in $(seq 1 36); do
+            collector=$(curl --silent --show-error --max-time 10 --fail "$BASE_URL/api/v1/system/collector-status" 2>/dev/null || true)
+            if printf '%s' "$collector" | jq -e '.enabled == true and .last_attempt_result == "success" and .last_quality == "live" and .last_success_at != null and .consecutive_failures == 0' >/dev/null 2>&1; then
+              collector_live=1
+              break
+            fi
+            sleep 5
+          done
+          printf 'Collector status contract: %s\n' "$collector"
+          if [ "$collector_live" -ne 1 ]; then
+            echo "The live market collector did not complete a verified successful collection within 3 minutes."
+            exit 1
+          fi
+          printf '%s' "$collector" | jq -e 'has("last_attempt_result") and has("last_success_at") and has("last_quality") and has("consecutive_failures") and has("next_attempt_at") and has("retry_delay_seconds")' >/dev/null
+          curl --silent --show-error --max-time 10 --fail --output /tmp/synpora-ops.html "$BASE_URL/ops"
+          grep -q 'SYNPORA – Betriebsstatus' /tmp/synpora-ops.html
+          verify_page_code=$(curl --silent --show-error --max-time 10 --dump-header /tmp/synpora-verify.headers --output /tmp/synpora-verify.html --write-out '%{http_code}' "$BASE_URL/verify-email?token=SmokeToken123")
+          test "$verify_page_code" = "200"
+          grep -qi '^cache-control: no-store' /tmp/synpora-verify.headers
+          grep -qi "^content-security-policy:.*script-src 'nonce-" /tmp/synpora-verify.headers
+          grep -qi '^referrer-policy: no-referrer' /tmp/synpora-verify.headers
+          reset_page_code=$(curl --silent --show-error --max-time 10 --output /tmp/synpora-reset.html --write-out '%{http_code}' "$BASE_URL/reset-password?token=SmokeToken123")
+          test "$reset_page_code" = "200"
+          grep -q 'Passwort ändern' /tmp/synpora-reset.html
+          printf '%s' "$readiness" | jq '{status,market_data_ready,market_data_latest_eligible_age_seconds,smtp_configured,email_verification_required,database_backend}'
+          # Production readiness is global: hashprice, GPU rental pricing, and FX.
+          # Learning eligibility is intentionally stricter and may require a regional energy label;
+          # a stale/missing Austria-only learning label must not block international live readiness.
+          if [ "$(printf '%s' "$readiness" | jq -r '.status')" != "ready" ] || [ "$(printf '%s' "$readiness" | jq -r '.market_data_latest_ready_age_seconds != null and .market_data_latest_ready_age_seconds >= 0 and .market_data_latest_ready_age_seconds <= 900 and .market_data_ready == true')" != "true" ]; then
+            echo "LIVE READINESS BLOCKERS:"
+            printf '%s' "$readiness" | jq -r 'to_entries | map(select((.key == "smtp_configured" and .value == false) or (.key == "market_data_ready" and .value == false) or (.key == "public_url_https" and .value == false) or (.key == "email_verification_required" and .value == false) or (.key == "database_schema_ready" and .value == false) or (.key == "jwt_secret_strong" and .value == false) or (.key == "market_admin_token_strong" and .value == false))) | .[] | "\(.key)=\(.value)"'
+            printf '%s' "$readiness" | jq -r '"Eligible snapshot age (seconds): " + ((.market_data_latest_eligible_age_seconds // "missing")|tostring), "GPU field: " + ((.market_data_field_diagnostics.gpu_l40s_usd_hour // {})|tojson), "Guidance: " + ((.market_data_guidance // [])|join(" "))'
+            echo "Production release is blocked until all readiness checks pass."
+            exit 1
+          fi
+; then
+            echo "changed=true" >> "${GITHUB_OUTPUT}"
+            echo "Production runtime changed; live release smoke is required."
+          else
+            echo "changed=false" >> "${GITHUB_OUTPUT}"
+            echo "No production runtime files changed; skip waiting for a new Railway build commit."
+          fi
+
   production-smoke:
     name: Live production smoke test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [syntax, postgres-integration]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.production-change.outputs.changed == 'true'
+    needs: [syntax, postgres-integration, production-change]
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
