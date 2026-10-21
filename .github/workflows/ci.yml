@@ -944,7 +944,7 @@ jobs:
 
   production_change:
     name: Detect production runtime changes
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     outputs:
       changed: ${{ steps.filter.outputs.changed }}
@@ -975,7 +975,7 @@ jobs:
 
   production-smoke:
     name: Live production smoke test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.production_change.outputs.changed == 'true'
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.production_change.outputs.changed == 'true' }}
     needs: [syntax, postgres-integration, production_change]
     runs-on: ubuntu-latest
     timeout-minutes: 12
