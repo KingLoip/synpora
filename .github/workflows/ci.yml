@@ -942,41 +942,10 @@ jobs:
           PY
 
 
-  production_change:
-    name: Detect production runtime changes
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-    runs-on: ubuntu-latest
-    outputs:
-      changed: ${{ steps.filter.outputs.changed }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - id: filter
-        shell: bash
-        env:
-          BEFORE_SHA: ${{ github.event.before }}
-          AFTER_SHA: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          if [[ "${BEFORE_SHA}" =~ ^0+$ ]]; then
-            echo "changed=true" >> "${GITHUB_OUTPUT}"
-            exit 0
-          fi
-          changed_files="$(git diff --name-only "${BEFORE_SHA}" "${AFTER_SHA}")"
-          printf 'Files changed in this push:\n%s\n' "${changed_files}"
-          if printf '%s\n' "${changed_files}" | grep -Eq '^(Dockerfile|railway\.toml|server\.py|saas_api\.py|auth_pages\.py|synpora_enhancement\.py|SYNPORA_1_0_1_DEPLOY_READY\.zip)$'; then
-            echo "changed=true" >> "${GITHUB_OUTPUT}"
-            echo "Production runtime changed; live release smoke is required."
-          else
-            echo "changed=false" >> "${GITHUB_OUTPUT}"
-            echo "No production runtime files changed; skip waiting for a new Railway build commit."
-          fi
-
   production-smoke:
     name: Live production smoke test
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.production_change.outputs.changed == 'true' }}
-    needs: [syntax, postgres-integration, production_change]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && (contains(github.event.head_commit.modified, 'Dockerfile') || contains(github.event.head_commit.added, 'Dockerfile') || contains(github.event.head_commit.modified, 'railway.toml') || contains(github.event.head_commit.added, 'railway.toml') || contains(github.event.head_commit.modified, 'server.py') || contains(github.event.head_commit.added, 'server.py') || contains(github.event.head_commit.modified, 'saas_api.py') || contains(github.event.head_commit.added, 'saas_api.py') || contains(github.event.head_commit.modified, 'auth_pages.py') || contains(github.event.head_commit.added, 'auth_pages.py') || contains(github.event.head_commit.modified, 'synpora_enhancement.py') || contains(github.event.head_commit.added, 'synpora_enhancement.py') || contains(github.event.head_commit.modified, 'SYNPORA_1_0_1_DEPLOY_READY.zip') || contains(github.event.head_commit.added, 'SYNPORA_1_0_1_DEPLOY_READY.zip'))
+    needs: [syntax, postgres-integration]
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
