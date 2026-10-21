@@ -944,7 +944,32 @@ jobs:
 
   production-smoke:
     name: Live production smoke test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && (contains(github.event.head_commit.modified, 'Dockerfile') || contains(github.event.head_commit.added, 'Dockerfile') || contains(github.event.head_commit.modified, 'railway.toml') || contains(github.event.head_commit.added, 'railway.toml') || contains(github.event.head_commit.modified, 'server.py') || contains(github.event.head_commit.added, 'server.py') || contains(github.event.head_commit.modified, 'saas_api.py') || contains(github.event.head_commit.added, 'saas_api.py') || contains(github.event.head_commit.modified, 'auth_pages.py') || contains(github.event.head_commit.added, 'auth_pages.py') || contains(github.event.head_commit.modified, 'synpora_enhancement.py') || contains(github.event.head_commit.added, 'synpora_enhancement.py') || contains(github.event.head_commit.modified, 'SYNPORA_1_0_1_DEPLOY_READY.zip') || contains(github.event.head_commit.added, 'SYNPORA_1_0_1_DEPLOY_READY.zip'))
+    if: >-
+      ${{ github.event_name == 'push' &&
+          github.ref == 'refs/heads/main' &&
+          (
+            contains(join(github.event.head_commit.modified, ','), 'Dockerfile') ||
+            contains(join(github.event.head_commit.added, ','), 'Dockerfile') ||
+            contains(join(github.event.head_commit.removed, ','), 'Dockerfile') ||
+            contains(join(github.event.head_commit.modified, ','), 'railway.toml') ||
+            contains(join(github.event.head_commit.added, ','), 'railway.toml') ||
+            contains(join(github.event.head_commit.removed, ','), 'railway.toml') ||
+            contains(join(github.event.head_commit.modified, ','), 'server.py') ||
+            contains(join(github.event.head_commit.added, ','), 'server.py') ||
+            contains(join(github.event.head_commit.removed, ','), 'server.py') ||
+            contains(join(github.event.head_commit.modified, ','), 'saas_api.py') ||
+            contains(join(github.event.head_commit.added, ','), 'saas_api.py') ||
+            contains(join(github.event.head_commit.removed, ','), 'saas_api.py') ||
+            contains(join(github.event.head_commit.modified, ','), 'auth_pages.py') ||
+            contains(join(github.event.head_commit.added, ','), 'auth_pages.py') ||
+            contains(join(github.event.head_commit.removed, ','), 'auth_pages.py') ||
+            contains(join(github.event.head_commit.modified, ','), 'synpora_enhancement.py') ||
+            contains(join(github.event.head_commit.added, ','), 'synpora_enhancement.py') ||
+            contains(join(github.event.head_commit.removed, ','), 'synpora_enhancement.py') ||
+            contains(join(github.event.head_commit.modified, ','), 'SYNPORA_1_0_1_DEPLOY_READY.zip') ||
+            contains(join(github.event.head_commit.added, ','), 'SYNPORA_1_0_1_DEPLOY_READY.zip') ||
+            contains(join(github.event.head_commit.removed, ','), 'SYNPORA_1_0_1_DEPLOY_READY.zip')
+          ) }}
     needs: [syntax, postgres-integration]
     runs-on: ubuntu-latest
     timeout-minutes: 12
