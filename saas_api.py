@@ -1074,7 +1074,8 @@ def install(app):
         lium_ok=False
         # Zarobit's current-listing timestamps can lag even while its API returns HTTP 200.
         # Use Lium's public, timestamped rentable-node feed as a no-key live fallback.
-        if not zarobit_ok:
+        lium_fallback_enabled=os.getenv("SYNPORA_ENABLE_LIUM_FALLBACK","true").strip().lower() in ("1","true","yes")
+        if not zarobit_ok and lium_fallback_enabled:
             try:
                 lium_url="https://lium.io/api/public/v1/nodes"
                 # Lium is a best-effort public fallback. Fail fast so an unresponsive
