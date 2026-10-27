@@ -1551,18 +1551,15 @@ def install(app):
         shock=max(0.0,min(0.80,float(x.shock_pct)))
         base=_economics(x)
         strategy_values={k:[] for k in base}
+        energy_shock=shock*0.65
         for _ in range(n):
-            btc=max(0.01,float(x.btc_hashprice_usd_ph_day)*rng.lognormvariate(0,shock))
-            gpu=max(0.01,float(x.gpu_hourly_usd)*rng.lognormvariate(0,shock))
-            energy=max(0.001,float(x.energy_cost_eur_kwh)*rng.lognormvariate(0,shock*0.65))
-            s=RiskScenarioIn(energy_kwh=x.energy_kwh,energy_cost_eur_kwh=energy,btc_hashprice_usd_ph_day=btc,
-                         eur_usd=x.eur_usd,gpu_hourly_usd=gpu,gpu_power_kw=x.gpu_power_kw,
-                         gpu_utilization=x.gpu_utilization,gpu_platform_fee=x.gpu_platform_fee,
-                         asic_efficiency_j_th=x.asic_efficiency_j_th,btc_device_power_kw=x.btc_device_power_kw,facility_overhead_kw=x.facility_overhead_kw,
-                         btc_facility_overhead_kw=x.btc_facility_overhead_kw,
-                         gpu_facility_overhead_kw=x.gpu_facility_overhead_kw,battery_round_trip_efficiency=x.battery_round_trip_efficiency,
-                         battery_degradation_eur_kwh=x.battery_degradation_eur_kwh,grid_export_fee_eur_kwh=x.grid_export_fee_eur_kwh,
-                         battery_value_eur_kwh=x.battery_value_eur_kwh,grid_value_eur_kwh=x.grid_value_eur_kwh)
+            # Mean-one lognormal multipliers preserve the supplied expected price.
+            # Preserve signed site tariffs too; negative prices must not be clamped away.
+            btc=max(0.01,float(x.btc_hashprice_usd_ph_day)*rng.lognormvariate(-0.5*shock*shock,shock))
+            gpu=max(0.01,float(x.gpu_hourly_usd)*rng.lognormvariate(-0.5*shock*shock,shock))
+            energy=float(x.energy_cost_eur_kwh)*rng.lognormvariate(-0.5*energy_shock*energy_shock,energy_shock)
+            s=x.model_copy(update={"energy_cost_eur_kwh":energy,
+                         "btc_hashprice_usd_ph_day":btc,"gpu_hourly_usd":gpu})
             econ=_economics(s)
             for k,v in econ.items():
                 strategy_values[k].append(float(v)*float(x.energy_kwh))
@@ -1613,12 +1610,16 @@ def install(app):
         base=_economics(x)
         base_net={k:float(v)*x.energy_kwh for k,v in base.items()}
         risk_seed=int(x.seed); n=max(100,min(5000,int(x.scenarios))); rng=__import__("random").Random(risk_seed)
+        shock=max(0.0,min(0.80,float(x.shock_pct)))
+        energy_shock=shock*0.65
         samples=[]
         for _ in range(n):
+            # Use the same mean-preserving shocks as risk-analysis, without changing
+            # user-supplied equipment costs, uptime, fees, or signed site tariff.
             s=x.model_copy(update={
-                "btc_hashprice_usd_ph_day":x.btc_hashprice_usd_ph_day*rng.lognormvariate(0,float(x.shock_pct)),
-                "gpu_hourly_usd":x.gpu_hourly_usd*rng.lognormvariate(0,float(x.shock_pct)),
-                "energy_cost_eur_kwh":x.energy_cost_eur_kwh*rng.lognormvariate(0,float(x.shock_pct)*0.65)})
+                "btc_hashprice_usd_ph_day":x.btc_hashprice_usd_ph_day*rng.lognormvariate(-0.5*shock*shock,shock),
+                "gpu_hourly_usd":x.gpu_hourly_usd*rng.lognormvariate(-0.5*shock*shock,shock),
+                "energy_cost_eur_kwh":x.energy_cost_eur_kwh*rng.lognormvariate(-0.5*energy_shock*energy_shock,energy_shock)})
             samples.append(_economics(s))
         av=max(0.0,min(1.0,float(x.risk_aversion)))
         ranked=[]
