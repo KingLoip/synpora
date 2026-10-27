@@ -127,6 +127,27 @@ jobs:
           assert rb["strategies"] == rr["strategies"], "Fixed seed must produce repeatable risk metrics"
           assert set(rb["regret_vs_base_best_eur"]) == set(rb["strategies"]), rb["regret_vs_base_best_eur"]
           assert all(v >= 0 for v in rb["regret_vs_base_best_eur"].values()), rb["regret_vs_base_best_eur"]
+          # Regression: Monte Carlo must carry equipment costs, uptime, fees and tax
+          # through every sampled scenario instead of rebuilding a lossy input model.
+          cost_payload={**risk_payload,"gpu_capex_eur":50000,"gpu_lifetime_years":2,
+              "gpu_maintenance_eur_year":12000,"gpu_uptime":0.5,"btc_capex_eur":80000,
+              "btc_lifetime_years":2,"btc_maintenance_eur_year":15000,"btc_uptime":0.5,
+              "pool_fee":0.10,"tax_rate":0.20}
+          cost_risk=c.post(f"/api/v1/farms/{farm}/risk-analysis",headers=h,json=cost_payload)
+          assert cost_risk.status_code==200, cost_risk.text
+          cost_rb=cost_risk.json()
+          assert cost_rb["cost_model"]["gpu"]["capex_eur"] == 50000, cost_rb["cost_model"]
+          assert cost_rb["cost_model"]["btc"]["capex_eur"] == 80000, cost_rb["cost_model"]
+          assert cost_rb["strategies"]["AI Compute"]["mean"] != rb["strategies"]["AI Compute"]["mean"], (rb,cost_rb)
+          assert cost_rb["strategies"]["BTC Mining"]["mean"] != rb["strategies"]["BTC Mining"]["mean"], (rb,cost_rb)
+          # Regression: zero-shock risk analysis must exactly reproduce base economics,
+          # including negative/credit electricity tariffs.
+          negative_risk=c.post(f"/api/v1/farms/{farm}/risk-analysis",headers=h,json={
+              "energy_kwh":100,"energy_cost_eur_kwh":-0.05,"shock_pct":0,"scenarios":20,"seed":42})
+          assert negative_risk.status_code==200, negative_risk.text
+          negative_rb=negative_risk.json()
+          for name,value in negative_rb["base_case"]["values_eur_kwh"].items():
+              assert abs(negative_rb["strategies"][name]["mean"]/100-value) < 0.00001, (name,negative_rb)
           scenario=c.post(f"/api/v1/farms/{farm}/scenario",headers=h,json={
               "energy_kwh":100,"energy_cost_eur_kwh":0.05,
               "btc_hashprice_usd_ph_day":39.64,"asic_efficiency_j_th":20})
