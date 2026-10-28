@@ -1572,12 +1572,16 @@ def install(app):
         best_base=max(base,key=base.get)
         regret={k:round(max(0.0,base_net[best_base]-base_net[k]),4) for k in base}
         stress_cases=[]
+        # "Energy price up" means higher cost to the site. For a negative tariff,
+        # that moves the credit toward zero rather than making it more negative.
+        energy_cost_up_50pct=(x.energy_cost_eur_kwh*1.50 if x.energy_cost_eur_kwh>=0
+                              else x.energy_cost_eur_kwh*0.50)
         stress_updates=(
             ("btc_hashprice_down_35pct",{"btc_hashprice_usd_ph_day":x.btc_hashprice_usd_ph_day*0.65}),
             ("gpu_rate_down_30pct",{"gpu_hourly_usd":x.gpu_hourly_usd*0.70}),
-            ("energy_price_up_50pct",{"energy_cost_eur_kwh":x.energy_cost_eur_kwh*1.50}),
+            ("energy_price_up_50pct",{"energy_cost_eur_kwh":energy_cost_up_50pct}),
             ("combined_downside",{"btc_hashprice_usd_ph_day":x.btc_hashprice_usd_ph_day*0.65,
-                "gpu_hourly_usd":x.gpu_hourly_usd*0.70,"energy_cost_eur_kwh":x.energy_cost_eur_kwh*1.50,
+                "gpu_hourly_usd":x.gpu_hourly_usd*0.70,"energy_cost_eur_kwh":energy_cost_up_50pct,
                 "eur_usd":x.eur_usd*1.10,"gpu_utilization":x.gpu_utilization*0.85})
         )
         for label,updates in stress_updates:
