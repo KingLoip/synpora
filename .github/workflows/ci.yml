@@ -148,6 +148,10 @@ jobs:
           negative_rb=negative_risk.json()
           for name,value in negative_rb["base_case"]["values_eur_kwh"].items():
               assert abs(negative_rb["strategies"][name]["mean"]/100-value) < 0.00001, (name,negative_rb)
+          energy_stress=next(s for s in negative_rb["stress_scenarios"] if s["scenario"]=="energy_price_up_50pct")
+          # A less-negative tariff is a cost increase: mining/compute value must fall.
+          assert energy_stress["net_value_eur_kwh"]["AI Compute"] < negative_rb["base_case"]["values_eur_kwh"]["AI Compute"], (energy_stress,negative_rb)
+          assert energy_stress["net_value_eur_kwh"]["BTC Mining"] < negative_rb["base_case"]["values_eur_kwh"]["BTC Mining"], (energy_stress,negative_rb)
           scenario=c.post(f"/api/v1/farms/{farm}/scenario",headers=h,json={
               "energy_kwh":100,"energy_cost_eur_kwh":0.05,
               "btc_hashprice_usd_ph_day":39.64,"asic_efficiency_j_th":20})
