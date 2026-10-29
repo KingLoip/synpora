@@ -2460,14 +2460,22 @@ def install(app):
 
     @app.post("/api/v1/system/email-connection-test")
     def email_connection_test(x_market_token:str|None=Header(default=None,alias="X-SYNPORA-MARKET-TOKEN")):
-        # Admin-only diagnostic validates the configured provider without sending mail.
+        # Admin-only diagnostic. Resend send-only API keys cannot query /domains,
+        # so verify them with one explicitly configured, harmless test message.
         require_market_admin(x_market_token)
         try:
             settings=_email_provider_settings()
             if not settings["configured"]: raise RuntimeError("Email provider is not configured")
             if settings["provider"]=="resend":
-                _resend_api_request("GET","/domains",settings["resend_key"],timeout=8)
-                return {"email_delivery":"connected","email_provider":"resend","api_authenticated":True}
+                recipient=os.getenv("SYNPORA_EMAIL_TEST_RECIPIENT","").strip()
+                if not recipient:
+                    raise RuntimeError("Test recipient is not configured")
+                _send_security_email(recipient,"SYNPORA – E-Mail-Verbindungstest",
+                    "Dies ist eine einmalige technische Testnachricht von SYNPORA. "
+                    "Sie prueft API-Schluessel und E-Mail-Zustellung ueber Resend. "
+                    "Es ist keine Aktion erforderlich.")
+                return {"email_delivery":"accepted","email_provider":"resend",
+                        "api_authenticated":True,"test_recipient_configured":True}
             import smtplib, ssl
             host=settings["smtp_host"]; port=settings["smtp_port"]
             if port==465:
@@ -2480,7 +2488,7 @@ def install(app):
             if int(code)<200 or int(code)>=400: raise RuntimeError("SMTP health check rejected")
             return {"email_delivery":"connected","email_provider":"smtp","smtp_authenticated":True,"tls_required":True}
         except Exception as exc:
-            raise HTTPException(503,{"email_delivery":"unavailable","error_class":type(exc).__name__})
+            raise HTTPException(503,{"detail":{"email_delivery":"unavailable","error_class":type(exc).__name__}})
 
     @app.post("/api/v1/system/email-delivery-test")
     def email_delivery_test(x_market_token:str|None=Header(default=None,alias="X-SYNPORA-MARKET-TOKEN")):
