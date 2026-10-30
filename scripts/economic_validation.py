@@ -368,7 +368,8 @@ def main():
             },
             "historical_strategy_distributions": per_strategy,
             "empirical_risk_aware_walk_forward": run_backtest(rows, tariff),
-            "latest_snapshot_capex_hurdles": capex_hurdles(latest, tariff),\n            "historical_capex_hurdle_distribution": capex_hurdle_distribution(rows, tariff),
+            "latest_snapshot_capex_hurdles": capex_hurdles(latest, tariff),
+            "historical_capex_hurdle_distribution": capex_hurdle_distribution(rows, tariff),
         }
     print(json.dumps(report, indent=2, sort_keys=True))
 
