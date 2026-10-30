@@ -41,7 +41,10 @@ def finite(value):
 def market_ready(payload):
     if not isinstance(payload, dict):
         return False
-    fields = (payload.get("data_quality") or {}).get("fields", {})
+    quality = payload.get("data_quality")
+    fields = quality.get("fields", {}) if isinstance(quality, dict) else {}
+    if not isinstance(fields, dict):
+        return False
     requirements = {
         "btc_hashprice_usd_ph_day": 900,
         "gpu_l40s_usd_hour": 900,
@@ -126,6 +129,38 @@ def distribution(values):
     }
 
 
+def production_parametric_choice(current, tariff, seed, scenarios=200, shock=0.20):
+    """Mirror decision_engine's independent mean-preserving lognormal shock model."""
+    rng = random.Random(seed)
+    energy_shock = shock * 0.65
+    values = {name: [] for name in ("AI Compute", "BTC Mining", "Battery", "Grid")}
+    for _ in range(scenarios):
+        simulated = {
+            **current,
+            "btc": current["btc"] * rng.lognormvariate(-0.5 * shock * shock, shock),
+            "gpu": current["gpu"] * rng.lognormvariate(-0.5 * shock * shock, shock),
+        }
+        simulated_tariff = tariff * rng.lognormvariate(
+            -0.5 * energy_shock * energy_shock, energy_shock
+        )
+        for name, value in economics(simulated, simulated_tariff).items():
+            values[name].append(value)
+    scores = {}
+    metrics = {}
+    for name, series in values.items():
+        ordered = sorted(series)
+        mean = statistics.fmean(ordered)
+        # Match decision_engine's current P05 index convention.
+        p05 = ordered[max(0, int(0.05 * scenarios) - 1)]
+        scores[name] = (1.0 - RISK_AVERSION) * mean + RISK_AVERSION * p05
+        metrics[name] = {
+            "mean": round(mean, 6),
+            "p05": round(p05, 6),
+            "probability_positive": round(sum(v > 0 for v in series) / scenarios, 4),
+        }
+    return max(scores, key=scores.get), metrics
+
+
 def empirical_risk_choice(history, current, tariff, seed):
     """Paired bootstrap of prior BTC/GPU/FX returns; no future observations leak in."""
     returns = []
@@ -170,29 +205,7 @@ def empirical_risk_choice(history, current, tariff, seed):
     return chosen, metrics
 
 
-def run_backtest(rows, tariff, min_history=WINDOW):
-    pairs = []
-    # At t, train only on returns ending at t; score against t+1.
-    for i in range(min_history, len(rows) - 1):
-        decision = rows[i]
-        next_row = rows[i + 1]
-        if (next_row["ts"] - decision["ts"]) <= 0:
-            continue
-        risk = empirical_risk_choice(rows[:i + 1], decision, tariff, SEED + i)
-        if risk is None:
-            continue
-        chosen, risk_metrics = risk
-        actual = economics(next_row, tariff)
-        best = max(actual, key=actual.get)
-        pairs.append({
-            "chosen": chosen,
-            "predicted": risk_metrics[chosen]["mean"],
-            "actual": actual[chosen],
-            "best": best,
-            "regret": max(0.0, actual[best] - actual[chosen]),
-            "actual_values": actual,
-            "gap_minutes": (next_row["ts"] - decision["ts"]) / 60.0,
-        })
+def summarize_backtest(pairs, label):
     if not pairs:
         return {"status": "insufficient_data", "pairs": 0}
     regrets = [p["regret"] for p in pairs]
@@ -202,6 +215,7 @@ def run_backtest(rows, tariff, min_history=WINDOW):
         for name in ("AI Compute", "BTC Mining", "Battery", "Grid")
     }
     return {
+        "model": label,
         "status": "evaluated" if len(pairs) >= 24 else "insufficient_data",
         "pairs": len(pairs),
         "mean_prediction_error_eur_per_kwh": round(statistics.fmean(errors), 6),
@@ -211,12 +225,49 @@ def run_backtest(rows, tariff, min_history=WINDOW):
         "mean_next_snapshot_value_eur_per_kwh": strategy_means,
         "median_snapshot_gap_minutes": round(statistics.median(p["gap_minutes"] for p in pairs), 2),
         "p90_snapshot_gap_minutes": round(quantile([p["gap_minutes"] for p in pairs], 0.90), 2),
-        "warnings": [
-            "This is an out-of-sample next-snapshot market mark-to-model test, not realized cashflow.",
-            "The paired bootstrap preserves observed BTC/GPU/FX co-movement; it does not prove long-horizon stationarity.",
-            "Battery and grid values remain explicit model defaults (7.1 ct/kWh battery reference, 5.5 ct/kWh export reference).",
-            "Equipment capex, maintenance, taxes, metering, connection limits and actual uptime are not supplied by the production market feed.",
-        ],
+    }
+
+
+def run_backtest(rows, tariff, min_history=WINDOW):
+    empirical_pairs = []
+    parametric_pairs = []
+    # At t, train only on returns ending at t; score against t+1.
+    for i in range(min_history, len(rows) - 1):
+        decision = rows[i]
+        next_row = rows[i + 1]
+        if (next_row["ts"] - decision["ts"]) <= 0:
+            continue
+        actual = economics(next_row, tariff)
+        best = max(actual, key=actual.get)
+        empirical = empirical_risk_choice(rows[:i + 1], decision, tariff, SEED + i)
+        if empirical is not None:
+            chosen, risk_metrics = empirical
+            empirical_pairs.append({
+                "chosen": chosen, "predicted": risk_metrics[chosen]["mean"],
+                "actual": actual[chosen], "best": best,
+                "regret": max(0.0, actual[best] - actual[chosen]),
+                "actual_values": actual, "gap_minutes": (next_row["ts"] - decision["ts"]) / 60.0,
+            })
+        parametric, parametric_metrics = production_parametric_choice(
+            decision, tariff, 42 + i, scenarios=200, shock=0.20
+        )
+        parametric_pairs.append({
+            "chosen": parametric, "predicted": parametric_metrics[parametric]["mean"],
+            "actual": actual[parametric], "best": best,
+            "regret": max(0.0, actual[best] - actual[parametric]),
+            "actual_values": actual, "gap_minutes": (next_row["ts"] - decision["ts"]) / 60.0,
+        })
+    warnings = [
+        "Both tests are out-of-sample next-snapshot market mark-to-model tests, not realized cashflow.",
+        "The empirical paired bootstrap preserves observed BTC/GPU/FX co-movement; it does not prove long-horizon stationarity.",
+        "The parametric comparator mirrors the production decision engine's independent 20% lognormal BTC/GPU shock and 13% energy shock.",
+        "Battery and grid values remain explicit model defaults (7.1 ct/kWh battery reference, 5.5 ct/kWh export reference).",
+        "Equipment capex, maintenance, taxes, metering, connection limits and actual uptime are not supplied by the production market feed.",
+    ]
+    return {
+        "production_parametric_monte_carlo": summarize_backtest(parametric_pairs, "production_independent_lognormal"),
+        "independent_empirical_paired_bootstrap": summarize_backtest(empirical_pairs, "historical_paired_bootstrap"),
+        "warnings": warnings,
     }
 
 
