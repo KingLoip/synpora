@@ -16,14 +16,16 @@ from datetime import datetime, timezone
 
 MARKET_URL = "https://synpora-production.up.railway.app/api/v1/market/history?limit=500"
 TARIFFS = {
-    # Salzburg AG Strom Privat 24 2026 product sheet: all-in variable price,
-    # incl. network/taxes, less the 8.28 ct/kWh gross energy-price discount
-    # for the first 1,500 kWh. Metering charges and fixed annual fees excluded.
-    "salzburg_2026_first_1500_discounted": 0.216551,
-    "salzburg_2026_standard_after_1500": 0.299351,
-    # Supplier energy-only component, deliberately shown as a lower bound;
-    # network charges, taxes and duties must still be added for a real dispatch cost.
-    "salzburg_2026_energy_component_only_not_all_in": 0.2028,
+    # Current public tariff page on 2026-10-30: supplier energy component only.
+    # The first 1,500 kWh rate is conditional on the 2026 household discount.
+    "salzburg_2026_current_energy_only_standard": 0.2028,
+    "salzburg_2026_current_energy_only_first_1500_discounted": 0.12,
+    # Official product sheet explicitly says valid from 2026-11-01. Its total
+    # variable price includes level-7 network charges/taxes in Salzburg Netz
+    # GmbH's area; the first-1,500-kWh discount subtracts 8.28 ct from energy.
+    # Metering charges, free days and annual fixed fees are excluded.
+    "salzburg_2026_11_01_future_all_in_standard": 0.299351,
+    "salzburg_2026_11_01_future_all_in_first_1500_discounted": 0.216551,
     # Transparent international sensitivity point, not the user's tariff.
     "low_cost_international_reference": 0.05,
 }
@@ -350,7 +352,7 @@ def main():
         "limitations": [
             "A public market snapshot is not proof of an executed GPU rental, mined BTC payout, grid export settlement, or battery cycle.",
             "The model's zero-capex defaults can materially overstate compute/mining profitability.",
-            "The Salzburg all-in scenarios are based on the 2026 product sheet's stated level-7 charges in the Salzburg Netz GmbH area; they may not match a meter point in another distribution area. The first-1,500-kWh discount is conditional on eligible natural-person household contracts. The supplier-only 20.28 ct/kWh case excludes network charges, taxes and duties and is not a valid all-in dispatch price.",
+            "The 20.28 ct/kWh standard and 12.00 ct/kWh discounted supplier-energy rates are the current public Strom Privat 24 page values on 2026-10-30; they exclude network charges, taxes and duties and are not all-in dispatch prices. The 29.9351/21.6551 ct/kWh all-in cases come from the linked product sheet explicitly valid from 2026-11-01, and apply only to level-7 charges in the Salzburg Netz GmbH area. They may not match another distribution area. The 1,500-kWh discount is conditional on eligible natural-person household contracts. Metering charges, free-day discounts and annual fixed fees are excluded.",
             "No hardware action, financial trade, or wallet transaction is performed.",
         ],
     }
