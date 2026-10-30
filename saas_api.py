@@ -1378,19 +1378,26 @@ def install(app):
                 "source":source,"source_quality":overall,"warnings":warnings}
 
     def _forecast_quality(rows, models, confidence, hours):
-        values=[float(row[k]) for row in rows for k in ("btc_hashprice_usd_ph_day","gpu_hourly_usd","forecast_energy_cost_eur_kwh")]
-        finite=all(__import__("math").isfinite(v) for v in values)
-        nonnegative=all(v>=0 for v in values)
+        import math
+        market_values=[float(row[k]) for row in rows for k in ("btc_hashprice_usd_ph_day","gpu_hourly_usd")]
+        energy_values=[float(row["forecast_energy_cost_eur_kwh"]) for row in rows]
+        finite=all(math.isfinite(v) for v in market_values+energy_values)
+        market_nonnegative=all(v>=0 for v in market_values)
+        # Site tariffs are signed: negative prices are valid credits, but keep the
+        # same physical input bounds as ScenarioIn to reject corrupt forecasts.
+        energy_in_range=all(-1.0<=v<=10.0 for v in energy_values)
+        valid=finite and market_nonnegative and energy_in_range
         readiness={k:bool(v.get("ready")) for k,v in models.items()}
         ready_count=sum(readiness.values())
         warnings=[]
         if not finite: warnings.append("Forecast contains non-finite values.")
-        if not nonnegative: warnings.append("Forecast contains negative market or energy values.")
+        if not market_nonnegative: warnings.append("Forecast contains negative market revenue values.")
+        if not energy_in_range: warnings.append("Forecast energy tariff is outside the supported range [-1, 10] EUR/kWh.")
         if ready_count<3: warnings.append("Insufficient historical samples for fully validated forecasts.")
         if any(float(v)<0.60 for v in confidence.values()): warnings.append("At least one forecast series has low confidence.")
-        return {"valid":finite and nonnegative,"historical_models_ready":ready_count,"model_readiness":readiness,
+        return {"valid":valid,"historical_models_ready":ready_count,"model_readiness":readiness,
                 "confidence_by_series":confidence,"horizon_hours":hours,
-                "status":"validated" if finite and nonnegative and ready_count==3 else ("degraded" if finite and nonnegative else "invalid"),
+                "status":"validated" if valid and ready_count==3 else ("degraded" if valid else "invalid"),
                 "warnings":warnings}
 
     def _ensure_market_table(c):
@@ -1690,7 +1697,9 @@ def install(app):
             raise HTTPException(404,"Farm not found")
         _ensure_market_table(c)
         try:
-            rows=c.execute("SELECT ts,payload FROM market_snapshots ORDER BY ts ASC LIMIT ?",(max(1,min(limit,1000)),)).fetchall()
+            rows=list(c.execute("SELECT ts,payload FROM market_snapshots ORDER BY ts DESC, id DESC LIMIT ?",(max(1,min(limit,1000)),)).fetchall())
+            # Select the newest bounded window, then evaluate it oldest-to-newest.
+            rows.reverse()
         except Exception:
             rows=[]
         totals={k:0.0 for k in ("AI Compute","BTC Mining","Battery","Grid")}
