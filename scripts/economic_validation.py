@@ -99,15 +99,23 @@ def observations_from_history(raw):
     return deduped, rejected
 
 
-def economics(row, tariff, gpu_capex=0.0, btc_capex=0.0):
-    """Mirror saas_api.py _economics defaults and units (EUR per site kWh)."""
+def economics(row, tariff, gpu_capex=0.0, btc_capex=0.0, *,
+              gpu_maintenance_eur_year=0.0, gpu_lifetime_years=5.0,
+              gpu_uptime=0.95, gpu_utilization=None):
+    """Conservative scenario economics in EUR per available site kWh.
+
+    Public GPU marketplace asks are not realized payouts. Utilization, uptime,
+    capex and maintenance are explicit scenario inputs, never silently assumed
+    to be zero-cost investment economics.
+    """
     btc_gross = (row["btc"] / row["fx"]) / (20.0 * 24.0) * 0.98
-    gpu_gross = ((row["gpu"] / row["fx"]) * row["gpu_util"]
+    gpu_util = row["gpu_util"] if gpu_utilization is None else gpu_utilization
+    gpu_gross = ((row["gpu"] / row["fx"]) * gpu_util
                  * (1.0 - row["gpu_fee"])) / row["gpu_power"]
     btc_fixed = (btc_capex / 4.0) / (3.5 * 8760.0)
-    gpu_fixed = (gpu_capex / 5.0) / (row["gpu_power"] * 8760.0)
+    gpu_fixed = (gpu_capex / gpu_lifetime_years + gpu_maintenance_eur_year) / (row["gpu_power"] * 8760.0)
     btc = 0.98 * (btc_gross - tariff) - btc_fixed
-    gpu = 0.98 * (gpu_gross - tariff) - gpu_fixed
+    gpu = gpu_uptime * 0.98 * (gpu_gross - tariff) - gpu_fixed
     battery = max(0.0, 0.071 * 0.90 - 0.015)
     grid = max(0.0, 0.055)
     return {"AI Compute": gpu, "BTC Mining": btc, "Battery": battery, "Grid": grid}
@@ -290,6 +298,50 @@ def capex_hurdles(latest, tariff):
     }
 
 
+def conservative_gpu_sensitivity(rows, tariff):
+    """Stress GPU economics with non-zero capex/maintenance and lower utilization."""
+    cases = [
+        {"name": "low_utilization_costed", "utilization": 0.30, "capex_eur": 10000.0, "maintenance_eur_year": 750.0},
+        {"name": "mid_utilization_costed", "utilization": 0.50, "capex_eur": 10000.0, "maintenance_eur_year": 750.0},
+        {"name": "high_utilization_costed", "utilization": 0.70, "capex_eur": 10000.0, "maintenance_eur_year": 750.0},
+    ]
+    result = {}
+    for case in cases:
+        values = [economics(row, tariff, gpu_capex=case["capex_eur"],
+                            gpu_maintenance_eur_year=case["maintenance_eur"],
+                            gpu_lifetime_years=5.0, gpu_uptime=0.95,
+                            gpu_utilization=case["utilization"])["AI Compute"]
+                  for row in rows]
+        result[case["name"]] = {
+            "utilization_assumption": case["utilization"],
+            "capex_eur": case["capex_eur"],
+            "maintenance_eur_year": case["maintenance_eur"],
+            "uptime_assumption": 0.95,
+            "five_year_lifetime": True,
+            "modeled_contribution_distribution": distribution(values),
+            "realized_cashflow_validated": False,
+        }
+    return result
+
+
+def investment_readiness():
+    return {
+        "status": "not_investment_validated",
+        "economic_basis": "external_market_quotes_to_model",
+        "realized_cashflow_validated": False,
+        "confidence_calibrated": False,
+        "missing_evidence": [
+            "actual GPU rental bookings, occupancy and settled payouts",
+            "actual BTC pool settlements and fees",
+            "metered all-in electricity invoices and export settlements",
+            "hardware purchase invoices, installation and financing costs",
+            "maintenance, cooling, facility overhead, taxes and insurance",
+            "battery charge/discharge meter data and degradation",
+        ],
+        "zero_cost_defaults_are_not_investment_inputs": True,
+    }
+
+
 def capex_hurdle_distribution(rows, tariff):
     values = [capex_hurdles(row, tariff) for row in rows]
     gpu = [v["gpu_capex_break_even_eur_at_5y_no_maintenance"] for v in values]
@@ -349,6 +401,7 @@ def main():
             "tariffs_eur_kwh": TARIFFS,
         },
         "results": {},
+        "investment_readiness": investment_readiness(),
         "limitations": [
             "A public market snapshot is not proof of an executed GPU rental, mined BTC payout, grid export settlement, or battery cycle.",
             "The model's zero-capex defaults can materially overstate compute/mining profitability.",
@@ -372,6 +425,7 @@ def main():
             "empirical_risk_aware_walk_forward": run_backtest(rows, tariff),
             "latest_snapshot_capex_hurdles": capex_hurdles(latest, tariff),
             "historical_capex_hurdle_distribution": capex_hurdle_distribution(rows, tariff),
+            "conservative_gpu_cost_sensitivity": conservative_gpu_sensitivity(rows, tariff),
         }
     print(json.dumps(report, indent=2, sort_keys=True))
 
