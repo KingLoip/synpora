@@ -21,6 +21,9 @@ TARIFFS = {
     # for the first 1,500 kWh. Metering charges and fixed annual fees excluded.
     "salzburg_2026_first_1500_discounted": 0.216551,
     "salzburg_2026_standard_after_1500": 0.299351,
+    # Supplier energy-only component, deliberately shown as a lower bound;
+    # network charges, taxes and duties must still be added for a real dispatch cost.
+    "salzburg_2026_energy_component_only_not_all_in": 0.2028,
     # Transparent international sensitivity point, not the user's tariff.
     "low_cost_international_reference": 0.05,
 }
@@ -347,7 +350,7 @@ def main():
         "limitations": [
             "A public market snapshot is not proof of an executed GPU rental, mined BTC payout, grid export settlement, or battery cycle.",
             "The model's zero-capex defaults can materially overstate compute/mining profitability.",
-            "The Salzburg tariff scenarios use the published 2026 Strom Privat 24 variable all-in price components; the 1,500 kWh discount is a separate marginal-price case. The exact personal contract, discounts, metering and annual consumption are not confirmed.",
+            "The Salzburg all-in scenarios are based on the 2026 product sheet's stated level-7 charges in the Salzburg Netz GmbH area; they may not match a meter point in another distribution area. The first-1,500-kWh discount is conditional on eligible natural-person household contracts. The supplier-only 20.28 ct/kWh case excludes network charges, taxes and duties and is not a valid all-in dispatch price.",
             "No hardware action, financial trade, or wallet transaction is performed.",
         ],
     }
