@@ -15,6 +15,14 @@ def external_field(age):
 
 
 class EconomicValidationTests(unittest.TestCase):
+    def test_rejects_malformed_quality_metadata(self):
+        self.assertFalse(MODULE.market_ready({
+            "btc_hashprice_usd_ph_day": 40,
+            "gpu_l40s_usd_hour": 1.1,
+            "eur_usd": 1.1,
+            "data_quality": "malformed",
+        }))
+
     def test_rejects_reference_market_data(self):
         payload = {
             "btc_hashprice_usd_ph_day": 40,
@@ -76,6 +84,14 @@ class EconomicValidationTests(unittest.TestCase):
         expected = 0.98 * (gross_after_pool - 0.25)
         actual = MODULE.economics(row, 0.25)["BTC Mining"]
         self.assertAlmostEqual(actual, expected, places=12)
+
+    def test_production_parametric_choice_is_deterministic(self):
+        row = {"ts": 100, "btc": 40, "gpu": 1.1, "fx": 1.1,
+               "gpu_power": 0.35, "gpu_util": 0.7, "gpu_fee": 0.15}
+        a = MODULE.production_parametric_choice(row, 0.25, 42)
+        b = MODULE.production_parametric_choice(row, 0.25, 42)
+        self.assertEqual(a, b)
+        self.assertIn(a[0], {"AI Compute", "BTC Mining", "Battery", "Grid"})
 
     def test_empirical_risk_choice_is_deterministic_and_uses_only_past_rows(self):
         rows = []
