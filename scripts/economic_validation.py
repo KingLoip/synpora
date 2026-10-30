@@ -98,7 +98,7 @@ def economics(row, tariff, gpu_capex=0.0, btc_capex=0.0):
                  * (1.0 - row["gpu_fee"])) / row["gpu_power"]
     btc_fixed = (btc_capex / 4.0) / (3.5 * 8760.0)
     gpu_fixed = (gpu_capex / 5.0) / (row["gpu_power"] * 8760.0)
-    btc = 0.98 * (btc_gross * 0.98 - tariff) - btc_fixed
+    btc = 0.98 * (btc_gross - tariff) - btc_fixed
     gpu = 0.98 * (gpu_gross - tariff) - gpu_fixed
     battery = max(0.0, 0.071 * 0.90 - 0.015)
     grid = max(0.0, 0.055)
@@ -231,7 +231,25 @@ def capex_hurdles(latest, tariff):
             max(0.0, gpu_margin) * latest["gpu_power"] * 8760 * 5, 2),
         "btc_capex_break_even_eur_at_4y_no_maintenance": round(
             max(0.0, btc_margin) * 3.5 * 8760 * 4, 2),
-        "note": "Break-even capex ceiling under one observed market snapshot; not a purchase valuation or forecast.",
+    }
+
+
+def capex_hurdle_distribution(rows, tariff):
+    values = [capex_hurdles(row, tariff) for row in rows]
+    gpu = [v["gpu_capex_break_even_eur_at_5y_no_maintenance"] for v in values]
+    btc = [v["btc_capex_break_even_eur_at_4y_no_maintenance"] for v in values]
+    return {
+        "gpu_5y_no_maintenance_eur": {
+            "median": round(statistics.median(gpu), 2),
+            "p05": round(quantile(gpu, 0.05), 2),
+            "p90": round(quantile(gpu, 0.90), 2),
+        },
+        "btc_4y_no_maintenance_eur": {
+            "median": round(statistics.median(btc), 2),
+            "p05": round(quantile(btc, 0.05), 2),
+            "p90": round(quantile(btc, 0.90), 2),
+        },
+        "note": "Historical break-even capex ceilings from market observations, before maintenance, taxes, financing and installation; not a purchase valuation.",
     }
 
 
@@ -296,7 +314,7 @@ def main():
             },
             "historical_strategy_distributions": per_strategy,
             "empirical_risk_aware_walk_forward": run_backtest(rows, tariff),
-            "latest_snapshot_capex_hurdles": capex_hurdles(latest, tariff),
+            "latest_snapshot_capex_hurdles": capex_hurdles(latest, tariff),\n            "historical_capex_hurdle_distribution": capex_hurdle_distribution(rows, tariff),
         }
     print(json.dumps(report, indent=2, sort_keys=True))
 
