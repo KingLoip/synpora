@@ -2497,7 +2497,7 @@ def install(app):
             if int(code)<200 or int(code)>=400: raise RuntimeError("SMTP health check rejected")
             return {"email_delivery":"connected","email_provider":"smtp","smtp_authenticated":True,"tls_required":True}
         except Exception as exc:
-            raise HTTPException(503,{"detail":{"email_delivery":"unavailable","error_class":type(exc).__name__}})
+            raise HTTPException(503,detail={"email_delivery":"unavailable","error_class":type(exc).__name__})
 
     @app.post("/api/v1/system/email-delivery-test")
     def email_delivery_test(x_market_token:str|None=Header(default=None,alias="X-SYNPORA-MARKET-TOKEN")):
