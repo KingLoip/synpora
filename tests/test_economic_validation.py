@@ -104,6 +104,28 @@ class EconomicValidationTests(unittest.TestCase):
         self.assertEqual(a, b)
         self.assertIsNotNone(a)
 
+    def test_gpu_sensitivity_applies_capex_maintenance_uptime_and_lower_utilization(self):
+        row = {"ts": 1, "btc": 40, "gpu": 1.1, "fx": 1.1,
+               "gpu_power": 0.35, "gpu_util": 0.70, "gpu_fee": 0.15}
+        free = MODULE.economics(row, 0.05)["AI Compute"]
+        costed = MODULE.economics(row, 0.05, gpu_capex=10000,
+                                  gpu_maintenance_eur_year=750,
+                                  gpu_lifetime_years=5, gpu_uptime=0.95,
+                                  gpu_utilization=0.30)["AI Compute"]
+        self.assertLess(costed, free)
+        self.assertLess(costed, MODULE.economics(
+            row, 0.05, gpu_capex=10000, gpu_maintenance_eur_year=750,
+            gpu_lifetime_years=5, gpu_uptime=0.95,
+            gpu_utilization=0.70)["AI Compute"])
+
+    def test_investment_readiness_fails_closed_without_realized_cashflow(self):
+        gate = MODULE.investment_readiness()
+        self.assertEqual(gate["status"], "not_investment_validated")
+        self.assertFalse(gate["realized_cashflow_validated"])
+        self.assertFalse(gate["confidence_calibrated"])
+        self.assertTrue(gate["zero_cost_defaults_are_not_investment_inputs"])
+
+
     def test_capex_hurdles_are_zero_when_strategy_has_no_positive_contribution(self):
         row = {"btc": 0.01, "gpu": 0.01, "fx": 1.1, "gpu_power": 0.35,
                "gpu_util": 0.7, "gpu_fee": 0.15}
