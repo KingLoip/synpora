@@ -69,6 +69,14 @@ class EconomicValidationTests(unittest.TestCase):
         self.assertAlmostEqual(values["Battery"], 0.0489, places=6)
         self.assertAlmostEqual(values["Grid"], 0.055, places=6)
 
+    def test_btc_pool_fee_is_applied_once_and_uptime_is_applied_once(self):
+        row = {"btc": 40, "gpu": 1.1, "fx": 1.1, "gpu_power": 0.35,
+               "gpu_util": 0.7, "gpu_fee": 0.15}
+        gross_after_pool = (40 / 1.1) / (20 * 24) * 0.98
+        expected = 0.98 * (gross_after_pool - 0.25)
+        actual = MODULE.economics(row, 0.25)["BTC Mining"]
+        self.assertAlmostEqual(actual, expected, places=12)
+
     def test_empirical_risk_choice_is_deterministic_and_uses_only_past_rows(self):
         rows = []
         for i in range(40):
