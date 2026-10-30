@@ -2623,7 +2623,7 @@ def install(app):
             btc_device_power=max(0.01,float(x.btc_device_power_kw))
             btc=(btc_gross*(btc_device_power/(btc_device_power+btc_over)) if btc_over else btc_gross)-float(energy_fc[h])
             gpu_gross=(float(gpu_fc[h])/eur_usd)*gpu_util*(1-gpu_fee)/(.35+max(0.0,x.gpu_facility_overhead_kw)+max(0.0,x.facility_overhead_kw))
-            gpu=gpu_gross-float(energy_fc[h]); grid=max(0.0,x.grid_value_eur_kwh-max(0.0,x.grid_export_fee_eur_kwh)); price=max(0.0,float(energy_fc[h])); before=soc
+            gpu=gpu_gross-float(energy_fc[h]); grid=max(0.0,x.grid_value_eur_kwh-max(0.0,x.grid_export_fee_eur_kwh)); price=float(energy_fc[h]); before=soc
             btc=max(0.0,btc); gpu=max(0.0,gpu)
             future=max([btc,gpu,grid]+[max((float(btc_fc[j])/x.eur_usd)/(x.asic_efficiency_j_th*24)*.98*.98,(float(gpu_fc[j])/x.eur_usd)*x.gpu_utilization*(1-x.gpu_platform_fee)/.35,grid) for j in range(h+1,hours)] or [max(btc,gpu,grid)])
             summary["pv_generation_kwh"]+=pv[h]
