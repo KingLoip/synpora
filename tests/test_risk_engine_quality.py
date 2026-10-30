@@ -74,5 +74,13 @@ class BenchmarkWindowTests(unittest.TestCase):
         self.assertIn("rows.reverse()", source)
 
 
+class DispatchTariffAccountingTests(unittest.TestCase):
+    def test_dispatch_preserves_negative_energy_credit_in_cost_accounting(self):
+        node = find_function("dispatch_plan")
+        source = ast.get_source_segment(SOURCE, node)
+        self.assertIn("price=float(energy_fc[h])", source)
+        self.assertNotIn("price=max(0.0,float(energy_fc[h]))", source)
+
+
 if __name__ == "__main__":
     unittest.main()
