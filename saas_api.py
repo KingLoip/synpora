@@ -1655,6 +1655,11 @@ def install(app):
                 "fallback":ranked[1]["strategy"] if len(ranked)>1 else None,
                 "explanation":"Risk-adjusted choice from current economics plus seeded Monte-Carlo market shocks; no hardware action is executed.",
                 "method":"unified_forecast_risk_regret_v1","cost_model":_economic_cost_model(x),
+                "confidence_status":"uncalibrated_heuristic",
+                "confidence_note":"This score is a model heuristic, not a statistically calibrated probability. Calibration requires sufficient settled decisions with verified actual outcomes.",
+                "investment_gate":{"status":"not_investment_validated" if (float(getattr(x,"gpu_capex_eur",0.0))<=0 or float(getattr(x,"btc_capex_eur",0.0))<=0 or float(getattr(x,"gpu_maintenance_eur_year",0.0))<=0 or float(getattr(x,"btc_maintenance_eur_year",0.0))<=0) else "cost_inputs_present_but_realized_revenue_unverified",
+                    "required":["hardware_capex","annual_maintenance","verified_realized_revenue","metered_all_in_energy_cost","uptime_and_utilization","tax_and_financing_costs"],
+                    "realized_cashflow_validated":False},
                 "recommendation_only":True,"hardware_write":False}
 
     @app.post("/api/v1/farms/{farm_id}/decision")
