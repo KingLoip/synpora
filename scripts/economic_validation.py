@@ -108,9 +108,9 @@ def economics(row, tariff, gpu_capex=0.0, btc_capex=0.0, *,
     capex and maintenance are explicit scenario inputs, never silently assumed
     to be zero-cost investment economics.
     """
-    # Hashprice is quoted per PH/s/day. At 20 J/TH, 1 kW provides
-    # 50 TH/s = 0.00005 PH/s; divide daily revenue by 24 hours.
-    btc_gross = (row["btc"] / row["fx"]) / (20.0 * 1000.0 * 24.0)
+    # Hashprice is quoted per PH/s/day. 1 PH/s = 1,000 TH/s;
+    # at 20 J/TH that is 20 kW. One kW is 0.05 PH/s, then /24 per kWh.
+    btc_gross = (row["btc"] / row["fx"]) / (20.0 * 24.0)
     gpu_util = row["gpu_util"] if gpu_utilization is None else gpu_utilization
     gpu_gross = ((row["gpu"] / row["fx"]) * gpu_util
                  * (1.0 - row["gpu_fee"])) / row["gpu_power"]
@@ -290,8 +290,8 @@ def run_backtest(rows, tariff, min_history=WINDOW):
 
 
 def capex_hurdles(latest, tariff):
-    # Same PH/s-to-kWh conversion as economics(): 20 J/TH = 20 W per TH/s.
-    btc_gross = (latest["btc"] / latest["fx"]) / (20.0 * 1000.0 * 24.0)
+    # Same PH/s-to-kWh conversion as economics(): 1 PH/s draws 20 kW.
+    btc_gross = (latest["btc"] / latest["fx"]) / (20.0 * 24.0)
     gpu_gross = ((latest["gpu"] / latest["fx"]) * latest["gpu_util"]
                  * (1.0 - latest["gpu_fee"])) / latest["gpu_power"]
     btc_margin = btc_gross * (1.0 - 0.02) - tariff
