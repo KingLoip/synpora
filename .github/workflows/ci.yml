@@ -212,8 +212,8 @@ jobs:
           positive_opt_values={row["option"]:row["value_eur_kwh"] for row in [positive_opt.json()["best"]]+positive_opt.json()["alternatives"]}
           negative_opt_values={row["option"]:row["value_eur_kwh"] for row in [negative_opt.json()["best"]]+negative_opt.json()["alternatives"]}
           for option in ("AI Compute","BTC Mining"):
-              assert abs((negative_opt_values[option]-positive_opt_values[option])-0.10)<1e-8, (option,positive_opt_values,negative_opt_values)
-          assert negative_opt.json()["best"]["energy_cost_eur_kwh"]==-0.05, negative_opt.json()["best"]
+              assert abs((negative_opt_values[option]-positive_opt_values[option])-0.098)<1e-8, (option,positive_opt_values,negative_opt_values)  # 98% uptime scales the 0.10 EUR/kWh tariff swing
+          assert abs(negative_opt.json()["best"]["energy_cost_eur_kwh"]-(-0.05*0.98))<1e-9, negative_opt.json()["best"]  # 98% uptime-adjusted energy cost
           assert negative_opt.json()["net_value_eur"]>negative_opt.json()["gross_value_eur"], negative_opt.json()
           costed=c.post(f"/api/v1/farms/{farm}/scenario",headers=h,json={
               "energy_kwh":100,"energy_cost_eur_kwh":0.05,
