@@ -148,6 +148,26 @@ class EconomicValidationTests(unittest.TestCase):
             self.assertFalse(case["realized_cashflow_validated"])
 
 
+    def test_calibration_weight_uses_prior_errors_and_is_bounded(self):
+        self.assertEqual(MODULE.calibrated_shrinkage_weight([(1.0, 1.0)] * 23), 0.0)
+        self.assertGreater(MODULE.calibrated_shrinkage_weight([(1.0, 1.0)] * 24), 0.8)
+        self.assertEqual(MODULE.calibrated_shrinkage_weight([(1.0, -1.0)] * 24), 0.0)
+        self.assertEqual(MODULE.calibrated_shrinkage_weight([(0.0, 1.0)] * 24), 0.0)
+
+    def test_walk_forward_calibration_reports_weights_and_baseline(self):
+        rows = []
+        for i in range(38):
+            rows.append({"ts": i * 300, "btc": 40 * (1 + 0.001 * i),
+                         "gpu": 1.1 * (1 + 0.002 * i), "fx": 1.1,
+                         "gpu_power": 0.35, "gpu_util": 0.7, "gpu_fee": 0.15})
+        result = MODULE.run_backtest(rows, 0.25)
+        calibrated = result["walk_forward_shrunk_forecast"]
+        self.assertEqual(calibrated["pairs"], result["independent_empirical_paired_bootstrap"]["pairs"])
+        self.assertIn("mae_skill_vs_persistence", calibrated)
+        self.assertEqual(result["forecast_calibration"]["minimum_prior_pairs_before_nonzero_correction"], 24)
+        self.assertTrue(all(0.0 <= value <= 1.0 for value in
+                            result["forecast_calibration"]["mean_correction_weight_by_strategy"].values()))
+
     def test_backtest_reports_persistence_skill_and_risk_sensitivity(self):
         pairs = [{
             "chosen": "AI Compute", "predicted": 0.12, "baseline_predicted": 0.10,
