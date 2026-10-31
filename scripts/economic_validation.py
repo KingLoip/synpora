@@ -290,7 +290,7 @@ def run_backtest(rows, tariff, min_history=WINDOW):
 
 
 def capex_hurdles(latest, tariff):
-    # Same PH/s-to-kW conversion as economics(): 20 J/TH = 20 kW per TH/s.
+    # Same PH/s-to-kWh conversion as economics(): 20 J/TH = 20 W per TH/s.
     btc_gross = (latest["btc"] / latest["fx"]) / (20.0 * 1000.0 * 24.0)
     gpu_gross = ((latest["gpu"] / latest["fx"]) * latest["gpu_util"]
                  * (1.0 - latest["gpu_fee"])) / latest["gpu_power"]
