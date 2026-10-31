@@ -727,7 +727,7 @@ def install(app):
             confidence=round(min(confidence,forecast_confidence) if forecast_confidence<0.65 else confidence,2)
         except Exception:
             forecast_confidence=0.55
-        score_factors={"economics":round(min(1,best["value_eur_kwh"]/max(best["value_eur_kwh"]+x.energy_cost_eur_kwh,0.0001)),3),"margin":round(min(1,max(0,spread*2)),3),"forecast":round(forecast_confidence,3),"learning":round(learned_confidence if learned_confidence is not None else 0.55,3)}
+        score_factors={"economics":round(max(0.0,min(1.0,best["value_eur_kwh"]/max(best["value_eur_kwh"]+best["energy_cost_eur_kwh"],0.0001))),3),"margin":round(min(1,max(0,spread*2)),3),"forecast":round(forecast_confidence,3),"learning":round(learned_confidence if learned_confidence is not None else 0.55,3)}
         decision_score=round(100*(0.45*score_factors["economics"]+0.20*score_factors["margin"]+0.20*score_factors["forecast"]+0.15*score_factors["learning"]),1)
         margin=round(best["value_eur_kwh"]-options[1]["value_eur_kwh"],5) if len(options)>1 else 0
         explanation={"primary_reason":"highest modeled net value per kWh","value_margin_eur_kwh":margin,"confidence_driver":"forecast_and_historical_learning","risk_driver":risk,"fallback_option":options[1]["option"] if len(options)>1 else None}
@@ -739,7 +739,7 @@ def install(app):
         return {"farm_id":farm_id,"energy_kwh":x.energy_kwh,"best":best,"alternatives":options[1:],"explanation":explanation,"decision_score":decision_score,"score_factors":score_factors,
                 "gross_value_eur":round(gross,2),"energy_cost_eur":round(cost,2),
                 "net_value_eur":round(gross-cost,2),"confidence":round(confidence,2),"risk":risk,"learned_confidence":learned_confidence,"calibrated_confidence":calibrated_confidence,
-                "market":{"btc_hashprice_usd_ph_day":x.btc_hashprice_usd_ph_day,"eur_usd":x.eur_usd,"gpu_hourly_usd":x.gpu_hourly_usd,"gpu_power_kw":x.gpu_power_kw,"gpu_utilization":x.gpu_utilization,"gpu_platform_fee":x.gpu_platform_fee},
+                "market":{"btc_hashprice_usd_ph_day":x.btc_hashprice_usd_ph_day,"eur_usd":x.eur_usd,"gpu_hourly_usd":x.gpu_hourly_usd,"gpu_power_kw":x.gpu_power_kw,"gpu_utilization":x.gpu_utilization,"gpu_platform_fee":x.gpu_platform_fee,"btc_uptime":btc_uptime,"gpu_uptime":gpu_uptime,"pool_fee":x.pool_fee},
                 "mode":"recommendation_only","hardware_write":False}
 
     class ScenarioIn(BaseModel):
