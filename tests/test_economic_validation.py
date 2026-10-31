@@ -77,13 +77,31 @@ class EconomicValidationTests(unittest.TestCase):
         self.assertAlmostEqual(values["Battery"], 0.0489, places=6)
         self.assertAlmostEqual(values["Grid"], 0.055, places=6)
 
-    def test_btc_pool_fee_is_applied_once_and_uptime_is_applied_once(self):
+    def test_btc_hashprice_uses_ph_per_day_to_kwh_conversion_and_pool_fee_once(self):
         row = {"btc": 40, "gpu": 1.1, "fx": 1.1, "gpu_power": 0.35,
                "gpu_util": 0.7, "gpu_fee": 0.15}
-        gross_after_pool = (40 / 1.1) / (20 * 24) * 0.98
-        expected = 0.98 * (gross_after_pool - 0.25)
+        # 20 J/TH means 20 kW per TH/s; one kW is 0.00005 PH/s.
+        gross_eur_per_kwh = (40 / 1.1) / (20 * 1000 * 24)
+        expected = gross_eur_per_kwh * 0.98 - 0.25
         actual = MODULE.economics(row, 0.25)["BTC Mining"]
         self.assertAlmostEqual(actual, expected, places=12)
+        self.assertLess(actual, 0.0)
+
+    def test_gpu_marketplace_fee_and_uptime_are_not_double_charged(self):
+        row = {"btc": 40, "gpu": 1.1, "fx": 1.1, "gpu_power": 0.35,
+               "gpu_util": 0.7, "gpu_fee": 0.15}
+        gross = (1.1 / 1.1) * 0.7 * 0.85 / 0.35
+        expected = 0.95 * (gross - 0.25)
+        actual = MODULE.economics(row, 0.25, gpu_uptime=0.95)["AI Compute"]
+        self.assertAlmostEqual(actual, expected, places=12)
+
+    def test_btc_capex_hurdle_uses_same_corrected_energy_conversion(self):
+        row = {"btc": 40, "gpu": 1.1, "fx": 1.1, "gpu_power": 0.35,
+               "gpu_util": 0.7, "gpu_fee": 0.15}
+        revenue = (40 / 1.1) / (20 * 1000 * 24) * 0.98
+        expected = round(max(0.0, revenue - 0.25) * 3.5 * 8760 * 4, 2)
+        actual = MODULE.capex_hurdles(row, 0.25)["btc_capex_break_even_eur_at_4y_no_maintenance"]
+        self.assertEqual(actual, expected)
 
     def test_production_parametric_choice_is_deterministic(self):
         row = {"ts": 100, "btc": 40, "gpu": 1.1, "fx": 1.1,
