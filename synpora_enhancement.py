@@ -104,7 +104,7 @@ SCRIPT = r"""
       if(name==="Economics") setTimeout(runOptimizer,80);
       if(name==="AI Decision"){setTimeout(runOptimizer,80);setTimeout(runDecisionRisk,300);}
       if(name==="Simulation") {setTimeout(runScenarioLab,80);setTimeout(runPortfolio,300);setTimeout(runDispatch,500);}
-      if(name==="Reports"){setTimeout(loadBenchmark,120);setTimeout(loadLearningHealth,180);setTimeout(loadDecisionQuality,240);}
+      if(name==="Reports"){setTimeout(loadBenchmark,120);setTimeout(loadLearningHealth,180);setTimeout(loadDecisionQuality,240);setTimeout(loadCashflowEvidence,320);}
       const titles={Assets:"Asset Registry",Economics:"Economics & Value per kWh","AI Decision":"AI Decision Center",Simulation:"What-if Simulation Lab",Reports:"Reports & Audit Trail"};
       panel.querySelector("h2").textContent=titles[name]||"SYNPORA Workspace";
       toast(name+" workspace opened");
@@ -144,6 +144,83 @@ SCRIPT = r"""
     const regret=d.avg_regret_eur_kwh==null?"–":Number(d.avg_regret_eur_kwh).toFixed(4)+" €/kWh";
     box.innerHTML="<div class='sp-label'>DECISION QUALITY</div><div class='sp-grid'><div><div class='sp-label'>Winner accuracy</div><div class='sp-value'>"+hit+"</div></div><div><div class='sp-label'>Average regret</div><div class='sp-value'>"+regret+"</div></div><div><div class='sp-label'>Settled decisions</div><div class='sp-value'>"+Number(d.settled||0)+"</div></div></div><div class='sp-mini' style='margin-top:10px'>Regret measures the value lost compared with the option that turned out to be best after the fact.</div>";
     panel.appendChild(box);
+  }
+
+  async function loadCashflowEvidence(){
+    const acc=JSON.parse(localStorage.getItem("synpora_account")||"null");
+    if(!acc?.token){toast("Please sign in to record actual cashflow evidence.");return}
+    const headers={Authorization:"Bearer "+acc.token};
+    const farms=await fetch("/api/v1/farms",{headers}).then(r=>r.json());
+    if(!farms[0]){toast("No farm workspace found.");return}
+    const id=farms[0].id;
+    const [paper,evidence]=await Promise.all([
+      fetch("/api/v1/farms/"+id+"/paper-trading",{headers}).then(r=>r.json()),
+      fetch("/api/v1/farms/"+id+"/cashflow-evidence",{headers}).then(r=>r.json())
+    ]);
+    const old=panel.querySelector(".sp-cashflow-evidence");if(old)old.remove();
+    const box=document.createElement("div");box.className="sp-cashflow-evidence sp-card";box.style.marginTop="18px";
+    const open=(paper.recent_decisions||[]).filter(x=>x.status==="open"&&x.decision_id);
+    const options=open.map(x=>"<option value='"+escapeHtml(x.decision_id)+"'>"+escapeHtml(x.strategy)+" · "+new Date(Number(x.timestamp)*1000).toLocaleString()+" · "+escapeHtml(x.decision_id.slice(0,8))+"</option>").join("");
+    const records=(evidence.evidence||[]).slice(0,8).map(x=>"<div class='sp-row'><span>"+escapeHtml(x.source_type)+" · "+escapeHtml(x.period_start)+"<div class='sp-mini'>"+escapeHtml(x.evidence_id.slice(0,8))+" · "+escapeHtml(x.evidence_status)+"</div></span><strong>"+Number(x.realized_net_eur_kwh).toFixed(4)+" €/kWh</strong></div>").join("");
+    box.innerHTML=`
+      <div class="sp-label">REALIZED CASHFLOW · EVIDENCE INTAKE</div>
+      <div class="sp-value">${Number(evidence.records||0)} evidence record(s)</div>
+      <div class="sp-mini" style="margin:8px 0 14px">${Number(evidence.pending_operator_review||0)} pending review · ${Number(paper.settled_decisions||0)} decisions settled in the learning ledger</div>
+      <div class="sp-demo-note"><strong>Use real settlement figures only.</strong><div class="sp-muted">Enter the meter reading, matching all-in energy bill and actual payout/export statement for the same period. Keep the original documents. Submissions are pending review and do not train the AI.</div></div>
+      <form id="sp-cashflow-form">
+        <label class="sp-field">Open recommendation<select class="sp-input" id="sp-cf-decision" required>${options||"<option value=''>No open recommendations available</option>"}</select></label>
+        <div class="sp-grid">
+          <label class="sp-field">Period start<input class="sp-input" id="sp-cf-start" type="datetime-local" required></label>
+          <label class="sp-field">Period end<input class="sp-input" id="sp-cf-end" type="datetime-local" required></label>
+          <label class="sp-field">Metered energy (kWh)<input class="sp-input" id="sp-cf-kwh" type="number" min="0.001" step="any" required></label>
+          <label class="sp-field">All-in energy cost (€)<input class="sp-input" id="sp-cf-energy-cost" type="number" step="any" required></label>
+          <label class="sp-field">Realized revenue (€)<input class="sp-input" id="sp-cf-revenue" type="number" min="0" step="any" required></label>
+          <label class="sp-field">Other operating costs (€)<input class="sp-input" id="sp-cf-other" type="number" min="0" step="any" value="0" required></label>
+          <label class="sp-field">Meter / invoice reference<input class="sp-input" id="sp-cf-meter-ref" maxlength="240" placeholder="Invoice or meter report ID" required></label>
+          <label class="sp-field">Payout / revenue reference<input class="sp-input" id="sp-cf-revenue-ref" maxlength="240" placeholder="GPU payout, pool or export statement ID" required></label>
+          <label class="sp-field">Evidence source<select class="sp-input" id="sp-cf-source" required>
+            <option value="gpu_payout_and_meter">GPU payout + meter</option>
+            <option value="pool_statement_and_meter">Mining pool statement + meter</option>
+            <option value="battery_or_grid_statement_and_meter">Battery / grid statement + meter</option>
+            <option value="utility_invoice_and_meter">Utility invoice + meter</option>
+            <option value="operator_attestation">Operator attestation (not independently verified)</option>
+          </select></label>
+          <label class="sp-field">Uptime (0–1, optional)<input class="sp-input" id="sp-cf-uptime" type="number" min="0" max="1" step="0.001" placeholder="e.g. 0.98"></label>
+          <label class="sp-field">Utilization (0–1, optional)<input class="sp-input" id="sp-cf-util" type="number" min="0" max="1" step="0.001" placeholder="e.g. 0.70"></label>
+        </div>
+        <label class="sp-field">Notes (optional)<input class="sp-input" id="sp-cf-notes" maxlength="2000" placeholder="Currency conversion, meter details, exclusions…"></label>
+        <p class="sp-status" id="sp-cf-status" role="status" aria-live="polite"></p>
+        <button class="sp-action" id="sp-cf-submit" type="submit" ${open.length?"":"disabled"}>Record actual cashflow evidence</button>
+      </form>
+      <div class="sp-label" style="margin-top:20px">RECENT SUBMISSIONS</div>
+      ${records||"<p class='sp-mini'>No evidence has been submitted yet.</p>"}
+    `;
+    panel.appendChild(box);
+    const form=box.querySelector("#sp-cashflow-form");
+    form.onsubmit=async(event)=>{
+      event.preventDefault();
+      const status=box.querySelector("#sp-cf-status"),submit=box.querySelector("#sp-cf-submit");
+      const value=id=>box.querySelector("#"+id).value;
+      const optionalNumber=id=>value(id)===""?null:Number(value(id));
+      const start=new Date(value("sp-cf-start")),end=new Date(value("sp-cf-end"));
+      if(!Number.isFinite(start.getTime())||!Number.isFinite(end.getTime())||end<=start){status.textContent="Choose a valid period with an end after its start.";return}
+      const payload={
+        decision_id:value("sp-cf-decision"),period_start:start.toISOString(),period_end:end.toISOString(),
+        energy_kwh:Number(value("sp-cf-kwh")),energy_cost_total_eur:Number(value("sp-cf-energy-cost")),
+        realized_revenue_eur:Number(value("sp-cf-revenue")),other_operating_costs_eur:Number(value("sp-cf-other")),
+        energy_meter_reference:value("sp-cf-meter-ref"),revenue_statement_reference:value("sp-cf-revenue-ref"),
+        source_type:value("sp-cf-source"),uptime:optionalNumber("sp-cf-uptime"),
+        utilization:optionalNumber("sp-cf-util"),notes:value("sp-cf-notes")
+      };
+      submit.disabled=true;status.textContent="Saving evidence record…";
+      try{
+        const response=await fetch("/api/v1/farms/"+id+"/cashflow-evidence",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+acc.token},body:JSON.stringify(payload)});
+        const result=await response.json().catch(()=>({detail:"Unexpected server response"}));
+        if(!response.ok)throw new Error(result.detail||"Could not save evidence");
+        toast("Cashflow evidence saved for review");
+        loadCashflowEvidence();
+      }catch(error){status.textContent=error.message;submit.disabled=false}
+    };
   }
 
   async function loadBenchmark(){
