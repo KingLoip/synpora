@@ -138,6 +138,23 @@ jobs:
               assert all(k in metrics for k in ("mean","p05","p10","p50","p90","expected_shortfall_p05","downside","volatility","probability_positive","probability_negative")), (name,metrics)
               assert metrics["expected_shortfall_p05"] <= metrics["p05"] <= metrics["p10"] <= metrics["p50"] <= metrics["p90"], (name,metrics)
               assert 0 <= metrics["probability_negative"] <= 1, (name,metrics)
+          # With zero shocks, the risk engine's mean must match the explicit
+          # uptime-adjusted per-site-kWh economics for BTC and GPU.
+          exact_payload={
+              "energy_kwh":100,"energy_cost_eur_kwh":0.20,
+              "btc_hashprice_usd_ph_day":39.64,"eur_usd":1.12,
+              "asic_efficiency_j_th":20,"btc_uptime":0.50,"pool_fee":0.02,
+              "gpu_hourly_usd":1.09,"gpu_power_kw":0.35,
+              "gpu_utilization":0.70,"gpu_platform_fee":0.15,"gpu_uptime":0.25,
+              "scenarios":20,"seed":42,"shock_pct":0.0,"risk_aversion":0.0
+          }
+          exact=c.post(f"/api/v1/farms/{farm}/risk-analysis",headers=h,json=exact_payload)
+          assert exact.status_code==200, exact.text
+          exact_metrics=exact.json()["strategies"]
+          expected_btc=0.50*((39.64/1.12)/(20*24)*0.98-0.20)*100
+          expected_gpu=0.25*((1.09/1.12)*0.70*0.85/0.35-0.20)*100
+          assert abs(exact_metrics["BTC Mining"]["mean"]-expected_btc)<1e-6, exact_metrics["BTC Mining"]
+          assert abs(exact_metrics["AI Compute"]["mean"]-expected_gpu)<1e-6, exact_metrics["AI Compute"]
           assert len(rb["stress_scenarios"]) == 4, rb
           assert rb["risk_gate"]["status"] in {"loss_exposure","high_uncertainty","within_simulated_limits"}, rb
           risk_repeat=c.post(f"/api/v1/farms/{farm}/risk-analysis",headers=h,json=risk_payload)
