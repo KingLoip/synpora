@@ -136,6 +136,17 @@ class EconomicValidationTests(unittest.TestCase):
             gpu_lifetime_years=5, gpu_uptime=0.95,
             gpu_utilization=0.70)["AI Compute"])
 
+    def test_gpu_sensitivity_uses_matching_maintenance_assumption_key(self):
+        row = {"ts": 1, "btc": 40, "gpu": 1.1, "fx": 1.1,
+               "gpu_power": 0.35, "gpu_util": 0.70, "gpu_fee": 0.15}
+        result = MODULE.conservative_gpu_sensitivity([row], 0.25)
+        self.assertEqual(set(result), {
+            "low_utilization_costed", "mid_utilization_costed", "high_utilization_costed"
+        })
+        for case in result.values():
+            self.assertEqual(case["maintenance_eur_year"], 750.0)
+            self.assertFalse(case["realized_cashflow_validated"])
+
     def test_investment_readiness_fails_closed_without_realized_cashflow(self):
         gate = MODULE.investment_readiness()
         self.assertEqual(gate["status"], "not_investment_validated")
