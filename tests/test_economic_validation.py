@@ -148,6 +148,16 @@ class EconomicValidationTests(unittest.TestCase):
             self.assertFalse(case["realized_cashflow_validated"])
 
 
+    def test_forecast_quality_gate_blocks_persistence_only_calibration(self):
+        rows = []
+        for i in range(38):
+            rows.append({"ts": i * 300, "btc": 40 * (1 + 0.001 * i),
+                         "gpu": 1.1 * (1 + 0.002 * i), "fx": 1.1,
+                         "gpu_power": 0.35, "gpu_util": 0.7, "gpu_fee": 0.15})
+        result = MODULE.run_backtest(rows, 0.25)
+        self.assertEqual(result["forecast_quality_gate"]["status"], "blocked")
+        self.assertEqual(result["forecast_quality_gate"]["minimum_mae_skill_vs_persistence"], 0.05)
+
     def test_calibration_weight_uses_prior_errors_and_is_bounded(self):
         self.assertEqual(MODULE.calibrated_shrinkage_weight([(1.0, 1.0)] * 23), 0.0)
         self.assertGreater(MODULE.calibrated_shrinkage_weight([(1.0, 1.0)] * 24), 0.8)
