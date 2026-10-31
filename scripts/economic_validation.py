@@ -108,14 +108,19 @@ def economics(row, tariff, gpu_capex=0.0, btc_capex=0.0, *,
     capex and maintenance are explicit scenario inputs, never silently assumed
     to be zero-cost investment economics.
     """
-    btc_gross = (row["btc"] / row["fx"]) / (20.0 * 24.0) * 0.98
+    # Hashprice is quoted per PH/s/day. At 20 J/TH, 1 kW provides
+    # 50 TH/s = 0.00005 PH/s; divide daily revenue by 24 hours.
+    btc_gross = (row["btc"] / row["fx"]) / (20.0 * 1000.0 * 24.0)
     gpu_util = row["gpu_util"] if gpu_utilization is None else gpu_utilization
     gpu_gross = ((row["gpu"] / row["fx"]) * gpu_util
                  * (1.0 - row["gpu_fee"])) / row["gpu_power"]
     btc_fixed = (btc_capex / 4.0) / (3.5 * 8760.0)
     gpu_fixed = (gpu_capex / gpu_lifetime_years + gpu_maintenance_eur_year) / (row["gpu_power"] * 8760.0)
-    btc = 0.98 * (btc_gross - tariff) - btc_fixed
-    gpu = gpu_uptime * 0.98 * (gpu_gross - tariff) - gpu_fixed
+    # Apply the 2% pool fee once to mining revenue, not to electricity cost.
+    btc = btc_gross * (1.0 - 0.02) - tariff - btc_fixed
+    # Marketplace fee is already included in gpu_gross. Availability scales
+    # both operating revenue and energy consumption; no extra generic 2% fee.
+    gpu = gpu_uptime * (gpu_gross - tariff) - gpu_fixed
     battery = max(0.0, 0.071 * 0.90 - 0.015)
     grid = max(0.0, 0.055)
     return {"AI Compute": gpu, "BTC Mining": btc, "Battery": battery, "Grid": grid}
@@ -285,11 +290,12 @@ def run_backtest(rows, tariff, min_history=WINDOW):
 
 
 def capex_hurdles(latest, tariff):
-    btc_gross = (latest["btc"] / latest["fx"]) / (20.0 * 24.0) * 0.98
+    # Same PH/s-to-kW conversion as economics(): 20 J/TH = 20 kW per TH/s.
+    btc_gross = (latest["btc"] / latest["fx"]) / (20.0 * 1000.0 * 24.0)
     gpu_gross = ((latest["gpu"] / latest["fx"]) * latest["gpu_util"]
                  * (1.0 - latest["gpu_fee"])) / latest["gpu_power"]
-    btc_margin = 0.98 * (btc_gross - tariff)
-    gpu_margin = 0.98 * (gpu_gross - tariff)
+    btc_margin = btc_gross * (1.0 - 0.02) - tariff
+    gpu_margin = 0.95 * (gpu_gross - tariff)  # 95% uptime; no extra generic fee
     return {
         "gpu_capex_break_even_eur_at_5y_no_maintenance": round(
             max(0.0, gpu_margin) * latest["gpu_power"] * 8760 * 5, 2),
