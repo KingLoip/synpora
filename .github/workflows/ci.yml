@@ -106,6 +106,26 @@ jobs:
           assert body["method"] == "unified_forecast_risk_regret_v1"
           assert body["recommendation_only"] is True
           assert "cost_model" in body, body
+          # The optimizer must apply uptime to both revenue and consumed energy,
+          # and apply the pool/platform fee exactly once.
+          opt=c.post(f"/api/v1/farms/{farm}/optimize",headers=h,json={
+              "energy_kwh":100,"energy_cost_eur_kwh":0.20,
+              "btc_hashprice_usd_ph_day":39.64,"eur_usd":1.12,
+              "asic_efficiency_j_th":20,"uptime":0.50,"pool_fee":0.02,
+              "gpu_hourly_usd":1.09,"gpu_power_kw":0.35,
+              "gpu_utilization":0.70,"gpu_platform_fee":0.15,"gpu_uptime":0.25
+          })
+          assert opt.status_code==200, opt.text
+          options=[opt.json()["best"]]+opt.json()["alternatives"]
+          by_name={item["option"]:item for item in options}
+          btc=by_name["BTC Mining"]
+          btc_gross=(39.64/1.12)/(20*24)*0.98*0.50
+          assert abs(btc["gross_value_eur_kwh"]-btc_gross)<1e-9, btc
+          assert abs(btc["energy_cost_eur_kwh"]-0.10)<1e-9, btc
+          gpu=by_name["AI Compute"]
+          gpu_gross=(1.09/1.12)*0.70*0.85/0.35*0.25
+          assert abs(gpu["gross_value_eur_kwh"]-gpu_gross)<1e-9, gpu
+          assert abs(gpu["energy_cost_eur_kwh"]-0.05)<1e-9, gpu
           risk_payload={"scenarios":50,"seed":42,"risk_aversion":0.5}
           risk=c.post(f"/api/v1/farms/{farm}/risk-analysis",headers=h,json=risk_payload)
           assert risk.status_code==200, risk.text
