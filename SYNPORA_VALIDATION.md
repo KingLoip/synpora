@@ -34,6 +34,19 @@ A walk-forward backtest may alternatively accept an explicit constant `energy_co
 4. Check `GET /api/v1/farms/{farm_id}/paper-trading` regularly. At least 24 settled recommendations are required before its status becomes `evaluation_available`; this is a minimum reporting threshold, not proof of statistical reliability.
 5. Use a longer holdout period before changing model weights or considering any operational automation.
 
+## Forecast-error and risk calibration diagnostics
+
+The independent GitHub Actions economic validation now reports, for both the production parametric comparator and the empirical paired bootstrap:
+
+- Forecast MAE and P90 absolute error in EUR/kWh.
+- A same-strategy persistence baseline MAE and MAE skill score. A positive skill score means the model beat carrying forward the current snapshot value; a negative score means it did worse.
+- Mean, P90, P95 and maximum regret, plus strategy-selection accuracy.
+- A Brier score for the empirical bootstrap's probability that the selected strategy wins.
+- A fixed risk-aversion sensitivity sweep (alpha 0.00, 0.25, 0.50, 0.75 and 1.00), comparing realized next-snapshot regret and selection accuracy.
+- A separate walk-forward shrinkage forecast: it starts from the persistence baseline and learns a bounded correction from at least 24 earlier, already-settled forecast pairs. No current or future observation is used to fit its correction weight.
+
+Only consecutive observations no more than 60 minutes apart are paired for the one-step forecast comparison. Longer gaps are counted and excluded rather than silently treated as equivalent horizons. The risk-aversion sweep is diagnostic only: it does not tune or alter production decision-engine settings, and its same-sample best result must not be treated as an independently validated optimum. All results remain market mark-to-model, not realized cashflow. The forecast-quality gate remains blocked unless the calibrated forecast beats persistence by at least 5% MAE on at least 100 out-of-sample pairs. Selection accuracy is also flagged as low-information when one strategy accounts for at least 95% of the observed winners.
+
 ## Important limitations
 
 - The collector uses Startmining for Bitcoin market indicators, Frankfurter's ECB daily EUR/USD rate, and external GPU rental-price providers (Zarobit, Lium public nodes, and operator-keyed Vast.ai). Austrian spot electricity is no longer fetched as a global market input; the legacy Austria field remains reference-only. Global market readiness does not prove site-specific profitability. A verified site tariff is still required for site-specific learning; a backtest may use an explicitly supplied constant tariff and must label the result as assumption-based.
