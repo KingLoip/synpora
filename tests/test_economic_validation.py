@@ -80,7 +80,7 @@ class EconomicValidationTests(unittest.TestCase):
     def test_btc_hashprice_uses_ph_per_day_to_kwh_conversion_and_pool_fee_once(self):
         row = {"btc": 40, "gpu": 1.1, "fx": 1.1, "gpu_power": 0.35,
                "gpu_util": 0.7, "gpu_fee": 0.15}
-        # 20 J/TH means 20 kW per TH/s; one kW is 0.00005 PH/s.
+        # 20 J/TH means 20 W per TH/s; one kW is 50 TH/s = 0.00005 PH/s.
         gross_eur_per_kwh = (40 / 1.1) / (20 * 1000 * 24)
         expected = gross_eur_per_kwh * 0.98 - 0.25
         actual = MODULE.economics(row, 0.25)["BTC Mining"]
