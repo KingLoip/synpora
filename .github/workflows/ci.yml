@@ -1010,6 +1010,23 @@ jobs:
           assert created.status_code==200, created.text
           farm_id_2=created.json()["id"]
           assert any(x["id"]==farm_id_2 for x in client.get("/api/v1/farms",headers=headers).json())
+          # Evidence schema must migrate and persist correctly on PostgreSQL too.
+          decision=client.post(f"/api/v1/farms/{farm_id_2}/decision",headers=headers,
+              json={"energy_kwh":25,"energy_cost_eur_kwh":0.12})
+          assert decision.status_code==200, decision.text
+          evidence=client.post(f"/api/v1/farms/{farm_id_2}/cashflow-evidence",headers=headers,json={
+              "decision_id":decision.json()["decision_id"],
+              "period_start":"2026-10-01T00:00:00Z","period_end":"2026-10-02T00:00:00Z",
+              "energy_kwh":25,"energy_cost_total_eur":3,"realized_revenue_eur":10,
+              "other_operating_costs_eur":1,"energy_meter_reference":"pg-meter-ref-0001",
+              "revenue_statement_reference":"pg-revenue-ref-0001",
+              "source_type":"gpu_payout_and_meter"})
+          assert evidence.status_code==200, evidence.text
+          assert abs(evidence.json()["realized_net_eur_kwh"]-0.24)<1e-9, evidence.json()
+          assert evidence.json()["decision_ledger_settled"] is False, evidence.json()
+          with psycopg.connect(os.environ["DATABASE_URL"]) as db:
+              evidence_count=db.execute("SELECT COUNT(*) FROM cashflow_evidence WHERE farm_id=%s",(farm_id_2,)).fetchone()[0]
+              assert evidence_count==1, evidence_count
 
           # Collect twice: the second request reruns the schema ensure path against existing columns.
           first=client.post("/api/v1/market/collect",headers={"X-SYNPORA-MARKET-TOKEN":os.environ["SYNPORA_MARKET_ADMIN_TOKEN"]})
