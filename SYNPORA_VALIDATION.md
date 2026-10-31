@@ -45,7 +45,7 @@ The independent GitHub Actions economic validation now reports, for both the pro
 - A fixed risk-aversion sensitivity sweep (alpha 0.00, 0.25, 0.50, 0.75 and 1.00), comparing realized next-snapshot regret and selection accuracy.
 - A separate walk-forward shrinkage forecast: it starts from the persistence baseline and learns a bounded correction from at least 24 earlier, already-settled forecast pairs. No current or future observation is used to fit its correction weight.
 
-Only consecutive observations no more than 60 minutes apart are paired for the one-step forecast comparison. Longer gaps are counted and excluded rather than silently treated as equivalent horizons. The risk-aversion sweep is diagnostic only: it does not tune or alter production decision-engine settings, and its same-sample best result must not be treated as an independently validated optimum. All results remain market mark-to-model, not realized cashflow.
+Only consecutive observations no more than 60 minutes apart are paired for the one-step forecast comparison. Longer gaps are counted and excluded rather than silently treated as equivalent horizons. The risk-aversion sweep is diagnostic only: it does not tune or alter production decision-engine settings, and its same-sample best result must not be treated as an independently validated optimum. All results remain market mark-to-model, not realized cashflow. The forecast-quality gate remains blocked unless the calibrated forecast beats persistence by at least 5% MAE on at least 100 out-of-sample pairs. Selection accuracy is also flagged as low-information when one strategy accounts for at least 95% of the observed winners.
 
 ## Important limitations
 
