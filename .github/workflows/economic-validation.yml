@@ -1,6 +1,7 @@
 name: SYNPORA Economic Validation
 
 on:
+  pull_request:
   workflow_run:
     workflows: ["SYNPORA CI"]
     types: [completed]
@@ -16,13 +17,13 @@ concurrency:
 
 jobs:
   empirical-economic-validation:
-    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.event.pull_request.head.sha || 'main' }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
