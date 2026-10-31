@@ -591,6 +591,7 @@ def install(app):
         battery_charge_efficiency: float=0.95
         battery_discharge_efficiency: float=0.95
         uptime: float=0.98
+        gpu_uptime: float=0.98
         pool_fee: float=0.02
 
     @app.get("/api/v1/market/live")
@@ -672,12 +673,15 @@ def install(app):
         uid=user(authorization); c=init_db()
         ok=c.execute("SELECT 1 FROM synpora_saas_farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone()
         if not ok: raise HTTPException(404,"Farm not found")
-        # BTC gross revenue per kWh = hashprice / (J/TH × 24), adjusted for uptime/pool fee.
-        # Negative wholesale prices are valid in some markets and must increase
-        # the modeled net value rather than being silently clamped to zero.
+        # Hashprice is USD per PH/s/day. With J/TH efficiency, revenue per kWh
+        # is hashprice / (efficiency × 24 × EUR/USD). Pool fee is applied once.
+        # Uptime scales both operating revenue and energy consumption.
+        # Negative site tariffs remain signed and are never clamped.
         energy_cost=float(x.energy_cost_eur_kwh)
+        btc_uptime=max(0.0,min(1.0,float(x.uptime)))
+        gpu_uptime=max(0.0,min(1.0,float(x.gpu_uptime)))
         btc_gross=(x.btc_hashprice_usd_ph_day/max(x.eur_usd,0.01))/(max(x.asic_efficiency_j_th,0.01)*24)
-        btc_gross*=max(0.0,min(1.0,x.uptime))*(1-max(0.0,min(0.99,x.pool_fee)))
+        btc_gross*=(1-max(0.0,min(0.99,x.pool_fee)))
         btc_overhead=max(0.0,x.btc_facility_overhead_kw)+max(0.0,x.facility_overhead_kw)
         btc_device_power=max(x.btc_device_power_kw,0.01)
         btc_value=btc_gross*(btc_device_power/(btc_device_power+btc_overhead)) if btc_overhead else btc_gross
@@ -688,8 +692,8 @@ def install(app):
         battery_value=max(0.0,x.battery_value_eur_kwh*max(0.01,min(1.0,x.battery_round_trip_efficiency))-max(0.0,x.battery_degradation_eur_kwh))
         grid_value=max(0.0,x.grid_value_eur_kwh-max(0.0,x.grid_export_fee_eur_kwh))
         options=[
-          {"option":"AI Compute","value_eur_kwh":ai_value-energy_cost,"gross_value_eur_kwh":ai_value,"energy_cost_eur_kwh":energy_cost,"source":"gpu_market_reference"},
-          {"option":"BTC Mining","value_eur_kwh":btc_value-energy_cost,"gross_value_eur_kwh":btc_value,"energy_cost_eur_kwh":energy_cost,"source":"hashprice_reference"},
+          {"option":"AI Compute","value_eur_kwh":gpu_uptime*(ai_value-energy_cost),"gross_value_eur_kwh":gpu_uptime*ai_value,"energy_cost_eur_kwh":gpu_uptime*energy_cost,"source":"gpu_market_reference"},
+          {"option":"BTC Mining","value_eur_kwh":btc_uptime*(btc_value-energy_cost),"gross_value_eur_kwh":btc_uptime*btc_value,"energy_cost_eur_kwh":btc_uptime*energy_cost,"source":"hashprice_reference"},
           {"option":"Battery","value_eur_kwh":battery_value,"gross_value_eur_kwh":x.battery_value_eur_kwh,"energy_cost_eur_kwh":0.0,"source":"farm_model"},
           {"option":"Grid","value_eur_kwh":grid_value,"gross_value_eur_kwh":x.grid_value_eur_kwh,"energy_cost_eur_kwh":0.0,"source":"energy_model"}
         ]
