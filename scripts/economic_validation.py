@@ -251,6 +251,11 @@ def summarize_backtest(pairs, label):
         name: round(statistics.fmean(p["actual_values"][name] for p in pairs), 6)
         for name in ("AI Compute", "BTC Mining", "Battery", "Grid")
     }
+    best_counts = {
+        name: sum(p["best"] == name for p in pairs)
+        for name in ("AI Compute", "BTC Mining", "Battery", "Grid")
+    }
+    dominant_share = max(best_counts.values()) / len(pairs)
     mae = statistics.fmean(errors)
     baseline_mae = statistics.fmean(baseline_errors)
     return {
@@ -267,6 +272,8 @@ def summarize_backtest(pairs, label):
         "p95_regret_eur_per_kwh": round(quantile(regrets, 0.95), 6),
         "max_regret_eur_per_kwh": round(max(regrets), 6),
         "strategy_selection_accuracy": round(sum(p["chosen"] == p["best"] for p in pairs) / len(pairs), 4),
+        "best_strategy_counts": best_counts,
+        "selection_accuracy_information": "low_information_single_strategy_dominance" if dominant_share >= 0.95 else "multi_strategy_observations",
         "mean_next_snapshot_value_eur_per_kwh": strategy_means,
         "median_snapshot_gap_minutes": round(statistics.median(p["gap_minutes"] for p in pairs), 2),
         "p90_snapshot_gap_minutes": round(quantile([p["gap_minutes"] for p in pairs], 0.90), 2),
@@ -380,10 +387,20 @@ def run_backtest(rows, tariff, min_history=WINDOW):
             }
         else:
             risk_summary[str(alpha)] = {"pairs": 0, "status": "insufficient_data"}
+    calibrated_summary = summarize_backtest(calibrated_pairs, "prior_error_calibrated_shrinkage")
+    calibrated_skill = calibrated_summary.get("mae_skill_vs_persistence")
+    forecast_gate = {
+        "status": "pass" if calibrated_summary.get("pairs", 0) >= 100 and calibrated_skill is not None and calibrated_skill >= 0.05 else "blocked",
+        "minimum_pairs": 100,
+        "minimum_mae_skill_vs_persistence": 0.05,
+        "observed_mae_skill_vs_persistence": calibrated_skill,
+        "reason": "Forecasts must beat persistence by at least 5% on 100+ out-of-sample pairs; current evidence does not meet this bar."
+    }
     return {
+        "forecast_quality_gate": forecast_gate,
         "production_parametric_monte_carlo": summarize_backtest(parametric_pairs, "production_independent_lognormal"),
         "independent_empirical_paired_bootstrap": summarize_backtest(empirical_pairs, "historical_paired_bootstrap"),
-        "walk_forward_shrunk_forecast": summarize_backtest(calibrated_pairs, "prior_error_calibrated_shrinkage"),
+        "walk_forward_shrunk_forecast": calibrated_summary,
         "forecast_calibration": {
             "method": "bounded ridge-shrunk correction to persistence baseline, fitted only on earlier settled one-step forecasts",
             "minimum_prior_pairs_before_nonzero_correction": 24,
