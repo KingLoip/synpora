@@ -334,6 +334,7 @@ jobs:
           paper=c.get(f"/api/v1/farms/{farm}/paper-trading",headers=h)
           assert paper.status_code==200 and paper.json()["settled_decisions"]==0, paper.text
           assert paper.json()["open_decisions"]>=1, paper.json()
+          assert any(x.get("decision_id") for x in paper.json()["recent_decisions"] if x["status"]=="open"), paper.json()["recent_decisions"]
           learning=c.post(f"/api/v1/farms/{farm}/learning/update",headers=h)
           assert learning.status_code==200, learning.text
           lb=learning.json()
@@ -887,6 +888,10 @@ jobs:
           assert '/api/v1/farms/{farm_id}/cashflow-evidence' in s
           assert 'pending_operator_review' in s
           assert 'model_learning_updated":False' in s
+          enhancement=Path("synpora_enhancement.py").read_text()
+          assert 'loadCashflowEvidence' in enhancement
+          assert '/cashflow-evidence' in enhancement
+          assert 'REALIZED CASHFLOW' in enhancement
           assert 'SYNPORA_MARKET_DATA_URL' in s
           assert 'SYNPORA_MARKET_DATA_ALLOWED_HOSTS' in s
           assert 'SYNPORA_MARKET_DATA_API_KEY' in s
