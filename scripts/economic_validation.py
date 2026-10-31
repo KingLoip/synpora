@@ -101,7 +101,8 @@ def observations_from_history(raw):
 
 def economics(row, tariff, gpu_capex=0.0, btc_capex=0.0, *,
               gpu_maintenance_eur_year=0.0, gpu_lifetime_years=5.0,
-              gpu_uptime=0.95, gpu_utilization=None):
+              gpu_uptime=0.98, btc_uptime=0.98, btc_maintenance_eur_year=0.0,
+              btc_lifetime_years=4.0, gpu_utilization=None):
     """Conservative scenario economics in EUR per available site kWh.
 
     Public GPU marketplace asks are not realized payouts. Utilization, uptime,
@@ -114,10 +115,10 @@ def economics(row, tariff, gpu_capex=0.0, btc_capex=0.0, *,
     gpu_util = row["gpu_util"] if gpu_utilization is None else gpu_utilization
     gpu_gross = ((row["gpu"] / row["fx"]) * gpu_util
                  * (1.0 - row["gpu_fee"])) / row["gpu_power"]
-    btc_fixed = (btc_capex / 4.0) / (3.5 * 8760.0)
+    btc_fixed = (btc_capex / btc_lifetime_years + btc_maintenance_eur_year) / (3.5 * 8760.0)
     gpu_fixed = (gpu_capex / gpu_lifetime_years + gpu_maintenance_eur_year) / (row["gpu_power"] * 8760.0)
     # Apply the 2% pool fee once to mining revenue, not to electricity cost.
-    btc = btc_gross * (1.0 - 0.02) - tariff - btc_fixed
+    btc = btc_uptime * (btc_gross * (1.0 - 0.02) - tariff) - btc_fixed
     # Marketplace fee is already included in gpu_gross. Availability scales
     # both operating revenue and energy consumption; no extra generic 2% fee.
     gpu = gpu_uptime * (gpu_gross - tariff) - gpu_fixed
@@ -294,7 +295,7 @@ def capex_hurdles(latest, tariff):
     btc_gross = (latest["btc"] / latest["fx"]) / (20.0 * 24.0)
     gpu_gross = ((latest["gpu"] / latest["fx"]) * latest["gpu_util"]
                  * (1.0 - latest["gpu_fee"])) / latest["gpu_power"]
-    btc_margin = btc_gross * (1.0 - 0.02) - tariff
+    btc_margin = 0.98 * (btc_gross * (1.0 - 0.02) - tariff)  # 98% uptime and 2% pool fee
     gpu_margin = 0.95 * (gpu_gross - tariff)  # 95% uptime; no extra generic fee
     return {
         "gpu_capex_break_even_eur_at_5y_no_maintenance": round(
