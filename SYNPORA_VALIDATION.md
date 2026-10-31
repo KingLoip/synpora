@@ -6,6 +6,9 @@
 - `GET /api/v1/system/collector-status` reports the background collector's last attempt, last successful collection, last error class, last data-quality status and consecutive failures. The in-memory heartbeat resets on restart; use the database-backed snapshot timestamp in `data-health` to confirm persisted history.
 - `POST /api/v1/farms/{farm_id}/backtest` performs strict walk-forward evaluation. At time t it chooses the highest modeled value using snapshot t, then scores that choice against the next later eligible snapshot. It never trains or scores on a snapshot that was not fully externally sourced.
 - `GET /api/v1/farms/{farm_id}/paper-trading` summarizes recommendation-ledger outcomes, prediction error, regret, open decisions and per-strategy results. It does not place orders or control equipment.
+- `POST /api/v1/farms/{farm_id}/cashflow-evidence` accepts an operator-submitted realized-period record with metered kWh, total energy cost, realized revenue, other operating costs, period timestamps, uptime/utilization and references to the meter/invoice and payout/pool statement. It calculates net realized EUR/kWh and stores an append-only evidence record.
+- `GET /api/v1/farms/{farm_id}/cashflow-evidence` lists those records and their review status. Submissions are marked `pending_operator_review`; they do not settle the recommendation ledger, update model weights, or count toward investment validation. This avoids treating typed references as independently verified documents.
+
 - `GET /ops` is a browser-based operations dashboard showing readiness, feed freshness, eligible/excluded snapshots, and recommendation-only release flags.
 - Scenario, risk-analysis and decision-engine responses expose `cost_model` assumptions for equipment capex, lifetime, maintenance, uptime, pool fee and user-supplied tax rate.
 - Existing forecast fitting, model weights and learning settlement use the same provenance gate.
@@ -46,6 +49,12 @@ The independent GitHub Actions economic validation now reports, for both the pro
 - A separate walk-forward shrinkage forecast: it starts from the persistence baseline and learns a bounded correction from at least 24 earlier, already-settled forecast pairs. No current or future observation is used to fit its correction weight.
 
 Only consecutive observations no more than 60 minutes apart are paired for the one-step forecast comparison. Longer gaps are counted and excluded rather than silently treated as equivalent horizons. The risk-aversion sweep is diagnostic only: it does not tune or alter production decision-engine settings, and its same-sample best result must not be treated as an independently validated optimum. All results remain market mark-to-model, not realized cashflow. The forecast-quality gate remains blocked unless the calibrated forecast beats persistence by at least 5% MAE on at least 100 out-of-sample pairs. Selection accuracy is also flagged as low-information when one strategy accounts for at least 95% of the observed winners.
+
+## Realized cashflow evidence workflow
+
+For each open paper-trading decision, submit one evidence record to `POST /api/v1/farms/{farm_id}/cashflow-evidence`. Required inputs include the actual metered energy, the all-in energy invoice amount for the same period, realized revenue from the matching payout/pool/export statement, and any additional operating costs. Use timezone-aware ISO-8601 period boundaries and references that identify the underlying documents. The endpoint checks ownership, decision state, numeric ranges, period ordering, duplicate submissions and required references; it does not fetch or authenticate external documents.
+
+The result is intentionally `pending_operator_review`. A document reference or operator attestation is not proof that a document is authentic. Pending evidence is excluded from the decision ledger's settled count, forecast calibration, online learning and investment validation. Independent review and reconciliation against original invoices/statements and meter readings remain required before a future settlement/review workflow may promote it. The evidence intake is not an accounting system and does not create transactions or control equipment.
 
 ## Important limitations
 
