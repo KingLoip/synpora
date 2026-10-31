@@ -30,6 +30,8 @@ TARIFFS = {
     "low_cost_international_reference": 0.05,
 }
 WINDOW = 24
+MAX_BACKTEST_GAP_MINUTES = 60.0
+RISK_AVERSION_GRID = (0.0, 0.25, 0.50, 0.75, 1.0)
 BOOTSTRAP_SAMPLES = 1000
 RISK_AVERSION = 0.75
 SEED = 20261030
@@ -229,17 +231,28 @@ def summarize_backtest(pairs, label):
         return {"status": "insufficient_data", "pairs": 0}
     regrets = [p["regret"] for p in pairs]
     errors = [abs(p["actual"] - p["predicted"]) for p in pairs]
+    baseline_errors = [abs(p["actual"] - p["baseline_predicted"]) for p in pairs]
+    brier_scores = [(p["predicted_win_probability"] - float(p["chosen"] == p["best"])) ** 2
+                    for p in pairs if p.get("predicted_win_probability") is not None]
     strategy_means = {
         name: round(statistics.fmean(p["actual_values"][name] for p in pairs), 6)
         for name in ("AI Compute", "BTC Mining", "Battery", "Grid")
     }
+    mae = statistics.fmean(errors)
+    baseline_mae = statistics.fmean(baseline_errors)
     return {
         "model": label,
         "status": "evaluated" if len(pairs) >= 24 else "insufficient_data",
         "pairs": len(pairs),
-        "mean_prediction_error_eur_per_kwh": round(statistics.fmean(errors), 6),
+        "mean_prediction_error_eur_per_kwh": round(mae, 6),
+        "p90_prediction_error_eur_per_kwh": round(quantile(errors, 0.90), 6),
+        "persistence_baseline_mae_eur_per_kwh": round(baseline_mae, 6),
+        "mae_skill_vs_persistence": round(1.0 - mae / baseline_mae, 6) if baseline_mae > 1e-12 else None,
+        "chosen_strategy_win_probability_brier": round(statistics.fmean(brier_scores), 6) if brier_scores else None,
         "mean_regret_eur_per_kwh": round(statistics.fmean(regrets), 6),
         "p90_regret_eur_per_kwh": round(quantile(regrets, 0.90), 6),
+        "p95_regret_eur_per_kwh": round(quantile(regrets, 0.95), 6),
+        "max_regret_eur_per_kwh": round(max(regrets), 6),
         "strategy_selection_accuracy": round(sum(p["chosen"] == p["best"] for p in pairs) / len(pairs), 4),
         "mean_next_snapshot_value_eur_per_kwh": strategy_means,
         "median_snapshot_gap_minutes": round(statistics.median(p["gap_minutes"] for p in pairs), 2),
@@ -250,42 +263,93 @@ def summarize_backtest(pairs, label):
 def run_backtest(rows, tariff, min_history=WINDOW):
     empirical_pairs = []
     parametric_pairs = []
-    # At t, train only on returns ending at t; score against t+1.
+    risk_sensitivity = {alpha: [] for alpha in RISK_AVERSION_GRID}
+    skipped_long_gaps = 0
+    # At t, train only on returns ending at t; score against the next eligible snapshot.
+    # Exclude very long gaps: they are not a comparable one-step forecast horizon.
     for i in range(min_history, len(rows) - 1):
         decision = rows[i]
         next_row = rows[i + 1]
-        if (next_row["ts"] - decision["ts"]) <= 0:
+        gap_minutes = (next_row["ts"] - decision["ts"]) / 60.0
+        if gap_minutes <= 0:
+            continue
+        if gap_minutes > MAX_BACKTEST_GAP_MINUTES:
+            skipped_long_gaps += 1
             continue
         actual = economics(next_row, tariff)
+        current_values = economics(decision, tariff)
         best = max(actual, key=actual.get)
         empirical = empirical_risk_choice(rows[:i + 1], decision, tariff, SEED + i)
         if empirical is not None:
             chosen, risk_metrics = empirical
+            for alpha in RISK_AVERSION_GRID:
+                alpha_scores = {
+                    name: (1.0 - alpha) * metric["mean"] + alpha * metric["p05"]
+                    for name, metric in risk_metrics.items()
+                }
+                alpha_choice = max(alpha_scores, key=alpha_scores.get)
+                risk_sensitivity[alpha].append({
+                    "chosen": alpha_choice,
+                    "best": best,
+                    "regret": max(0.0, actual[best] - actual[alpha_choice]),
+                })
             empirical_pairs.append({
-                "chosen": chosen, "predicted": risk_metrics[chosen]["mean"],
-                "actual": actual[chosen], "best": best,
+                "chosen": chosen,
+                "predicted": risk_metrics[chosen]["mean"],
+                "predicted_win_probability": risk_metrics[chosen]["win_probability"],
+                "baseline_predicted": current_values[chosen],
+                "actual": actual[chosen],
+                "best": best,
                 "regret": max(0.0, actual[best] - actual[chosen]),
-                "actual_values": actual, "gap_minutes": (next_row["ts"] - decision["ts"]) / 60.0,
+                "actual_values": actual,
+                "gap_minutes": gap_minutes,
             })
         parametric, parametric_metrics = production_parametric_choice(
             decision, tariff, 42 + i, scenarios=200, shock=0.20
         )
         parametric_pairs.append({
-            "chosen": parametric, "predicted": parametric_metrics[parametric]["mean"],
-            "actual": actual[parametric], "best": best,
+            "chosen": parametric,
+            "predicted": parametric_metrics[parametric]["mean"],
+            "predicted_win_probability": None,
+            "baseline_predicted": current_values[parametric],
+            "actual": actual[parametric],
+            "best": best,
             "regret": max(0.0, actual[best] - actual[parametric]),
-            "actual_values": actual, "gap_minutes": (next_row["ts"] - decision["ts"]) / 60.0,
+            "actual_values": actual,
+            "gap_minutes": gap_minutes,
         })
     warnings = [
         "Both tests are out-of-sample next-snapshot market mark-to-model tests, not realized cashflow.",
+        "Forecast MAE is compared with a same-strategy persistence baseline; positive skill means improvement over carrying forward the current snapshot value.",
         "The empirical paired bootstrap preserves observed BTC/GPU/FX co-movement; it does not prove long-horizon stationarity.",
+        "Risk-aversion sensitivity is diagnostic across fixed alpha values, not an automatic production parameter change.",
         "The parametric comparator mirrors the production decision engine's independent 20% lognormal BTC/GPU shock and 13% energy shock.",
         "Battery and grid values remain explicit model defaults (7.1 ct/kWh battery reference, 5.5 ct/kWh export reference).",
         "Equipment capex, maintenance, taxes, metering, connection limits and actual uptime are not supplied by the production market feed.",
+        f"Next-snapshot pairs with gaps over {MAX_BACKTEST_GAP_MINUTES:g} minutes are excluded from the one-step comparison.",
     ]
+    risk_summary = {}
+    for alpha, pairs in risk_sensitivity.items():
+        if pairs:
+            regrets = [p["regret"] for p in pairs]
+            risk_summary[str(alpha)] = {
+                "pairs": len(pairs),
+                "mean_regret_eur_per_kwh": round(statistics.fmean(regrets), 6),
+                "p90_regret_eur_per_kwh": round(quantile(regrets, 0.90), 6),
+                "selection_accuracy": round(sum(p["chosen"] == p["best"] for p in pairs) / len(pairs), 4),
+            }
+        else:
+            risk_summary[str(alpha)] = {"pairs": 0, "status": "insufficient_data"}
     return {
         "production_parametric_monte_carlo": summarize_backtest(parametric_pairs, "production_independent_lognormal"),
         "independent_empirical_paired_bootstrap": summarize_backtest(empirical_pairs, "historical_paired_bootstrap"),
+        "risk_aversion_sensitivity": {
+            "purpose": "diagnostic only; do not auto-change production risk aversion from this same holdout",
+            "current_production_alpha": RISK_AVERSION,
+            "results": risk_summary,
+        },
+        "excluded_long_gap_pairs": skipped_long_gaps,
+        "maximum_accepted_pair_gap_minutes": MAX_BACKTEST_GAP_MINUTES,
         "warnings": warnings,
     }
 
