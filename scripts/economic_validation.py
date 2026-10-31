@@ -314,7 +314,7 @@ def conservative_gpu_sensitivity(rows, tariff):
     result = {}
     for case in cases:
         values = [economics(row, tariff, gpu_capex=case["capex_eur"],
-                            gpu_maintenance_eur_year=case["maintenance_eur"],
+                            gpu_maintenance_eur_year=case["maintenance_eur_year"],
                             gpu_lifetime_years=5.0, gpu_uptime=0.95,
                             gpu_utilization=case["utilization"])["AI Compute"]
                   for row in rows]
