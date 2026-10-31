@@ -321,7 +321,7 @@ def conservative_gpu_sensitivity(rows, tariff):
         result[case["name"]] = {
             "utilization_assumption": case["utilization"],
             "capex_eur": case["capex_eur"],
-            "maintenance_eur_year": case["maintenance_eur"],
+            "maintenance_eur_year": case["maintenance_eur_year"],
             "uptime_assumption": 0.95,
             "five_year_lifetime": True,
             "modeled_contribution_distribution": distribution(values),
