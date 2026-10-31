@@ -147,6 +147,44 @@ class EconomicValidationTests(unittest.TestCase):
             self.assertEqual(case["maintenance_eur_year"], 750.0)
             self.assertFalse(case["realized_cashflow_validated"])
 
+
+    def test_backtest_reports_persistence_skill_and_risk_sensitivity(self):
+        pairs = [{
+            "chosen": "AI Compute", "predicted": 0.12, "baseline_predicted": 0.10,
+            "predicted_win_probability": 0.8, "actual": 0.11, "best": "AI Compute",
+            "regret": 0.0, "actual_values": {
+                "AI Compute": 0.11, "BTC Mining": 0.02, "Battery": 0.04, "Grid": 0.03
+            }, "gap_minutes": 5.0,
+        }]
+        result = MODULE.summarize_backtest(pairs, "unit-test")
+        self.assertAlmostEqual(result["mean_prediction_error_eur_per_kwh"], 0.01)
+        self.assertAlmostEqual(result["persistence_baseline_mae_eur_per_kwh"], 0.01)
+        self.assertAlmostEqual(result["mae_skill_vs_persistence"], 0.0)
+        self.assertAlmostEqual(result["chosen_strategy_win_probability_brier"], 0.04)
+
+    def test_backtest_excludes_noncomparable_long_snapshot_gaps(self):
+        rows = []
+        for i in range(28):
+            rows.append({"ts": i * (7200 if i == 27 else 300), "btc": 40 + i * 0.01,
+                         "gpu": 1.1 + i * 0.001, "fx": 1.1,
+                         "gpu_power": 0.35, "gpu_util": 0.7, "gpu_fee": 0.15})
+        result = MODULE.run_backtest(rows, 0.25)
+        self.assertEqual(result["excluded_long_gap_pairs"], 1)
+        self.assertEqual(result["maximum_accepted_pair_gap_minutes"], 60.0)
+
+    def test_risk_aversion_sensitivity_reports_each_candidate_without_mutating_default(self):
+        rows = []
+        for i in range(36):
+            rows.append({"ts": i * 300, "btc": 40 * (1 + 0.001 * i),
+                         "gpu": 1.1 * (1 + 0.002 * i), "fx": 1.1,
+                         "gpu_power": 0.35, "gpu_util": 0.7, "gpu_fee": 0.15})
+        result = MODULE.run_backtest(rows, 0.25)
+        sensitivity = result["risk_aversion_sensitivity"]
+        self.assertEqual(sensitivity["current_production_alpha"], MODULE.RISK_AVERSION)
+        self.assertEqual(set(sensitivity["results"]), {"0.0", "0.25", "0.5", "0.75", "1.0"})
+        self.assertTrue(all("mean_regret_eur_per_kwh" in value
+                            for value in sensitivity["results"].values()))
+
     def test_investment_readiness_fails_closed_without_realized_cashflow(self):
         gate = MODULE.investment_readiness()
         self.assertEqual(gate["status"], "not_investment_validated")
