@@ -77,13 +77,31 @@ class EconomicValidationTests(unittest.TestCase):
         self.assertAlmostEqual(values["Battery"], 0.0489, places=6)
         self.assertAlmostEqual(values["Grid"], 0.055, places=6)
 
-    def test_btc_pool_fee_is_applied_once_and_uptime_is_applied_once(self):
+    def test_btc_hashprice_uses_ph_per_day_to_kwh_conversion_and_pool_fee_once(self):
         row = {"btc": 40, "gpu": 1.1, "fx": 1.1, "gpu_power": 0.35,
                "gpu_util": 0.7, "gpu_fee": 0.15}
-        gross_after_pool = (40 / 1.1) / (20 * 24) * 0.98
-        expected = 0.98 * (gross_after_pool - 0.25)
+        # 1 PH/s = 1,000 TH/s = 20 kW at 20 J/TH; 1 kW is 0.05 PH/s.
+        gross_eur_per_kwh = (40 / 1.1) / (20 * 24)
+        expected = 0.98 * (gross_eur_per_kwh * 0.98 - 0.25)
         actual = MODULE.economics(row, 0.25)["BTC Mining"]
         self.assertAlmostEqual(actual, expected, places=12)
+        self.assertLess(actual, 0.0)
+
+    def test_gpu_marketplace_fee_and_uptime_are_not_double_charged(self):
+        row = {"btc": 40, "gpu": 1.1, "fx": 1.1, "gpu_power": 0.35,
+               "gpu_util": 0.7, "gpu_fee": 0.15}
+        gross = (1.1 / 1.1) * 0.7 * 0.85 / 0.35
+        expected = 0.95 * (gross - 0.25)
+        actual = MODULE.economics(row, 0.25, gpu_uptime=0.95)["AI Compute"]
+        self.assertAlmostEqual(actual, expected, places=12)
+
+    def test_btc_capex_hurdle_uses_same_corrected_energy_conversion(self):
+        row = {"btc": 40, "gpu": 1.1, "fx": 1.1, "gpu_power": 0.35,
+               "gpu_util": 0.7, "gpu_fee": 0.15}
+        revenue = (40 / 1.1) / (20 * 24) * 0.98
+        expected = round(max(0.0, revenue - 0.01) * 0.98 * 3.5 * 8760 * 4, 2)
+        actual = MODULE.capex_hurdles(row, 0.01)["btc_capex_break_even_eur_at_4y_no_maintenance"]
+        self.assertEqual(actual, expected)
 
     def test_production_parametric_choice_is_deterministic(self):
         row = {"ts": 100, "btc": 40, "gpu": 1.1, "fx": 1.1,
@@ -117,6 +135,17 @@ class EconomicValidationTests(unittest.TestCase):
             row, 0.05, gpu_capex=10000, gpu_maintenance_eur_year=750,
             gpu_lifetime_years=5, gpu_uptime=0.95,
             gpu_utilization=0.70)["AI Compute"])
+
+    def test_gpu_sensitivity_uses_matching_maintenance_assumption_key(self):
+        row = {"ts": 1, "btc": 40, "gpu": 1.1, "fx": 1.1,
+               "gpu_power": 0.35, "gpu_util": 0.70, "gpu_fee": 0.15}
+        result = MODULE.conservative_gpu_sensitivity([row], 0.25)
+        self.assertEqual(set(result), {
+            "low_utilization_costed", "mid_utilization_costed", "high_utilization_costed"
+        })
+        for case in result.values():
+            self.assertEqual(case["maintenance_eur_year"], 750.0)
+            self.assertFalse(case["realized_cashflow_validated"])
 
     def test_investment_readiness_fails_closed_without_realized_cashflow(self):
         gate = MODULE.investment_readiness()

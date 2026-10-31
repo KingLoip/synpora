@@ -101,21 +101,27 @@ def observations_from_history(raw):
 
 def economics(row, tariff, gpu_capex=0.0, btc_capex=0.0, *,
               gpu_maintenance_eur_year=0.0, gpu_lifetime_years=5.0,
-              gpu_uptime=0.95, gpu_utilization=None):
+              gpu_uptime=0.98, btc_uptime=0.98, btc_maintenance_eur_year=0.0,
+              btc_lifetime_years=4.0, gpu_utilization=None):
     """Conservative scenario economics in EUR per available site kWh.
 
     Public GPU marketplace asks are not realized payouts. Utilization, uptime,
     capex and maintenance are explicit scenario inputs, never silently assumed
     to be zero-cost investment economics.
     """
-    btc_gross = (row["btc"] / row["fx"]) / (20.0 * 24.0) * 0.98
+    # Hashprice is quoted per PH/s/day. 1 PH/s = 1,000 TH/s;
+    # at 20 J/TH that is 20 kW. One kW is 0.05 PH/s, then /24 per kWh.
+    btc_gross = (row["btc"] / row["fx"]) / (20.0 * 24.0)
     gpu_util = row["gpu_util"] if gpu_utilization is None else gpu_utilization
     gpu_gross = ((row["gpu"] / row["fx"]) * gpu_util
                  * (1.0 - row["gpu_fee"])) / row["gpu_power"]
-    btc_fixed = (btc_capex / 4.0) / (3.5 * 8760.0)
+    btc_fixed = (btc_capex / btc_lifetime_years + btc_maintenance_eur_year) / (3.5 * 8760.0)
     gpu_fixed = (gpu_capex / gpu_lifetime_years + gpu_maintenance_eur_year) / (row["gpu_power"] * 8760.0)
-    btc = 0.98 * (btc_gross - tariff) - btc_fixed
-    gpu = gpu_uptime * 0.98 * (gpu_gross - tariff) - gpu_fixed
+    # Apply the 2% pool fee once to mining revenue, not to electricity cost.
+    btc = btc_uptime * (btc_gross * (1.0 - 0.02) - tariff) - btc_fixed
+    # Marketplace fee is already included in gpu_gross. Availability scales
+    # both operating revenue and energy consumption; no extra generic 2% fee.
+    gpu = gpu_uptime * (gpu_gross - tariff) - gpu_fixed
     battery = max(0.0, 0.071 * 0.90 - 0.015)
     grid = max(0.0, 0.055)
     return {"AI Compute": gpu, "BTC Mining": btc, "Battery": battery, "Grid": grid}
@@ -285,11 +291,12 @@ def run_backtest(rows, tariff, min_history=WINDOW):
 
 
 def capex_hurdles(latest, tariff):
-    btc_gross = (latest["btc"] / latest["fx"]) / (20.0 * 24.0) * 0.98
+    # Same PH/s-to-kWh conversion as economics(): 1 PH/s draws 20 kW.
+    btc_gross = (latest["btc"] / latest["fx"]) / (20.0 * 24.0)
     gpu_gross = ((latest["gpu"] / latest["fx"]) * latest["gpu_util"]
                  * (1.0 - latest["gpu_fee"])) / latest["gpu_power"]
-    btc_margin = 0.98 * (btc_gross - tariff)
-    gpu_margin = 0.98 * (gpu_gross - tariff)
+    btc_margin = 0.98 * (btc_gross * (1.0 - 0.02) - tariff)  # 98% uptime and 2% pool fee
+    gpu_margin = 0.98 * (gpu_gross - tariff)  # 98% uptime; no extra generic fee
     return {
         "gpu_capex_break_even_eur_at_5y_no_maintenance": round(
             max(0.0, gpu_margin) * latest["gpu_power"] * 8760 * 5, 2),
@@ -308,14 +315,14 @@ def conservative_gpu_sensitivity(rows, tariff):
     result = {}
     for case in cases:
         values = [economics(row, tariff, gpu_capex=case["capex_eur"],
-                            gpu_maintenance_eur_year=case["maintenance_eur"],
+                            gpu_maintenance_eur_year=case["maintenance_eur_year"],
                             gpu_lifetime_years=5.0, gpu_uptime=0.95,
                             gpu_utilization=case["utilization"])["AI Compute"]
                   for row in rows]
         result[case["name"]] = {
             "utilization_assumption": case["utilization"],
             "capex_eur": case["capex_eur"],
-            "maintenance_eur_year": case["maintenance_eur"],
+            "maintenance_eur_year": case["maintenance_eur_year"],
             "uptime_assumption": 0.95,
             "five_year_lifetime": True,
             "modeled_contribution_distribution": distribution(values),
