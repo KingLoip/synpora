@@ -1730,6 +1730,8 @@ def install(app):
             raise HTTPException(422,"Energy cost or revenue is outside the supported range")
         if x.other_operating_costs_eur<0 or x.other_operating_costs_eur>1e9:
             raise HTTPException(422,"other_operating_costs_eur must be between zero and 1 billion")
+        if c.execute("SELECT 1 FROM cashflow_evidence WHERE decision_id=? LIMIT 1",(x.decision_id,)).fetchone():
+            raise HTTPException(409,"Cashflow evidence has already been submitted for this decision")
         allowed_sources={"utility_invoice_and_meter","gpu_payout_and_meter","pool_statement_and_meter","battery_or_grid_statement_and_meter","operator_attestation"}
         if x.source_type not in allowed_sources:
             raise HTTPException(422,"Unsupported source_type")
