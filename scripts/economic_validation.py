@@ -296,7 +296,7 @@ def capex_hurdles(latest, tariff):
     gpu_gross = ((latest["gpu"] / latest["fx"]) * latest["gpu_util"]
                  * (1.0 - latest["gpu_fee"])) / latest["gpu_power"]
     btc_margin = 0.98 * (btc_gross * (1.0 - 0.02) - tariff)  # 98% uptime and 2% pool fee
-    gpu_margin = 0.95 * (gpu_gross - tariff)  # 95% uptime; no extra generic fee
+    gpu_margin = 0.98 * (gpu_gross - tariff)  # 98% uptime; no extra generic fee
     return {
         "gpu_capex_break_even_eur_at_5y_no_maintenance": round(
             max(0.0, gpu_margin) * latest["gpu_power"] * 8760 * 5, 2),
