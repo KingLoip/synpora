@@ -226,6 +226,19 @@ def empirical_risk_choice(history, current, tariff, seed):
     return chosen, metrics
 
 
+def calibrated_shrinkage_weight(history, min_samples=24):
+    """Estimate a bounded forecast correction from strictly prior settled pairs."""
+    if len(history) < min_samples:
+        return 0.0
+    denominator = sum(delta * delta for delta, _ in history)
+    if denominator <= 1e-12:
+        return 0.0
+    covariance = sum(delta * realized_delta for delta, realized_delta in history)
+    # Ridge shrinkage dampens noisy corrections; never extrapolate beyond [0, 1].
+    weight = covariance / (denominator * 1.10 + 1e-12)
+    return max(0.0, min(1.0, weight))
+
+
 def summarize_backtest(pairs, label):
     if not pairs:
         return {"status": "insufficient_data", "pairs": 0}
@@ -262,6 +275,10 @@ def summarize_backtest(pairs, label):
 
 def run_backtest(rows, tariff, min_history=WINDOW):
     empirical_pairs = []
+    calibrated_pairs = []
+    calibration_history = {name: [] for name in ("AI Compute", "BTC Mining", "Battery", "Grid")}
+    calibration_weight_sums = {name: 0.0 for name in calibration_history}
+    calibration_weight_counts = {name: 0 for name in calibration_history}
     parametric_pairs = []
     risk_sensitivity = {alpha: [] for alpha in RISK_AVERSION_GRID}
     skipped_long_gaps = 0
@@ -282,6 +299,29 @@ def run_backtest(rows, tariff, min_history=WINDOW):
         empirical = empirical_risk_choice(rows[:i + 1], decision, tariff, SEED + i)
         if empirical is not None:
             chosen, risk_metrics = empirical
+            calibrated_values = {}
+            for strategy in calibration_history:
+                weight = calibrated_shrinkage_weight(calibration_history[strategy])
+                model_delta = risk_metrics[strategy]["mean"] - current_values[strategy]
+                calibrated_values[strategy] = current_values[strategy] + weight * model_delta
+                calibration_weight_sums[strategy] += weight
+                calibration_weight_counts[strategy] += 1
+            calibrated_pairs.append({
+                "chosen": chosen,
+                "predicted": calibrated_values[chosen],
+                "predicted_win_probability": risk_metrics[chosen]["win_probability"],
+                "baseline_predicted": current_values[chosen],
+                "actual": actual[chosen],
+                "best": best,
+                "regret": max(0.0, actual[best] - actual[chosen]),
+                "actual_values": actual,
+                "gap_minutes": gap_minutes,
+            })
+            # Settle only after forecasting; these residuals calibrate later decisions.
+            for strategy in calibration_history:
+                model_delta = risk_metrics[strategy]["mean"] - current_values[strategy]
+                realized_delta = actual[strategy] - current_values[strategy]
+                calibration_history[strategy].append((model_delta, realized_delta))
             for alpha in RISK_AVERSION_GRID:
                 alpha_scores = {
                     name: (1.0 - alpha) * metric["mean"] + alpha * metric["p05"]
@@ -343,6 +383,16 @@ def run_backtest(rows, tariff, min_history=WINDOW):
     return {
         "production_parametric_monte_carlo": summarize_backtest(parametric_pairs, "production_independent_lognormal"),
         "independent_empirical_paired_bootstrap": summarize_backtest(empirical_pairs, "historical_paired_bootstrap"),
+        "walk_forward_shrunk_forecast": summarize_backtest(calibrated_pairs, "prior_error_calibrated_shrinkage"),
+        "forecast_calibration": {
+            "method": "bounded ridge-shrunk correction to persistence baseline, fitted only on earlier settled one-step forecasts",
+            "minimum_prior_pairs_before_nonzero_correction": 24,
+            "mean_correction_weight_by_strategy": {
+                name: round(calibration_weight_sums[name] / calibration_weight_counts[name], 6)
+                if calibration_weight_counts[name] else 0.0
+                for name in calibration_history
+            },
+        },
         "risk_aversion_sensitivity": {
             "purpose": "diagnostic only; do not auto-change production risk aversion from this same holdout",
             "current_production_alpha": RISK_AVERSION,
