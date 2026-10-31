@@ -82,7 +82,7 @@ class EconomicValidationTests(unittest.TestCase):
                "gpu_util": 0.7, "gpu_fee": 0.15}
         # 1 PH/s = 1,000 TH/s = 20 kW at 20 J/TH; 1 kW is 0.05 PH/s.
         gross_eur_per_kwh = (40 / 1.1) / (20 * 24)
-        expected = gross_eur_per_kwh * 0.98 - 0.25
+        expected = 0.98 * (gross_eur_per_kwh * 0.98 - 0.25)
         actual = MODULE.economics(row, 0.25)["BTC Mining"]
         self.assertAlmostEqual(actual, expected, places=12)
         self.assertLess(actual, 0.0)
@@ -99,7 +99,7 @@ class EconomicValidationTests(unittest.TestCase):
         row = {"btc": 40, "gpu": 1.1, "fx": 1.1, "gpu_power": 0.35,
                "gpu_util": 0.7, "gpu_fee": 0.15}
         revenue = (40 / 1.1) / (20 * 24) * 0.98
-        expected = round(max(0.0, revenue - 0.01) * 3.5 * 8760 * 4, 2)
+        expected = round(max(0.0, revenue - 0.01) * 0.98 * 3.5 * 8760 * 4, 2)
         actual = MODULE.capex_hurdles(row, 0.01)["btc_capex_break_even_eur_at_4y_no_maintenance"]
         self.assertEqual(actual, expected)
 
