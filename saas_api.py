@@ -742,6 +742,35 @@ def install(app):
                 "market":{"btc_hashprice_usd_ph_day":x.btc_hashprice_usd_ph_day,"eur_usd":x.eur_usd,"gpu_hourly_usd":x.gpu_hourly_usd,"gpu_power_kw":x.gpu_power_kw,"gpu_utilization":x.gpu_utilization,"gpu_platform_fee":x.gpu_platform_fee,"btc_uptime":btc_uptime,"gpu_uptime":gpu_uptime,"pool_fee":x.pool_fee},
                 "mode":"recommendation_only","hardware_write":False}
 
+    class CashflowEvidenceIn(BaseModel):
+        decision_id: str
+        period_start: str
+        period_end: str
+        energy_kwh: float
+        energy_cost_total_eur: float
+        realized_revenue_eur: float
+        other_operating_costs_eur: float = 0.0
+        energy_meter_reference: str
+        revenue_statement_reference: str
+        source_type: str
+        uptime: float | None = None
+        utilization: float | None = None
+        notes: str = ""
+
+    def _ensure_cashflow_evidence_table(c):
+        c.execute("""CREATE TABLE IF NOT EXISTS cashflow_evidence (
+            id TEXT PRIMARY KEY, farm_id TEXT NOT NULL, decision_id TEXT NOT NULL,
+            submitted_at REAL NOT NULL, period_start TEXT NOT NULL, period_end TEXT NOT NULL,
+            energy_kwh REAL NOT NULL, energy_cost_total_eur REAL NOT NULL,
+            realized_revenue_eur REAL NOT NULL, other_operating_costs_eur REAL NOT NULL,
+            realized_net_eur_kwh REAL NOT NULL, energy_meter_reference TEXT NOT NULL,
+            revenue_statement_reference TEXT NOT NULL, source_type TEXT NOT NULL,
+            uptime REAL, utilization REAL, notes TEXT NOT NULL,
+            evidence_status TEXT NOT NULL DEFAULT 'pending_operator_review'
+        )""")
+        try: c.commit()
+        except Exception: pass
+
     class ScenarioIn(BaseModel):
         energy_kwh: float=100
         energy_cost_eur_kwh: float=0.05
@@ -1677,6 +1706,89 @@ def install(app):
         try: c.commit()
         except Exception: pass
         return {"decision_id":did,"chosen":chosen,"predicted_value_eur_kwh":round(vals[chosen],6),"confidence":0.80,"status":"open"}
+
+    @app.post("/api/v1/farms/{farm_id}/cashflow-evidence")
+    def submit_cashflow_evidence(farm_id:str,x:CashflowEvidenceIn,authorization:str|None=Header(default=None)):
+        """Store operator-submitted evidence without silently training or validating the model."""
+        uid=user(authorization); c=init_db()
+        if not c.execute("SELECT 1 FROM synpora_saas_farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone():
+            raise HTTPException(404,"Farm not found")
+        _ensure_learning_tables(c); _ensure_cashflow_evidence_table(c)
+        decision=c.execute("SELECT id,chosen,status FROM decision_ledger WHERE id=? AND farm_id=?",
+                           (x.decision_id,farm_id)).fetchone()
+        if not decision:
+            raise HTTPException(404,"Decision not found for this farm")
+        if str(decision[2]) != "open":
+            raise HTTPException(409,"Only open paper-trading decisions can receive cashflow evidence")
+        import math
+        numeric=(x.energy_kwh,x.energy_cost_total_eur,x.realized_revenue_eur,x.other_operating_costs_eur)
+        if any(not math.isfinite(float(v)) for v in numeric):
+            raise HTTPException(422,"Cashflow amounts must be finite")
+        if x.energy_kwh <= 0 or x.energy_kwh > 1e9:
+            raise HTTPException(422,"energy_kwh must be greater than zero and within supported range")
+        if abs(x.energy_cost_total_eur)>1e9 or x.realized_revenue_eur<0 or x.realized_revenue_eur>1e9:
+            raise HTTPException(422,"Energy cost or revenue is outside the supported range")
+        if x.other_operating_costs_eur<0 or x.other_operating_costs_eur>1e9:
+            raise HTTPException(422,"other_operating_costs_eur must be between zero and 1 billion")
+        allowed_sources={"utility_invoice_and_meter","gpu_payout_and_meter","pool_statement_and_meter","battery_or_grid_statement_and_meter","operator_attestation"}
+        if x.source_type not in allowed_sources:
+            raise HTTPException(422,"Unsupported source_type")
+        for label,value in (("energy_meter_reference",x.energy_meter_reference),
+                            ("revenue_statement_reference",x.revenue_statement_reference)):
+            if not isinstance(value,str) or not 4<=len(value.strip())<=240:
+                raise HTTPException(422,f"{label} must contain a reference between 4 and 240 characters")
+        if len(x.notes)>2000:
+            raise HTTPException(422,"notes must not exceed 2000 characters")
+        for label,value in (("uptime",x.uptime),("utilization",x.utilization)):
+            if value is not None and (not math.isfinite(float(value)) or not 0<=float(value)<=1):
+                raise HTTPException(422,f"{label} must be between zero and one")
+        try:
+            from datetime import datetime, timezone
+            start=datetime.fromisoformat(x.period_start.replace("Z","+00:00"))
+            end=datetime.fromisoformat(x.period_end.replace("Z","+00:00"))
+            if start.tzinfo is None or end.tzinfo is None or end<=start:
+                raise ValueError()
+        except (TypeError,ValueError,OverflowError):
+            raise HTTPException(422,"period_start and period_end must be valid timezone-aware ISO-8601 timestamps with end after start")
+        net=(x.realized_revenue_eur-x.energy_cost_total_eur-x.other_operating_costs_eur)/x.energy_kwh
+        evidence_id=secrets.token_hex(16)
+        c.execute("""INSERT INTO cashflow_evidence
+            (id,farm_id,decision_id,submitted_at,period_start,period_end,energy_kwh,
+             energy_cost_total_eur,realized_revenue_eur,other_operating_costs_eur,
+             realized_net_eur_kwh,energy_meter_reference,revenue_statement_reference,
+             source_type,uptime,utilization,notes,evidence_status)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (evidence_id,farm_id,x.decision_id,time.time(),x.period_start,x.period_end,
+             float(x.energy_kwh),float(x.energy_cost_total_eur),float(x.realized_revenue_eur),
+             float(x.other_operating_costs_eur),net,x.energy_meter_reference.strip(),
+             x.revenue_statement_reference.strip(),x.source_type,x.uptime,x.utilization,
+             x.notes.strip(),"pending_operator_review"))
+        try: c.commit()
+        except Exception: pass
+        return {"evidence_id":evidence_id,"farm_id":farm_id,"decision_id":x.decision_id,
+                "strategy":str(decision[1]),"realized_net_eur_kwh":round(net,6),
+                "evidence_status":"pending_operator_review",
+                "model_learning_updated":False,"decision_ledger_settled":False,
+                "note":"Operator-submitted references are not independently verified. This record is excluded from model learning and investment validation until reviewed."}
+
+    @app.get("/api/v1/farms/{farm_id}/cashflow-evidence")
+    def list_cashflow_evidence(farm_id:str,authorization:str|None=Header(default=None)):
+        uid=user(authorization); c=init_db()
+        if not c.execute("SELECT 1 FROM synpora_saas_farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone():
+            raise HTTPException(404,"Farm not found")
+        _ensure_cashflow_evidence_table(c)
+        rows=c.execute("""SELECT id,decision_id,submitted_at,period_start,period_end,energy_kwh,
+            energy_cost_total_eur,realized_revenue_eur,other_operating_costs_eur,
+            realized_net_eur_kwh,source_type,evidence_status
+            FROM cashflow_evidence WHERE farm_id=? ORDER BY submitted_at DESC LIMIT 500""",(farm_id,)).fetchall()
+        pending=sum(1 for row in rows if str(row[11])=="pending_operator_review")
+        return {"farm_id":farm_id,"records":len(rows),"pending_operator_review":pending,
+                "evidence":[{"evidence_id":row[0],"decision_id":row[1],"submitted_at":row[2],
+                    "period_start":row[3],"period_end":row[4],"energy_kwh":row[5],
+                    "energy_cost_total_eur":row[6],"realized_revenue_eur":row[7],
+                    "other_operating_costs_eur":row[8],"realized_net_eur_kwh":round(float(row[9]),6),
+                    "source_type":row[10],"evidence_status":row[11]} for row in rows],
+                "model_learning_updated":False,"investment_validation":False}
 
     @app.post("/api/v1/market/snapshot")
     def market_snapshot(x_market_token:str|None=Header(default=None,alias="X-SYNPORA-MARKET-TOKEN")):
