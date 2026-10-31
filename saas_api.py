@@ -2421,7 +2421,7 @@ def install(app):
         if not c.execute("SELECT 1 FROM synpora_saas_farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone():
             raise HTTPException(404,"Farm not found")
         _ensure_learning_tables(c)
-        rows=c.execute("SELECT chosen,predicted_value,confidence,status,actual_value,actual_best_value,regret_eur_kwh,ts,settled_at FROM decision_ledger WHERE farm_id=? ORDER BY ts DESC LIMIT 500",(farm_id,)).fetchall()
+        rows=c.execute("SELECT chosen,predicted_value,confidence,status,actual_value,actual_best_value,regret_eur_kwh,ts,settled_at,id FROM decision_ledger WHERE farm_id=? ORDER BY ts DESC LIMIT 500",(farm_id,)).fetchall()
         settled=[r for r in rows if r[3]=="settled" and r[4] is not None]
         open_rows=[r for r in rows if r[3]=="open"]
         now=time.time(); by_strategy={}
@@ -2443,7 +2443,7 @@ def install(app):
                 "status":r[3],"actual_value_eur_kwh":float(r[4]) if r[4] is not None else None,
                 "actual_best_value_eur_kwh":float(r[5]) if r[5] is not None else None,
                 "regret_eur_kwh":float(r[6]) if r[6] is not None else None,"timestamp":float(r[7]),
-                "settled_at":float(r[8]) if r[8] is not None else None} for r in rows[:50]],
+                "settled_at":float(r[8]) if r[8] is not None else None,"decision_id":str(r[9])} for r in rows[:50]],
             "recommendation_only":True,"hardware_write":False,
             "warnings":["This endpoint reports recommendations only; it does not execute trades or control hardware.",
                 *(["Fewer than 24 settled decisions are available; performance conclusions are premature."] if len(settled)<24 else [])]}
