@@ -45,13 +45,18 @@ jobs:
           gates = {}
           for name, result in report.get("results", {}).items():
               backtest = result["empirical_risk_aware_walk_forward"]
-              gate = dict(backtest["forecast_quality_gate"])
-              gate["actual_pairs"] = backtest.get("walk_forward_shrunk_forecast", {}).get("pairs", 0)
-              horizon_gate = backtest.get("production_corrected_horizon_validation", {}).get("release_gate", {})
-              gate["horizon_release_status"] = horizon_gate.get("status", "missing")
-              gate["ineligible_horizons_hours"] = horizon_gate.get("ineligible_horizons_hours", [1, 6, 24, 72])
-              if gate.get("status") == "pass" and gate["horizon_release_status"] != "pass":
-                  gate["status"] = "blocked"
+              legacy_gate = dict(backtest.get("forecast_quality_gate", {}))
+              validation = backtest.get("production_corrected_horizon_validation", {})
+              horizon_gate = validation.get("release_gate", {})
+              one_hour = validation.get("horizons", {}).get("1", {})
+              gate = {
+                  "status": "pass" if horizon_gate.get("status") == "pass" else "blocked",
+                  "actual_pairs": one_hour.get("pairs", 0),
+                  "observed_mae_skill_vs_persistence": one_hour.get("mae_skill_vs_persistence"),
+                  "horizon_release_status": horizon_gate.get("status", "missing"),
+                  "ineligible_horizons_hours": horizon_gate.get("ineligible_horizons_hours", [1, 6, 24, 72]),
+                  "legacy_single_step_diagnostic": legacy_gate.get("status", "unknown"),
+              }
               gates[name] = gate
           blocked = {
               name: gate for name, gate in gates.items()
@@ -63,20 +68,20 @@ jobs:
           lines = [
               "# SYNPORA empirical economic validation",
               "",
-              f"- Forecast quality gate: **{'PASS' if not blocked else 'BLOCKED'}**",
+              f"- Production horizon release gate: **{'PASS' if not blocked else 'BLOCKED'}**",
               f"- Out-of-sample minimum pairs: 100",
               f"- Required MAE skill over persistence: 5%",
               f"- Required forecast horizons: 1h, 6h, 24h and 72h must all pass independently",
               f"- Investment validation: **{investment.get('status', 'unknown')}**",
               "",
-              "| Tariff scenario | Gate | Pairs | MAE skill vs persistence |",
-              "|---|---:|---:|---:|",
+              "| Tariff scenario | Horizon gate | 1h pairs | 1h MAE skill | Legacy diagnostic |",
+              "|---|---:|---:|---:|---:|",
           ]
           for name, gate in gates.items():
               skill = gate.get("observed_mae_skill_vs_persistence")
               skill_text = "n/a" if skill is None else f"{skill:.3%}"
               lines.append(
-                  f"| {name} | {gate.get('status')} | {gate.get('actual_pairs')} | {skill_text} |"
+                  f"| {name} | {gate.get('status')} | {gate.get('actual_pairs')} | {skill_text} | {gate.get('legacy_single_step_diagnostic')} |"
               )
           corrected = report.get("results", {})
           lines += [
