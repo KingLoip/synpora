@@ -2087,35 +2087,66 @@ def install(app):
         return {name:(1.0 if name==best else 0.0)
                 for name in ("recent_mean","last_value","trend")}
 
+    def _adaptive_horizon_weights(values, sample_steps):
+        import math
+        # Select a model using only historical outcomes at this same forecast
+        # horizon. A one-step winner is not assumed to be a six- or 24-hour winner.
+        if sample_steps < 1 or len(values) < sample_steps + 32:
+            return {"recent_mean":0.0,"last_value":1.0,"trend":0.0}
+        errors={"recent_mean":[],"last_value":[],"trend":[]}
+        for origin in range(8,len(values)-sample_steps):
+            history=values[max(0,origin-48):origin]
+            mean=sum(history)/len(history)
+            last=history[-1]
+            slope=(history[-1]-history[0])/(len(history)-1) if len(history)>1 else 0.0
+            damped_steps=min(12.0,float(sample_steps))*math.exp(
+                -max(0.0,float(sample_steps)-12.0)/12.0)
+            predictions={"recent_mean":mean,"last_value":last,
+                         "trend":last+slope*damped_steps}
+            actual=values[origin+sample_steps]
+            for name,prediction in predictions.items():
+                errors[name].append(abs(actual-prediction))
+        maes={name:sum(series)/len(series) for name,series in errors.items() if len(series)>=24}
+        if "last_value" not in maes:
+            return {"recent_mean":0.0,"last_value":1.0,"trend":0.0}
+        best=min(maes,key=maes.get)
+        if best=="last_value" or maes[best]>=maes["last_value"]*0.95:
+            best="last_value"
+        return {name:(1.0 if name==best else 0.0)
+                for name in ("recent_mean","last_value","trend")}
+
     def _ensemble_forecast(c, series_key, horizon, fallback):
         import math
-        weights=_adaptive_model_weights(c,series_key)
-        rows=_eligible_market_rows(c,48,include_ts=True)
+        rows=_eligible_market_rows(c,500,include_ts=True)
         idx={"btc":1,"gpu":2,"energy":3}[series_key]
-        y=[float(r[idx]) for r in rows if r[idx] is not None]
-        if not y: return [fallback]*horizon,weights
-        timestamps=[float(r[0]) for r in rows if r[idx] is not None]
+        valid=[r for r in rows if r[idx] is not None]
+        y=[float(r[idx]) for r in valid]
+        if not y: return [fallback]*horizon,{"method":"unverified_fallback"}
+        timestamps=[float(r[0]) for r in valid]
         gaps=[timestamps[i]-timestamps[i-1] for i in range(1,len(timestamps))
               if timestamps[i]>timestamps[i-1]]
         interval_seconds=sorted(gaps)[len(gaps)//2] if gaps else 300.0
         if interval_seconds<=0:
             interval_seconds=300.0
-        mean=sum(y)/len(y)
-        last=y[-1]
-        slope=(y[-1]-y[0])/(len(y)-1) if len(y)>1 else 0.0
+        history=y[-48:]
+        mean=sum(history)/len(history)
+        last=history[-1]
+        slope=(history[-1]-history[0])/(len(history)-1) if len(history)>1 else 0.0
         out=[]
+        horizon_weights={}
         for h in range(1,horizon+1):
-            # Market snapshots arrive every few minutes, while API horizons are
-            # expressed in hours. Convert units, then damp the short-term trend
-            # back toward persistence over longer horizons to avoid extrapolating
-            # a five-minute slope linearly for up to 72 hours.
-            sample_steps=(h*3600.0)/interval_seconds
-            damped_steps=min(12.0,sample_steps)*math.exp(-max(0.0,sample_steps-12.0)/12.0)
+            sample_steps=max(1,round((h*3600.0)/interval_seconds))
+            weights=_adaptive_horizon_weights(y,sample_steps)
+            damped_steps=min(12.0,float(sample_steps))*math.exp(
+                -max(0.0,float(sample_steps)-12.0)/12.0)
             trend=last+slope*damped_steps
             pred=(weights["recent_mean"]*mean + weights["last_value"]*last +
                   weights["trend"]*trend)
             out.append(max(0.0,pred))
-        return out,weights
+            horizon_weights[str(h)] = weights
+        return out,{"method":"horizon_specific_rolling_origin",
+                    "sample_interval_seconds":round(interval_seconds,2),
+                    "weights_by_horizon":horizon_weights}
 
     def _model_select(c):
         rows=_eligible_market_rows(c,168,include_ts=True)
