@@ -149,6 +149,17 @@ class EconomicValidationTests(unittest.TestCase):
 
 
 
+
+    def test_corrected_forecast_guard_falls_back_to_persistence_without_five_percent_gain(self):
+        flat = [10.0] * 60
+        weights = MODULE.corrected_forecast_weights(flat)
+        self.assertEqual(weights, {"recent_mean": 0.0, "last_value": 1.0, "trend": 0.0})
+
+    def test_corrected_forecast_guard_selects_trend_only_when_holdout_proves_gain(self):
+        rising = [10.0 + i * 0.1 for i in range(80)]
+        weights = MODULE.corrected_forecast_weights(rising)
+        self.assertEqual(weights, {"recent_mean": 0.0, "last_value": 0.0, "trend": 1.0})
+
     def test_corrected_horizon_validation_covers_api_forecast_horizons(self):
         rows = []
         for i in range(500):
