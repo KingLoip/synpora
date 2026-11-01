@@ -2776,7 +2776,7 @@ def install(app):
                 future_gpu_gross=(float(gpu_fc[j])/eur_usd)*gpu_util*(1-gpu_fee)/(.35+max(0.0,x.gpu_facility_overhead_kw)+max(0.0,x.facility_overhead_kw))
                 future=max(future,max(0.0,future_btc_gross-float(energy_fc[j])),
                            max(0.0,future_gpu_gross-float(energy_fc[j])),grid)
-            if not math.isfinite(future):
+            if future == -float("inf"):
                 future=current_best
             round_trip=ce*de
             degradation=max(0.0,float(x.battery_degradation_eur_kwh))
