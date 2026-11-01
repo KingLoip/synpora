@@ -392,6 +392,9 @@ def _block_bootstrap_skill_ci(model_errors, baseline_errors, seed, block_length=
 def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 24, 72)):
     """Validate the corrected production forecast at the API's actual hour horizons."""
     results = {}
+    all_gaps = [rows[j]["ts"] - rows[j - 1]["ts"] for j in range(1, len(rows))
+                if rows[j]["ts"] > rows[j - 1]["ts"]]
+    median_interval_seconds = statistics.median(all_gaps) if all_gaps else 3600.0
     for horizon in horizons_hours:
         strategy_errors = {"BTC Mining": [], "AI Compute": []}
         baseline_errors = {"BTC Mining": [], "AI Compute": []}
