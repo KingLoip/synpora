@@ -160,6 +160,11 @@ class EconomicValidationTests(unittest.TestCase):
         weights = MODULE.corrected_forecast_weights(rising)
         self.assertEqual(weights, {"recent_mean": 0.0, "last_value": 0.0, "trend": 1.0})
 
+    def test_long_horizon_uses_persistence_when_history_is_too_short(self):
+        values = [10.0 + i * 0.1 for i in range(80)]
+        weights = MODULE.corrected_forecast_weights(values, sample_steps=120)
+        self.assertEqual(weights, {"recent_mean": 0.0, "last_value": 1.0, "trend": 0.0})
+
     def test_corrected_horizon_validation_covers_api_forecast_horizons(self):
         rows = []
         for i in range(500):
