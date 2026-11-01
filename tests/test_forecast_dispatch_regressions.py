@@ -70,6 +70,12 @@ class DispatchSafetyRegressionTests(unittest.TestCase):
         self.assertIn('"ensemble_confidence":conf', source)
         self.assertIn('"pv_profile_method":"flat_allocation_of_user_supplied_horizon_total"', source)
 
+    def test_energy_tariff_is_treated_as_a_user_supplied_constant_not_a_market_forecast(self):
+        source = ast.get_source_segment(SOURCE, find_function("forecast_plan"))
+        self.assertIn('"model":"user_supplied_constant"', source)
+        self.assertIn('"forecasted":False', source)
+        self.assertIn('"energy":1.0', source)
+
     def test_dispatch_requires_fresh_provenance_verified_market_data(self):
         source = ast.get_source_segment(SOURCE, find_function("dispatch_plan"))
         self.assertIn('_market_snapshot_freshness(c)', source)
