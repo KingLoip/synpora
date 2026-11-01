@@ -305,6 +305,34 @@ def production_adaptive_weights(values):
     return {name: value / total for name, value in inverse.items()}
 
 
+def production_guarded_adaptive_weights(values, min_improvement=0.05):
+    """Use the adaptive blend only if its past-only holdout beats persistence by 5%."""
+    weights = production_adaptive_weights(values)
+    if len(values) < 8:
+        return {"recent_mean": 0.0, "last_value": 1.0, "trend": 0.0}
+    cut = min(48, len(values) - 4)
+    train = values[:-cut]
+    test = values[-cut:]
+    mean = statistics.fmean(train)
+    last = train[-1]
+    slope = (train[-1] - train[0]) / (len(train) - 1) if len(train) > 1 else 0.0
+    predictions = {
+        "recent_mean": [mean] * len(test),
+        "last_value": [last] * len(test),
+        "trend": [last + slope * (i + 1) for i in range(len(test))],
+    }
+    ensemble_mae = statistics.fmean(
+        abs(actual - sum(weights[name] * predictions[name][i] for name in predictions))
+        for i, actual in enumerate(test)
+    )
+    persistence_mae = statistics.fmean(
+        abs(actual - predictions["last_value"][i]) for i, actual in enumerate(test)
+    )
+    if ensemble_mae > persistence_mae * (1.0 - min_improvement):
+        return {"recent_mean": 0.0, "last_value": 1.0, "trend": 0.0}
+    return weights
+
+
 def production_select_model(values):
     """Mirror saas_api._model_select: choose the lowest-MAE model on a past-only holdout."""
     if len(values) < 8:
@@ -341,6 +369,7 @@ def production_adaptive_forecast(training_values, forecast_values):
              if len(forecast_values) > 1 else 0.0)
     trend = last + slope
     weights = production_adaptive_weights(training_values)
+    guarded_weights = production_guarded_adaptive_weights(training_values)
     selected_model_name = production_select_model(training_values)
     components = {"recent_mean": mean, "last_value": last, "trend": trend}
     return {
@@ -352,9 +381,15 @@ def production_adaptive_forecast(training_values, forecast_values):
             + weights["last_value"] * last
             + weights["trend"] * trend
         ),
+        "guarded_ensemble": (
+            guarded_weights["recent_mean"] * mean
+            + guarded_weights["last_value"] * last
+            + guarded_weights["trend"] * trend
+        ),
         "selected_model": components[selected_model_name],
         "selected_model_name": selected_model_name,
         "weights": weights,
+        "guarded_weights": guarded_weights,
     }
 
 
@@ -390,7 +425,7 @@ def production_ensemble_forecast_validation(rows, tariff, max_history=168):
     tariff. The live API remains site-learning-degraded until its own eligibility
     conditions are met; this report does not silently change that production gate.
     """
-    models = ("recent_mean", "trend", "adaptive_ensemble", "selected_model")
+    models = ("recent_mean", "trend", "adaptive_ensemble", "guarded_ensemble", "selected_model")
     strategies = ("BTC Mining", "AI Compute")
     errors = {model: {strategy: [] for strategy in strategies} for model in models}
     baseline_errors = {strategy: [] for strategy in strategies}
