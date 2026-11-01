@@ -325,7 +325,12 @@ def production_select_model(values):
                                for actual, predicted in zip(test, forecast))
         for name, forecast in predictions.items()
     }
-    return min(scores, key=scores.get)
+    best = min(scores, key=scores.get)
+    # Do not switch away from persistence for a marginal holdout win; require
+    # at least 5% lower MAE on past-only validation before taking model risk.
+    if best != "last_value" and scores[best] <= scores["last_value"] * 0.95:
+        return best
+    return "last_value"
 
 
 def production_adaptive_forecast(training_values, forecast_values):
