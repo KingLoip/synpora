@@ -43,14 +43,14 @@ class DispatchSafetyRegressionTests(unittest.TestCase):
     def test_forecast_plan_marks_input_fallback_as_unverified(self):
         source = ast.get_source_segment(SOURCE, find_function("forecast_plan"))
         self.assertIn('_market_snapshot_freshness(c)', source)
-        self.assertIn('_eligible_market_rows(c,1)', source)
+        self.assertIn('_eligible_market_rows(c,8)', source)
         self.assertIn('forecast_method="user_input_fallback_unverified"', source)
         self.assertIn('"ensemble_confidence":conf', source)
 
     def test_dispatch_requires_fresh_provenance_verified_market_data(self):
         source = ast.get_source_segment(SOURCE, find_function("dispatch_plan"))
         self.assertIn('_market_snapshot_freshness(c)', source)
-        self.assertIn('_eligible_market_rows(c,1)', source)
+        self.assertIn('_eligible_market_rows(c,8)', source)
         self.assertIn('forecast_source="input_fallback_unverified"', source)
         self.assertIn('else "degraded"', source)
 
@@ -61,10 +61,11 @@ class DispatchSafetyRegressionTests(unittest.TestCase):
 
     def test_battery_charges_only_when_future_net_value_covers_losses(self):
         source = ast.get_source_segment(SOURCE, find_function("dispatch_plan"))
-        self.assertIn("future*round_trip-degradation>current_best", source)
+        self.assertIn("latest_eligible and future*round_trip-degradation>current_best", source)
 
     def test_battery_discharges_only_when_current_beats_future(self):
         source = ast.get_source_segment(SOURCE, find_function("dispatch_plan"))
+        self.assertIn("latest_eligible and charge<=1e-9", source)
         self.assertIn("current_best>future+degradation", source)
         self.assertNotIn("future>max(btc,gpu,grid)", source)
 
