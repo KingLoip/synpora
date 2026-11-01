@@ -364,6 +364,8 @@ def corrected_forecast_weights(values, sample_steps=1, interval_seconds=300.0):
 
 def corrected_forecast_value(values, weights, horizon_hours, interval_seconds):
     """Forecast with the same robust candidate features used in production."""
+    interval_seconds = interval_seconds if interval_seconds > 0 else 300.0
+    sample_steps = max(1, round(horizon_hours * 3600.0 / interval_seconds))
     history = values[-168:]
     recent = history[-48:]
     mean = statistics.fmean(recent)
@@ -383,9 +385,8 @@ def corrected_forecast_value(values, weights, horizon_hours, interval_seconds):
             value = alpha * item + (1.0 - alpha) * value
         return value
     slope = (recent[-1] - recent[0]) / (len(recent) - 1) if len(recent) > 1 else 0.0
-    interval_seconds = interval_seconds if interval_seconds > 0 else 300.0
-    sample_steps = horizon_hours * 3600.0 / interval_seconds
-    damped_steps = min(12.0, sample_steps) * math.exp(-max(0.0, sample_steps - 12.0) / 12.0)
+    damped_steps = min(12.0, float(sample_steps)) * math.exp(
+        -max(0.0, float(sample_steps) - 12.0) / 12.0)
     predictions = {
         "recent_mean": mean, "last_value": last, "trend": last + slope * damped_steps,
         "mean_24": mean24, "median_24": median24, "seasonal_24h": seasonal24,
