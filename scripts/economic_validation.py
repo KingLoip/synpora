@@ -14,7 +14,7 @@ import sys
 import urllib.request
 from datetime import datetime, timezone
 
-MARKET_URL = "https://synpora-production.up.railway.app/api/v1/market/history?limit=500"
+MARKET_URL = "https://synpora-production.up.railway.app/api/v1/market/history?limit=2000&compact=true"
 TARIFFS = {
     # Current public tariff page on 2026-10-30: supplier energy component only.
     # The first 1,500 kWh rate is conditional on the 2026 household discount.
@@ -285,7 +285,7 @@ def corrected_forecast_weights(values, sample_steps=1):
     if sample_steps < 1 or len(values) < sample_steps + 32:
         return {"recent_mean": 0.0, "last_value": 1.0, "trend": 0.0}
     errors = {"recent_mean": [], "last_value": [], "trend": []}
-    for origin in range(8, len(values) - sample_steps):
+    for origin in range(max(8, len(values) - sample_steps - 200), len(values) - sample_steps):
         history = values[max(0, origin - 48):origin]
         mean = statistics.fmean(history)
         last = history[-1]
@@ -356,7 +356,7 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
         combined_errors = []
         combined_baseline_errors = []
         skipped = 0
-        for i in range(23, len(rows) - 1):
+        origin_stride = max(1, len(rows) // 500)\n        for i in range(23, len(rows) - 1, origin_stride):
             decision = rows[i]
             expected_seconds = horizon * 3600.0
             target_index = min(
@@ -368,7 +368,7 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
             if abs(actual_gap - expected_seconds) > max(300.0, expected_seconds * 0.10):
                 skipped += 1
                 continue
-            history_rows = rows[max(0, i - 499):i + 1]
+            history_rows = rows[max(0, i - 1999):i + 1]
             recent_rows = history_rows[-48:]
             gaps = [recent_rows[j]["ts"] - recent_rows[j - 1]["ts"]
                     for j in range(1, len(recent_rows))
