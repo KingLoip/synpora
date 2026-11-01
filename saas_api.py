@@ -2082,7 +2082,7 @@ def install(app):
         best=min(maes,key=maes.get)
         # Never take model risk unless a candidate beats persistence by at least
         # 5% on rolling-origin validation. Otherwise use the no-change baseline.
-        if best=="last_value" or maes[best]>maes["last_value"]*0.95:
+        if best=="last_value" or maes[best]>=maes["last_value"]*0.95:
             best="last_value"
         return {name:(1.0 if name==best else 0.0)
                 for name in ("recent_mean","last_value","trend")}
@@ -2137,7 +2137,7 @@ def install(app):
                 result[name]={"model":"last_value","mae":None,"samples":len(y),"ready":False}
                 continue
             best=min(scores,key=scores.get)
-            if best!="last_value" and scores[best]>scores.get("last_value",float("inf"))*0.95:
+            if best!="last_value" and scores[best]>=scores.get("last_value",float("inf"))*0.95:
                 best="last_value"
             result[name]={"model":best,"mae":round(scores[best],8),
                           "scores":{k:round(v,8) for k,v in scores.items()},
