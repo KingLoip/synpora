@@ -2085,6 +2085,7 @@ def install(app):
                 for name in ("recent_mean","last_value","trend")}
 
     def _ensemble_forecast(c, series_key, horizon, fallback):
+        import math
         weights=_adaptive_model_weights(c,series_key)
         rows=_eligible_market_rows(c,48,include_ts=True)
         idx={"btc":1,"gpu":2,"energy":3}[series_key]
