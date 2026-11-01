@@ -2148,12 +2148,19 @@ def install(app):
             actual=values[origin+sample_steps]
             for name,prediction in predictions.items():
                 errors[name].append(abs(actual-prediction))
-        maes={name:sum(series)/len(series) for name,series in errors.items() if len(series)>=24}
+        split=int(len(errors["last_value"])*0.75)
+        maes={name:sum(series[:split])/len(series[:split])
+              for name,series in errors.items() if split>=24}
         if "last_value" not in maes:
             return fallback
         best=min(maes,key=maes.get)
-        if best=="last_value" or maes[best]>=maes["last_value"]*0.95:
-            best="last_value"
+        if best!="last_value":
+            validation_baseline=statistics.fmean(errors["last_value"][split:])
+            validation_model=statistics.fmean(errors[best][split:])
+            validation_skill=(1.0-validation_model/validation_baseline
+                              if validation_baseline>1e-12 else None)
+            if validation_skill is None or validation_skill<0.05:
+                best="last_value"
         return {name:(1.0 if name==best else 0.0) for name in names}
 
     def _ensemble_forecast(c, series_key, horizon, fallback):
