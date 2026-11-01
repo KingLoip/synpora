@@ -52,6 +52,8 @@ jobs:
               name: gate for name, gate in gates.items()
               if gate.get("status") != "pass"
           }
+          if not gates:
+              blocked["missing_economic_scenarios"] = {"status": "missing"}
           investment = report.get("investment_readiness", {})
           lines = [
               "# SYNPORA empirical economic validation",
