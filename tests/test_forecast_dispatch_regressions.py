@@ -75,6 +75,15 @@ class DispatchSafetyRegressionTests(unittest.TestCase):
         self.assertIn('"ensemble_confidence":conf', source)
         self.assertIn('"pv_profile_method":"flat_allocation_of_user_supplied_horizon_total"', source)
 
+    def test_forecast_confidence_is_horizon_specific_and_not_called_probability(self):
+        source = ast.get_source_segment(SOURCE, find_function("_ensemble_confidence"))
+        self.assertIn("horizon_hours=1", source)
+        self.assertIn("sample_steps=max(1,round((float(horizon_hours)*3600.0)/interval_seconds))", source)
+        self.assertIn("first_origin=len(y)-sample_steps-24", source)
+        plan = ast.get_source_segment(SOURCE, find_function("forecast_plan"))
+        self.assertIn('_ensemble_confidence(c,"btc",hours)', plan)
+        self.assertIn('"confidence_is_probability"]=False', plan)
+
     def test_energy_tariff_is_treated_as_a_user_supplied_constant_not_a_market_forecast(self):
         source = ast.get_source_segment(SOURCE, find_function("forecast_plan"))
         self.assertIn('"model":"user_supplied_constant"', source)
