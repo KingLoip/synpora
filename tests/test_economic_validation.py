@@ -148,6 +148,26 @@ class EconomicValidationTests(unittest.TestCase):
             self.assertFalse(case["realized_cashflow_validated"])
 
 
+
+    def test_corrected_horizon_validation_covers_api_forecast_horizons(self):
+        rows = []
+        for i in range(500):
+            rows.append({
+                "ts": i * 300,
+                "btc": 35.0 + 0.002 * i + 0.15 * math.sin(i / 9.0),
+                "gpu": 1.0 + 0.0008 * i + 0.02 * math.sin(i / 13.0),
+                "fx": 1.10 + 0.00001 * i,
+                "gpu_power": 0.35, "gpu_util": 0.70, "gpu_fee": 0.15,
+            })
+        result = MODULE.production_corrected_horizon_validation(rows, 0.20)
+        self.assertEqual(set(result["horizons"]), {"1", "6", "24"})
+        self.assertGreaterEqual(result["horizons"]["1"]["pairs"], 100)
+        self.assertGreaterEqual(result["horizons"]["6"]["pairs"], 100)
+        self.assertGreaterEqual(result["horizons"]["24"]["pairs"], 100)
+        for horizon in result["horizons"].values():
+            self.assertIn("mae_skill_vs_persistence", horizon)
+            self.assertIn("mae_skill_confidence_interval_95", horizon)
+
     def test_forecast_quality_gate_blocks_persistence_only_calibration(self):
         rows = []
         for i in range(38):
