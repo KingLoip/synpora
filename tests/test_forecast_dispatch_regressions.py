@@ -26,6 +26,8 @@ class ChronologicalForecastRegressionTests(unittest.TestCase):
         self.assertIn("first=max(8,len(y)-48)", source)
         self.assertIn('"last_value":last', source)
         self.assertIn("len(y)<24", source)
+        self.assertIn('maes[best]>maes["last_value"]*0.95', source)
+        self.assertIn('best="last_value"', source)
 
     def test_model_selection_uses_the_same_rolling_origin_window(self):
         source = ast.get_source_segment(SOURCE, find_function("_model_select"))
@@ -36,7 +38,7 @@ class ChronologicalForecastRegressionTests(unittest.TestCase):
         source = ast.get_source_segment(SOURCE, find_function("_ensemble_forecast"))
         self.assertIn("last=y[-1]", source)
         self.assertIn("sample_steps=(h*3600.0)/interval_seconds", source)
-        self.assertIn("math.exp(-max(0.0,sample_steps-12.0)/48.0)", source)
+        self.assertIn("math.exp(-max(0.0,sample_steps-12.0)/12.0)", source)
         self.assertIn("max(0.0,pred)", source)
 
 
