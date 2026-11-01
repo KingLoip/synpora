@@ -47,6 +47,11 @@ jobs:
               backtest = result["empirical_risk_aware_walk_forward"]
               gate = dict(backtest["forecast_quality_gate"])
               gate["actual_pairs"] = backtest.get("walk_forward_shrunk_forecast", {}).get("pairs", 0)
+              horizon_gate = backtest.get("production_corrected_horizon_validation", {}).get("release_gate", {})
+              gate["horizon_release_status"] = horizon_gate.get("status", "missing")
+              gate["ineligible_horizons_hours"] = horizon_gate.get("ineligible_horizons_hours", [1, 6, 24, 72])
+              if gate.get("status") == "pass" and gate["horizon_release_status"] != "pass":
+                  gate["status"] = "blocked"
               gates[name] = gate
           blocked = {
               name: gate for name, gate in gates.items()
@@ -61,6 +66,7 @@ jobs:
               f"- Forecast quality gate: **{'PASS' if not blocked else 'BLOCKED'}**",
               f"- Out-of-sample minimum pairs: 100",
               f"- Required MAE skill over persistence: 5%",
+              f"- Required forecast horizons: 1h, 6h, 24h and 72h must all pass independently",
               f"- Investment validation: **{investment.get('status', 'unknown')}**",
               "",
               "| Tariff scenario | Gate | Pairs | MAE skill vs persistence |",
