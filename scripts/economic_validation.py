@@ -288,7 +288,7 @@ def corrected_forecast_weights(values, sample_steps=1):
     if sample_steps < 1 or len(values) < sample_steps + 32:
         return fallback
     errors = {name: [] for name in names}
-    for origin in range(max(168, len(values) - sample_steps - 200), len(values) - sample_steps):
+    for origin in range(max(168, len(values) - sample_steps - 100), len(values) - sample_steps):
         history = values[max(0, origin - 168):origin]
         recent = history[-48:]
         last = recent[-1]
@@ -329,7 +329,7 @@ def corrected_forecast_weights(values, sample_steps=1):
         block_length = min(48, max(6, int(sample_steps)))
         ci = _block_bootstrap_skill_ci(
             errors[best], errors["last_value"], SEED + sample_steps,
-            block_length=block_length, replicates=200,
+            block_length=block_length, replicates=50,
         )
         # A candidate must clear a stricter training margin and a positive
         # block-bootstrap lower bound before it is allowed to displace persistence.
@@ -401,7 +401,7 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
         combined_errors = []
         combined_baseline_errors = []
         skipped = 0
-        origin_stride = max(1, len(rows) // 500)
+        origin_stride = max(1, len(rows) // 200)
         for i in range(23, len(rows) - 1, origin_stride):
             decision = rows[i]
             expected_seconds = horizon * 3600.0
