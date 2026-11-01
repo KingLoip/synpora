@@ -20,7 +20,7 @@ permissions:
   actions: read
 
 concurrency:
-  # Keep schedule, manual, upstream-CI, and pull-request checks in separate groups.
+  # Keep schedule, manual, upstream-economic-validation, and pull-request checks separate.
   # A skipped/non-main workflow_run must not cancel an in-progress scheduled live check.
   group: synpora-production-monitor-${{ github.event_name }}
   # Never cancel an in-flight live check when the scheduler emits another event.
