@@ -2152,6 +2152,7 @@ def install(app):
 
     def _ensemble_forecast(c, series_key, horizon, fallback):
         import math
+        import statistics
         rows=_eligible_market_rows(c,2000,include_ts=True,require_site_tariff=False)
         idx={"btc":1,"gpu":2,"energy":3}[series_key]
         valid=[r for r in rows if r[idx] is not None]
