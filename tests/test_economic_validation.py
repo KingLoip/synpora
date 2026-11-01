@@ -179,13 +179,33 @@ class EconomicValidationTests(unittest.TestCase):
                 "gpu_power": 0.35, "gpu_util": 0.70, "gpu_fee": 0.15,
             })
         result = MODULE.production_corrected_horizon_validation(rows, 0.20)
-        self.assertEqual(set(result["horizons"]), {"1", "6", "24"})
+        self.assertEqual(set(result["horizons"]), {"1", "6", "24", "72"})
         self.assertGreaterEqual(result["horizons"]["1"]["pairs"], 100)
         self.assertGreaterEqual(result["horizons"]["6"]["pairs"], 100)
         self.assertGreaterEqual(result["horizons"]["24"]["pairs"], 100)
+        self.assertEqual(result["horizons"]["72"]["pairs"], 0)
+        self.assertFalse(result["release_eligible"])
+        self.assertEqual(result["release_gate"]["ineligible_horizons_hours"], [72])
         for horizon in result["horizons"].values():
             self.assertIn("mae_skill_vs_persistence", horizon)
             self.assertIn("mae_skill_confidence_interval_95", horizon)
+
+    def test_horizon_release_gate_requires_all_advertised_horizons(self):
+        passed = {"release_eligible": True}
+        failed = {"release_eligible": False}
+        gate = MODULE.horizon_release_gate({
+            "1": passed, "6": passed, "24": passed, "72": failed
+        })
+        self.assertEqual(gate["status"], "blocked")
+        self.assertEqual(gate["ineligible_horizons_hours"], [72])
+        complete = MODULE.horizon_release_gate({
+            "1": passed, "6": passed, "24": passed, "72": passed
+        })
+        self.assertEqual(complete["status"], "pass")
+        missing = MODULE.horizon_release_gate({
+            "1": passed, "6": passed, "24": passed
+        })
+        self.assertEqual(missing["ineligible_horizons_hours"], [72])
 
     def test_forecast_quality_gate_blocks_persistence_only_calibration(self):
         rows = []
