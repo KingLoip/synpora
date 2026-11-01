@@ -282,19 +282,35 @@ def summarize_backtest(pairs, label):
 
 def corrected_forecast_weights(values, sample_steps=1):
     """Select a candidate using past-only outcomes at the exact forecast horizon."""
+    names = ("recent_mean", "last_value", "trend", "mean_24", "median_24",
+             "seasonal_24", "seasonal_168", "ewma_02", "ewma_05")
+    fallback = {name: (1.0 if name == "last_value" else 0.0) for name in names}
     if sample_steps < 1 or len(values) < sample_steps + 32:
-        return {"recent_mean": 0.0, "last_value": 1.0, "trend": 0.0}
-    errors = {"recent_mean": [], "last_value": [], "trend": []}
-    for origin in range(max(8, len(values) - sample_steps - 200), len(values) - sample_steps):
-        history = values[max(0, origin - 48):origin]
-        mean = statistics.fmean(history)
-        last = history[-1]
-        slope = (history[-1] - history[0]) / (len(history) - 1) if len(history) > 1 else 0.0
+        return fallback
+    errors = {name: [] for name in names}
+    for origin in range(max(168, len(values) - sample_steps - 200), len(values) - sample_steps):
+        history = values[max(0, origin - 168):origin]
+        recent = history[-48:]
+        last = recent[-1]
+        mean = statistics.fmean(recent)
+        mean24 = statistics.fmean(history[-24:])
+        median24 = statistics.median(history[-24:])
+        seasonal24 = history[-24] if len(history) >= 24 else last
+        seasonal168 = history[-168] if len(history) >= 168 else last
+        def ewma(series, alpha):
+            value = series[0]
+            for item in series[1:]:
+                value = alpha * item + (1.0 - alpha) * value
+            return value
+        slope = (recent[-1] - recent[0]) / (len(recent) - 1) if len(recent) > 1 else 0.0
         damped_steps = min(12.0, float(sample_steps)) * math.exp(
             -max(0.0, float(sample_steps) - 12.0) / 12.0)
         predictions = {
             "recent_mean": mean, "last_value": last,
-            "trend": last + slope * damped_steps,
+            "trend": last + slope * damped_steps, "mean_24": mean24,
+            "median_24": median24, "seasonal_24": seasonal24,
+            "seasonal_168": seasonal168, "ewma_02": ewma(recent, 0.2),
+            "ewma_05": ewma(recent, 0.5),
         }
         actual = values[origin + sample_steps]
         for name, prediction in predictions.items():
@@ -302,26 +318,39 @@ def corrected_forecast_weights(values, sample_steps=1):
     maes = {name: statistics.fmean(series) for name, series in errors.items()
             if len(series) >= 24}
     if "last_value" not in maes:
-        return {"recent_mean": 0.0, "last_value": 1.0, "trend": 0.0}
+        return fallback
     best = min(maes, key=maes.get)
     if best == "last_value" or maes[best] >= maes["last_value"] * 0.95:
         best = "last_value"
-    return {name: (1.0 if name == best else 0.0)
-            for name in ("recent_mean", "last_value", "trend")}
+    return {name: (1.0 if name == best else 0.0) for name in names}
 
 
 def corrected_forecast_value(values, weights, horizon_hours, interval_seconds):
-    """Forecast with production's 48-snapshot features and damped, unit-correct trend."""
-    history = values[-48:]
-    mean = statistics.fmean(history)
-    last = history[-1]
-    slope = (history[-1] - history[0]) / (len(history) - 1) if len(history) > 1 else 0.0
+    """Forecast with the same robust candidate features used in production."""
+    history = values[-168:]
+    recent = history[-48:]
+    mean = statistics.fmean(recent)
+    mean24 = statistics.fmean(history[-24:])
+    median24 = statistics.median(history[-24:])
+    last = recent[-1]
+    seasonal24 = history[-24] if len(history) >= 24 else last
+    seasonal168 = history[-168] if len(history) >= 168 else last
+    def ewma(series, alpha):
+        value = series[0]
+        for item in series[1:]:
+            value = alpha * item + (1.0 - alpha) * value
+        return value
+    slope = (recent[-1] - recent[0]) / (len(recent) - 1) if len(recent) > 1 else 0.0
     interval_seconds = interval_seconds if interval_seconds > 0 else 300.0
     sample_steps = horizon_hours * 3600.0 / interval_seconds
     damped_steps = min(12.0, sample_steps) * math.exp(-max(0.0, sample_steps - 12.0) / 12.0)
-    trend = last + slope * damped_steps
-    return max(0.0, weights["recent_mean"] * mean
-               + weights["last_value"] * last + weights["trend"] * trend)
+    predictions = {
+        "recent_mean": mean, "last_value": last, "trend": last + slope * damped_steps,
+        "mean_24": mean24, "median_24": median24, "seasonal_24": seasonal24,
+        "seasonal_168": seasonal168, "ewma_02": ewma(recent, 0.2),
+        "ewma_05": ewma(recent, 0.5),
+    }
+    return max(0.0, sum(weights[name] * predictions[name] for name in predictions))
 
 
 def _block_bootstrap_skill_ci(model_errors, baseline_errors, seed, block_length=6):
@@ -347,7 +376,7 @@ def _block_bootstrap_skill_ci(model_errors, baseline_errors, seed, block_length=
     }
 
 
-def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 24)):
+def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 24, 72)):
     """Validate the corrected production forecast at the API's actual hour horizons."""
     results = {}
     for horizon in horizons_hours:
