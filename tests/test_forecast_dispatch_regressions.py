@@ -53,6 +53,11 @@ class ChronologicalForecastRegressionTests(unittest.TestCase):
         self.assertIn('"seasonal_24h":seasonal24', source)
         self.assertIn('"seasonal_168h":seasonal168', source)
 
+    def test_horizon_candidate_selection_has_a_separate_holdout(self):
+        source = ast.get_source_segment(SOURCE, find_function("_adaptive_horizon_weights"))
+        self.assertIn("split=int(len(errors[\"last_value\"])*0.75)", source)
+        self.assertIn("validation_skill<0.05", source)
+
     def test_production_horizon_training_includes_the_current_origin(self):
         source = ast.get_source_segment(SOURCE, find_function("_adaptive_horizon_weights"))
         self.assertIn("origin-167):origin+1", source)
