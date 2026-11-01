@@ -391,6 +391,7 @@ def production_ensemble_forecast_validation(rows, tariff, max_history=168):
     baseline_errors = {strategy: [] for strategy in strategies}
     pair_errors = {model: [] for model in models}
     baseline_pair_errors = []
+    selected_model_name_counts = {"btc": {}, "gpu": {}}
     skipped_gaps = 0
     for i in range(7, len(rows) - 1):
         decision = rows[i]
@@ -409,6 +410,9 @@ def production_ensemble_forecast_validation(rows, tariff, max_history=168):
             [r["gpu"] for r in training_history],
             [r["gpu"] for r in forecast_history],
         )
+        for series, forecast in (("btc", btc_forecasts), ("gpu", gpu_forecasts)):
+            selected_name = forecast["selected_model_name"]
+            selected_model_name_counts[series][selected_name] = selected_model_name_counts[series].get(selected_name, 0) + 1
         actual = economics(next_row, tariff)
         baseline = economics(decision, tariff)
         baseline_pair_errors.append(statistics.fmean(
@@ -492,10 +496,7 @@ def production_ensemble_forecast_validation(rows, tariff, max_history=168):
         "models": results,
         "excluded_nonconsecutive_or_long_gap_pairs": skipped_gaps,
         "max_training_history": max_history,
-        "selected_model_name_counts": {
-            "btc": {},
-            "gpu": {},
-        },
+        "selected_model_name_counts": selected_model_name_counts,
         "warning": "Diagnostic global-market replay with constant tariff; not proof of realized profitability or site-specific online-learning eligibility.",
     }
 
