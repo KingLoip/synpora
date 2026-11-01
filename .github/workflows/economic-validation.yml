@@ -77,17 +77,25 @@ jobs:
               "",
               "## Production adaptive-ensemble replay (diagnostic)",
               "",
-              "| Tariff scenario | Candidate model | Pairs | MAE skill vs persistence | Eligible |",
-              "|---|---|---:|---:|---:|",
+              "| Tariff scenario | Candidate model | Pairs | MAE skill | 95% CI low | BTC skill | GPU skill | Eligible |",
+              "|---|---|---:|---:|---:|---:|---:|---:|",
           ]
           for name, gate in gates.items():
               candidate = gate.get("production_ensemble", {})
               for model_name, model_result in candidate.get("models", {}).items():
                   candidate_skill = model_result.get("mae_skill_vs_persistence")
                   candidate_skill_text = "n/a" if candidate_skill is None else f"{candidate_skill:.3%}"
+                  ci_low = model_result.get("mae_skill_confidence_interval_95", {}).get("lower_95")
+                  ci_low_text = "n/a" if ci_low is None else f"{ci_low:.3%}"
+                  per_strategy = model_result.get("per_strategy", {})
+                  btc_skill = per_strategy.get("BTC Mining", {}).get("mae_skill_vs_persistence")
+                  gpu_skill = per_strategy.get("AI Compute", {}).get("mae_skill_vs_persistence")
+                  btc_skill_text = "n/a" if btc_skill is None else f"{btc_skill:.3%}"
+                  gpu_skill_text = "n/a" if gpu_skill is None else f"{gpu_skill:.3%}"
                   lines.append(
                       f"| {name} | {model_name} | {candidate.get('pairs', 0)} | "
-                      f"{candidate_skill_text} | {model_result.get('release_eligible', False)} |"
+                      f"{candidate_skill_text} | {ci_low_text} | {btc_skill_text} | "
+                      f"{gpu_skill_text} | {model_result.get('release_eligible', False)} |"
                   )
           lines += [
               "",
