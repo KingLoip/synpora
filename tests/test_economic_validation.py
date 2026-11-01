@@ -173,6 +173,10 @@ class EconomicValidationTests(unittest.TestCase):
         self.assertEqual(weights["last_value"], 1.0)
         self.assertEqual(sum(weights.values()), 1.0)
 
+    def test_training_window_includes_the_forecast_origin_observation(self):
+        source = inspect.getsource(MODULE.corrected_forecast_weights)
+        self.assertIn("origin - 167):origin + 1", source)
+
     def test_corrected_forecast_guard_selects_trend_only_when_holdout_proves_gain(self):
         rising = [10.0 + i * 0.1 for i in range(300)]
         weights = MODULE.corrected_forecast_weights(rising)
