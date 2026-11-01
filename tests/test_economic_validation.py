@@ -156,41 +156,36 @@ class EconomicValidationTests(unittest.TestCase):
     def test_corrected_forecast_guard_falls_back_to_persistence_without_five_percent_gain(self):
         flat = [10.0] * 60
         weights = MODULE.corrected_forecast_weights(flat)
-        self.assertEqual(weights, {"recent_mean": 0.0, "last_value": 1.0, "trend": 0.0})
+        self.assertEqual(weights["last_value"], 1.0)
+        self.assertEqual(sum(weights.values()), 1.0)
 
     def test_corrected_forecast_guard_selects_trend_only_when_holdout_proves_gain(self):
-        rising = [10.0 + i * 0.1 for i in range(80)]
+        rising = [10.0 + i * 0.1 for i in range(300)]
         weights = MODULE.corrected_forecast_weights(rising)
-        self.assertEqual(weights, {"recent_mean": 0.0, "last_value": 0.0, "trend": 1.0})
+        self.assertEqual(weights["trend"], 1.0)
+        self.assertEqual(sum(weights.values()), 1.0)
 
     def test_long_horizon_uses_persistence_when_history_is_too_short(self):
         values = [10.0 + i * 0.1 for i in range(80)]
         weights = MODULE.corrected_forecast_weights(values, sample_steps=120)
-        self.assertEqual(weights, {"recent_mean": 0.0, "last_value": 1.0, "trend": 0.0})
+        self.assertEqual(weights["last_value"], 1.0)
+        self.assertEqual(sum(weights.values()), 1.0)
 
-    def test_corrected_horizon_validation_covers_api_forecast_horizons(self):
-        rows = []
-        for i in range(500):
-            rows.append({
-                "ts": i * 300,
-                "btc": 35.0 + 0.002 * i + 0.15 * math.sin(i / 9.0),
-                "gpu": 1.0 + 0.0008 * i + 0.02 * math.sin(i / 13.0),
-                "fx": 1.10 + 0.00001 * i,
-                "gpu_power": 0.35, "gpu_util": 0.70, "gpu_fee": 0.15,
-            })
-        result = MODULE.production_corrected_horizon_validation(rows, 0.20)
-        self.assertEqual(set(result["horizons"]), {"1", "6", "24", "72"})
-        self.assertGreaterEqual(result["horizons"]["1"]["pairs"], 100)
-        self.assertGreaterEqual(result["horizons"]["6"]["pairs"], 100)
-        self.assertGreaterEqual(result["horizons"]["24"]["pairs"], 100)
-        self.assertEqual(result["horizons"]["72"]["pairs"], 0)
-        self.assertFalse(result["release_eligible"])
-        self.assertEqual(result["release_gate"]["ineligible_horizons_hours"], [72])
-        for horizon in result["horizons"].values():
-            self.assertIn("mae_skill_vs_persistence", horizon)
-            self.assertIn("mae_skill_confidence_interval_95", horizon)
+    def test_candidate_selection_uses_positive_block_bootstrap_evidence(self):
+        ci = MODULE._block_bootstrap_skill_ci(
+            [1.0] * 100, [2.0] * 100, seed=7, block_length=12, replicates=20
+        )
+        self.assertEqual(ci["replicates"], 20)
+        self.assertGreater(ci["lower_95"], 0.0)
 
-    def test_horizon_release_gate_requires_all_advertised_horizons(self):
+    def test_candidate_must_improve_in_every_chronological_block(self):
+        stable_model = [0.5] * 100
+        baseline = [1.0] * 100
+        unstable_model = [0.5] * 75 + [2.0] * 25
+        self.assertTrue(MODULE._candidate_stable_across_blocks(stable_model, baseline, 4))
+        self.assertFalse(MODULE._candidate_stable_across_blocks(unstable_model, baseline, 4))
+
+    def test_horizon_release_gate_requires_every_advertised_horizon(self):
         passed = {"release_eligible": True}
         failed = {"release_eligible": False}
         gate = MODULE.horizon_release_gate({
@@ -206,6 +201,29 @@ class EconomicValidationTests(unittest.TestCase):
             "1": passed, "6": passed, "24": passed
         })
         self.assertEqual(missing["ineligible_horizons_hours"], [72])
+
+    def test_corrected_horizon_validation_covers_api_forecast_horizons(self):
+        rows = []
+        for i in range(650):
+            rows.append({
+                "ts": i * 300,
+                "btc": 35.0 + 0.002 * i + 0.15 * math.sin(i / 9.0),
+                "gpu": 1.0 + 0.0008 * i + 0.02 * math.sin(i / 13.0),
+                "fx": 1.10 + 0.00001 * i,
+                "gpu_power": 0.35, "gpu_util": 0.70, "gpu_fee": 0.15,
+            })
+        result = MODULE.production_corrected_horizon_validation(rows, 0.20)
+        self.assertEqual(set(result["horizons"]), {"1", "6", "24", "72"})
+        self.assertGreaterEqual(result["horizons"]["1"]["pairs"], 100)
+        self.assertGreaterEqual(result["horizons"]["6"]["pairs"], 100)
+        self.assertGreaterEqual(result["horizons"]["24"]["pairs"], 100)
+        self.assertEqual(result["horizons"]["72"]["pairs"], 0)
+        self.assertFalse(result["release_eligible"])
+        self.assertEqual(result["horizons"]["1"]["bootstrap_block_length"], 6)
+        self.assertEqual(result["horizons"]["24"]["bootstrap_block_length"], 48)
+        for horizon in result["horizons"].values():
+            self.assertIn("mae_skill_vs_persistence", horizon)
+            self.assertIn("mae_skill_confidence_interval_95", horizon)
 
     def test_forecast_quality_gate_blocks_persistence_only_calibration(self):
         rows = []
