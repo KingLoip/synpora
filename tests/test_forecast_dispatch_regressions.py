@@ -38,7 +38,8 @@ class ChronologicalForecastRegressionTests(unittest.TestCase):
         self.assertIn("first=max(8,len(y)-48)", source)
         self.assertIn('"last_value":last', source)
         self.assertIn("len(y)<24", source)
-        self.assertIn('maes[best]>=maes["last_value"]*0.95', source)
+        self.assertIn('split=int(len(errors["last_value"])*0.75)', source)
+        self.assertIn("validation_skill<0.05", source)
         self.assertIn('best="last_value"', source)
 
     def test_model_selection_uses_the_same_rolling_origin_window(self):
