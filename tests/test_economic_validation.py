@@ -185,6 +185,23 @@ class EconomicValidationTests(unittest.TestCase):
         self.assertTrue(MODULE._candidate_stable_across_blocks(stable_model, baseline, 4))
         self.assertFalse(MODULE._candidate_stable_across_blocks(unstable_model, baseline, 4))
 
+    def test_horizon_release_gate_requires_every_advertised_horizon(self):
+        passed = {"release_eligible": True}
+        failed = {"release_eligible": False}
+        gate = MODULE.horizon_release_gate({
+            "1": passed, "6": passed, "24": passed, "72": failed
+        })
+        self.assertEqual(gate["status"], "blocked")
+        self.assertEqual(gate["ineligible_horizons_hours"], [72])
+        complete = MODULE.horizon_release_gate({
+            "1": passed, "6": passed, "24": passed, "72": passed
+        })
+        self.assertEqual(complete["status"], "pass")
+        missing = MODULE.horizon_release_gate({
+            "1": passed, "6": passed, "24": passed
+        })
+        self.assertEqual(missing["ineligible_horizons_hours"], [72])
+
     def test_corrected_horizon_validation_covers_api_forecast_horizons(self):
         rows = []
         for i in range(650):
