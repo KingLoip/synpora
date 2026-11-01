@@ -53,6 +53,12 @@ class ChronologicalForecastRegressionTests(unittest.TestCase):
         self.assertIn('"seasonal_24h":seasonal24', source)
         self.assertIn('"seasonal_168h":seasonal168', source)
 
+    def test_production_horizon_training_includes_the_current_origin(self):
+        source = ast.get_source_segment(SOURCE, find_function("_adaptive_horizon_weights"))
+        self.assertIn("origin-167):origin+1", source)
+        confidence = ast.get_source_segment(SOURCE, find_function("_ensemble_confidence"))
+        self.assertIn("training=y[:origin+1]", confidence)
+
     def test_horizon_weights_are_selected_from_same_horizon_outcomes(self):
         source = ast.get_source_segment(SOURCE, find_function("_adaptive_horizon_weights"))
         self.assertIn("values[origin+sample_steps]", source)
