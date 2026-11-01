@@ -2766,7 +2766,7 @@ def install(app):
             gpu=gpu_gross-float(energy_fc[h]); grid=max(0.0,x.grid_value_eur_kwh-max(0.0,x.grid_export_fee_eur_kwh)); price=float(energy_fc[h]); before=soc
             btc=max(0.0,btc); gpu=max(0.0,gpu)
             current_best=max(btc,gpu,grid)
-            future=current_best
+            future=-float("inf")
             for j in range(h+1,hours):
                 future_btc_gross=(float(btc_fc[j])/eur_usd)/(asic_eff*24)*.98*.98
                 future_btc_over=max(0.0,x.btc_facility_overhead_kw)+max(0.0,x.facility_overhead_kw)
@@ -2776,6 +2776,8 @@ def install(app):
                 future_gpu_gross=(float(gpu_fc[j])/eur_usd)*gpu_util*(1-gpu_fee)/(.35+max(0.0,x.gpu_facility_overhead_kw)+max(0.0,x.facility_overhead_kw))
                 future=max(future,max(0.0,future_btc_gross-float(energy_fc[j])),
                            max(0.0,future_gpu_gross-float(energy_fc[j])),grid)
+            if not math.isfinite(future):
+                future=current_best
             round_trip=ce*de
             degradation=max(0.0,float(x.battery_degradation_eur_kwh))
             summary["pv_generation_kwh"]+=pv[h]
@@ -2798,7 +2800,7 @@ def install(app):
             # Discharge when today's best net compute margin beats the future
             # opportunity after round-trip losses and degradation. The previous
             # condition was reversed and discharged precisely when waiting was better.
-            if charge<=1e-9 and max(btc,gpu)>grid+.005 and current_best>future*round_trip+degradation+.005 and soc>soc_min:
+            if charge<=1e-9 and max(btc,gpu)>grid+.005 and current_best>future+degradation+.005 and soc>soc_min:
                 kind="AI Compute" if gpu>=btc else "BTC Mining"; target=next((a for a in candidates if a["kind"]==kind),None); value=max(gpu,btc)
                 if target:
                     take=min(target["power"]*dt,(soc-soc_min)*de,power*dt)
