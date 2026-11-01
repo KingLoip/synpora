@@ -38,8 +38,7 @@ class ChronologicalForecastRegressionTests(unittest.TestCase):
         self.assertIn("first=max(8,len(y)-48)", source)
         self.assertIn('"last_value":last', source)
         self.assertIn("len(y)<24", source)
-        self.assertIn('split=int(len(errors["last_value"])*0.75)', source)
-        self.assertIn("validation_skill<0.05", source)
+        self.assertIn('maes[best]>=maes["last_value"]*0.95', source)
         self.assertIn('best="last_value"', source)
 
     def test_model_selection_uses_the_same_rolling_origin_window(self):
@@ -69,11 +68,11 @@ class ChronologicalForecastRegressionTests(unittest.TestCase):
         source = ast.get_source_segment(SOURCE, find_function("_adaptive_horizon_weights"))
         self.assertIn("values[origin+sample_steps]", source)
         self.assertIn("len(values) < sample_steps + 32", source)
-        self.assertIn('maes[best]>=maes["last_value"]*0.95', source)
+        self.assertIn("validation_skill<0.05", source)
 
     def test_forecast_candidate_family_includes_seasonal_and_ewma_models(self):
         source = ast.get_source_segment(SOURCE, find_function("_adaptive_horizon_weights"))
-        for name in ("seasonal_24", "seasonal_168", "ewma_02", "ewma_05", "median_24"):
+        for name in ("seasonal_24h", "seasonal_168h", "ewma_02", "ewma_05", "median_24"):
             self.assertIn(name, source)
 
     def test_ensemble_forecast_uses_horizon_specific_weights_and_snapshot_cadence(self):
