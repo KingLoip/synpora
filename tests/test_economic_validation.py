@@ -187,6 +187,17 @@ class EconomicValidationTests(unittest.TestCase):
             self.assertIn("mae_skill_vs_persistence", horizon)
             self.assertIn("mae_skill_confidence_interval_95", horizon)
 
+    def test_horizon_release_gate_requires_all_three_horizons(self):
+        passed = {"release_eligible": True}
+        failed = {"release_eligible": False}
+        gate = MODULE.horizon_release_gate({"1": passed, "6": passed, "24": failed})
+        self.assertEqual(gate["status"], "blocked")
+        self.assertEqual(gate["ineligible_horizons_hours"], [24])
+        complete = MODULE.horizon_release_gate({"1": passed, "6": passed, "24": passed})
+        self.assertEqual(complete["status"], "pass")
+        missing = MODULE.horizon_release_gate({"1": passed, "6": passed})
+        self.assertEqual(missing["ineligible_horizons_hours"], [24])
+
     def test_forecast_quality_gate_blocks_persistence_only_calibration(self):
         rows = []
         for i in range(38):
