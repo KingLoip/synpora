@@ -42,7 +42,7 @@ jobs:
         run: python -m unittest discover -s tests -p 'test_*.py'
       - name: Import smoke test
         run: |
-          pip install -q -r backend/requirements.txt
+          pip install --retries 8 --timeout 60 --no-cache-dir -q -r backend/requirements.txt
           SYNPORA_JWT_SECRET=ci-test-secret python - <<'PY'
           from backend.app.main import app
           from backend.app.saas_api import install
@@ -974,7 +974,7 @@ jobs:
           cp "$GITHUB_WORKSPACE/saas_api.py" backend/app/saas_api.py
       - name: Install PostgreSQL test dependencies
         run: |
-          pip install -q -r backend/requirements.txt "psycopg[binary]" psycopg2-binary httpx
+          pip install --retries 8 --timeout 60 --no-cache-dir -q -r backend/requirements.txt "psycopg[binary]" psycopg2-binary httpx
       - name: Verify PostgreSQL persistence and repeatable market migrations
         run: |
           python - <<'PY'
