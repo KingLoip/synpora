@@ -648,6 +648,11 @@ jobs:
           assert history_negative.status_code==200 and 1<=len(history_negative.json())<=500, history_negative.text
           history_large=c.get("/api/v1/market/history?limit=999999")
           assert history_large.status_code==200 and len(history_large.json())<=500, history_large.text
+          history_compact=c.get("/api/v1/market/history?limit=999999&compact=true")
+          assert history_compact.status_code==200 and len(history_compact.json())<=2000, history_compact.text
+          if history_compact.json():
+              compact_payload=history_compact.json()[0]["data"]
+              assert isinstance(compact_payload,dict) and "data_quality" in compact_payload, compact_payload
           from backend.app import saas_api as saas
           import time
           db=saas.init_db()
