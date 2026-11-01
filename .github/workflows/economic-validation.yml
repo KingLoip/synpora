@@ -72,6 +72,31 @@ jobs:
               lines.append(
                   f"| {name} | {gate.get('status')} | {gate.get('actual_pairs')} | {skill_text} |"
               )
+          corrected = report.get("results", {})
+          lines += [
+              "",
+              "## Horizon-aware production forecast validation",
+              "",
+              "| Tariff scenario | Horizon | Pairs | MAE skill | 95% CI low | BTC skill | GPU skill | Eligible |",
+              "|---|---:|---:|---:|---:|---:|---:|---:|",
+          ]
+          for name, result in corrected.items():
+              validation = result.get("production_corrected_horizon_validation", {})
+              for horizon, metrics in validation.get("horizons", {}).items():
+                  ci_low = metrics.get("mae_skill_confidence_interval_95", {}).get("lower_95")
+                  ci_text = "n/a" if ci_low is None else f"{ci_low:.3%}"
+                  skill = metrics.get("mae_skill_vs_persistence")
+                  skill_text = "n/a" if skill is None else f"{skill:.3%}"
+                  per = metrics.get("per_strategy", {})
+                  btc = per.get("BTC Mining", {}).get("mae_skill_vs_persistence")
+                  gpu = per.get("AI Compute", {}).get("mae_skill_vs_persistence")
+                  btc_text = "n/a" if btc is None else f"{btc:.3%}"
+                  gpu_text = "n/a" if gpu is None else f"{gpu:.3%}"
+                  lines.append(
+                      f"| {name} | {horizon}h | {metrics.get('pairs', 0)} | "
+                      f"{skill_text} | {ci_text} | {btc_text} | {gpu_text} | "
+                      f"{metrics.get('release_eligible', False)} |"
+                  )
           lines += [
               "",
               "Investment validation remains separate from technical production readiness. "
