@@ -305,13 +305,14 @@ def production_adaptive_weights(values):
     return {name: value / total for name, value in inverse.items()}
 
 
-def production_adaptive_forecast(values):
-    """Mirror the production one-step recent-mean/last/trend ensemble."""
-    mean = statistics.fmean(values)
-    last = values[-1]
-    slope = (values[-1] - values[0]) / (len(values) - 1) if len(values) > 1 else 0.0
+def production_adaptive_forecast(training_values, forecast_values):
+    """Mirror production: weights use 168 rows; forecast components use 48 rows."""
+    mean = statistics.fmean(forecast_values)
+    last = forecast_values[-1]
+    slope = ((forecast_values[-1] - forecast_values[0]) / (len(forecast_values) - 1)
+             if len(forecast_values) > 1 else 0.0)
     trend = last + slope
-    weights = production_adaptive_weights(values)
+    weights = production_adaptive_weights(training_values)
     return {
         "persistence": last,
         "recent_mean": mean,
@@ -344,9 +345,16 @@ def production_ensemble_forecast_validation(rows, tariff, max_history=168):
         if gap_minutes <= 0 or gap_minutes > MAX_BACKTEST_GAP_MINUTES:
             skipped_gaps += 1
             continue
-        history = rows[max(0, i - max_history + 1):i + 1]
-        btc_forecasts = production_adaptive_forecast([r["btc"] for r in history])
-        gpu_forecasts = production_adaptive_forecast([r["gpu"] for r in history])
+        training_history = rows[max(0, i - max_history + 1):i + 1]
+        forecast_history = rows[max(0, i - 47):i + 1]
+        btc_forecasts = production_adaptive_forecast(
+            [r["btc"] for r in training_history],
+            [r["btc"] for r in forecast_history],
+        )
+        gpu_forecasts = production_adaptive_forecast(
+            [r["gpu"] for r in training_history],
+            [r["gpu"] for r in forecast_history],
+        )
         actual = economics(next_row, tariff)
         baseline = economics(decision, tariff)
         for strategy in strategies:
