@@ -296,10 +296,10 @@ def _candidate_stable_across_blocks(model_errors, baseline_errors, blocks=4):
     return positive == blocks
 
 
-def corrected_forecast_weights(values, sample_steps=1):
+def corrected_forecast_weights(values, sample_steps=1, interval_seconds=300.0):
     """Select a candidate using past-only outcomes at the exact forecast horizon."""
     names = ("recent_mean", "last_value", "trend", "mean_24", "median_24",
-             "seasonal_24", "seasonal_168", "ewma_02", "ewma_05")
+             "seasonal_24h", "seasonal_168h", "ewma_02", "ewma_05")
     fallback = {name: (1.0 if name == "last_value" else 0.0) for name in names}
     if sample_steps < 1 or len(values) < sample_steps + 32:
         return fallback
@@ -311,8 +311,14 @@ def corrected_forecast_weights(values, sample_steps=1):
         mean = statistics.fmean(recent)
         mean24 = statistics.fmean(history[-24:])
         median24 = statistics.median(history[-24:])
-        seasonal24 = history[-24] if len(history) >= 24 else last
-        seasonal168 = history[-168] if len(history) >= 168 else last
+        interval = max(1.0, float(interval_seconds))
+        target_index = origin + sample_steps
+        period_24h = max(1, round(24.0 * 3600.0 / interval))
+        period_168h = max(1, round(168.0 * 3600.0 / interval))
+        seasonal24_index = target_index - period_24h
+        seasonal168_index = target_index - period_168h
+        seasonal24 = values[seasonal24_index] if 0 <= seasonal24_index <= origin else last
+        seasonal168 = values[seasonal168_index] if 0 <= seasonal168_index <= origin else last
         def ewma(series, alpha):
             value = series[0]
             for item in series[1:]:
@@ -324,8 +330,8 @@ def corrected_forecast_weights(values, sample_steps=1):
         predictions = {
             "recent_mean": mean, "last_value": last,
             "trend": last + slope * damped_steps, "mean_24": mean24,
-            "median_24": median24, "seasonal_24": seasonal24,
-            "seasonal_168": seasonal168, "ewma_02": ewma(recent, 0.2),
+            "median_24": median24, "seasonal_24h": seasonal24,
+            "seasonal_168h": seasonal168, "ewma_02": ewma(recent, 0.2),
             "ewma_05": ewma(recent, 0.5),
         }
         actual = values[origin + sample_steps]
@@ -364,8 +370,13 @@ def corrected_forecast_value(values, weights, horizon_hours, interval_seconds):
     mean24 = statistics.fmean(history[-24:])
     median24 = statistics.median(history[-24:])
     last = recent[-1]
-    seasonal24 = history[-24] if len(history) >= 24 else last
-    seasonal168 = history[-168] if len(history) >= 168 else last
+    target_index = len(values) - 1 + sample_steps
+    period_24h = max(1, round(24.0 * 3600.0 / interval_seconds))
+    period_168h = max(1, round(168.0 * 3600.0 / interval_seconds))
+    seasonal24_index = target_index - period_24h
+    seasonal168_index = target_index - period_168h
+    seasonal24 = values[seasonal24_index] if 0 <= seasonal24_index < len(values) else last
+    seasonal168 = values[seasonal168_index] if 0 <= seasonal168_index < len(values) else last
     def ewma(series, alpha):
         value = series[0]
         for item in series[1:]:
@@ -377,8 +388,8 @@ def corrected_forecast_value(values, weights, horizon_hours, interval_seconds):
     damped_steps = min(12.0, sample_steps) * math.exp(-max(0.0, sample_steps - 12.0) / 12.0)
     predictions = {
         "recent_mean": mean, "last_value": last, "trend": last + slope * damped_steps,
-        "mean_24": mean24, "median_24": median24, "seasonal_24": seasonal24,
-        "seasonal_168": seasonal168, "ewma_02": ewma(recent, 0.2),
+        "mean_24": mean24, "median_24": median24, "seasonal_24h": seasonal24,
+        "seasonal_168h": seasonal168, "ewma_02": ewma(recent, 0.2),
         "ewma_05": ewma(recent, 0.5),
     }
     return max(0.0, sum(weights[name] * predictions[name] for name in predictions))
@@ -456,8 +467,8 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
             btc_values = [row["btc"] for row in history_rows]
             gpu_values = [row["gpu"] for row in history_rows]
             sample_steps = max(1, round(horizon * 3600.0 / interval_seconds))
-            btc_weights = corrected_forecast_weights(btc_values, sample_steps)
-            gpu_weights = corrected_forecast_weights(gpu_values, sample_steps)
+            btc_weights = corrected_forecast_weights(btc_values, sample_steps, interval_seconds)
+            gpu_weights = corrected_forecast_weights(gpu_values, sample_steps, interval_seconds)
             predicted = dict(decision)
             predicted["btc"] = corrected_forecast_value(
                 btc_values, btc_weights, horizon, interval_seconds)
