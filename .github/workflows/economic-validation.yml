@@ -27,5 +27,63 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Run independent empirical economic validation
-        run: python scripts/economic_validation.py
+      - name: Run independent empirical economic validation and enforce forecast gate
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/economic_validation.py > /tmp/synpora-economic-validation.json
+          python - <<'PY'
+          import json
+          import os
+          import sys
+
+          with open("/tmp/synpora-economic-validation.json", encoding="utf-8") as handle:
+              report = json.load(handle)
+
+          gates = {}
+          for name, result in report.get("results", {}).items():
+              backtest = result["empirical_risk_aware_walk_forward"]
+              gate = dict(backtest["forecast_quality_gate"])
+              gate["actual_pairs"] = backtest.get("walk_forward_shrunk_forecast", {}).get("pairs", 0)
+              gates[name] = gate
+          blocked = {
+              name: gate for name, gate in gates.items()
+              if gate.get("status") != "pass"
+          }
+          if not gates:
+              blocked["missing_economic_scenarios"] = {"status": "missing"}
+          investment = report.get("investment_readiness", {})
+          lines = [
+              "# SYNPORA empirical economic validation",
+              "",
+              f"- Forecast quality gate: **{'PASS' if not blocked else 'BLOCKED'}**",
+              f"- Out-of-sample minimum pairs: 100",
+              f"- Required MAE skill over persistence: 5%",
+              f"- Investment validation: **{investment.get('status', 'unknown')}**",
+              "",
+              "| Tariff scenario | Gate | Pairs | MAE skill vs persistence |",
+              "|---|---:|---:|---:|",
+          ]
+          for name, gate in gates.items():
+              skill = gate.get("observed_mae_skill_vs_persistence")
+              skill_text = "n/a" if skill is None else f"{skill:.3%}"
+              lines.append(
+                  f"| {name} | {gate.get('status')} | {gate.get('actual_pairs')} | {skill_text} |"
+              )
+          lines += [
+              "",
+              "Investment validation remains separate from technical production readiness. "
+              "No realized GPU payouts, BTC pool settlements, all-in electricity invoices, "
+              "or metered battery outcomes are inferred from market quotes.",
+          ]
+          summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary:
+              with open(summary, "a", encoding="utf-8") as handle:
+                  handle.write("\n".join(lines) + "\n")
+          print("\n".join(lines))
+          if blocked and os.environ.get("GITHUB_EVENT_NAME") != "pull_request":
+              print("Forecast quality gate is blocked; do not promote SYNPORA as a validated forecasting product.", file=sys.stderr)
+              sys.exit(1)
+          PY

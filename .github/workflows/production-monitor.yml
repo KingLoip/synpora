@@ -4,10 +4,10 @@ on:
   schedule:
     - cron: "2-59/5 * * * *"
   workflow_dispatch:
-  # Run a fresh read-only production check after main CI has completed, even when
-  # GitHub's scheduled-event queue is delayed. Only successful main-branch CI runs qualify.
+  # Run a fresh read-only production check only after the independent economic
+  # forecast-quality gate has passed on main.
   workflow_run:
-    workflows: ["SYNPORA CI"]
+    workflows: ["SYNPORA Economic Validation"]
     types: [completed]
     # Filter upstream PR checks here, before they can compete with scheduled live runs.
     branches: [main]
@@ -20,7 +20,7 @@ permissions:
   actions: read
 
 concurrency:
-  # Keep schedule, manual, upstream-CI, and pull-request checks in separate groups.
+  # Keep schedule, manual, upstream-economic-validation, and pull-request checks separate.
   # A skipped/non-main workflow_run must not cancel an in-progress scheduled live check.
   group: synpora-production-monitor-${{ github.event_name }}
   # Never cancel an in-flight live check when the scheduler emits another event.
@@ -28,6 +28,63 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # GitHub's scheduler can delay or drop scheduled events. A green health check
+  # must not hide a multi-hour gap in the scheduler itself.
+  schedule-reliability:
+    if: github.event_name == 'schedule'
+    name: GitHub Actions schedule cadence
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require recent previous schedule evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          api="https://api.github.com/repos/${GITHUB_REPOSITORY}"
+          curl --silent --show-error --fail --connect-timeout 5 --max-time 10 \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "${api}/actions/runs/${GITHUB_RUN_ID}" --output /tmp/current-run.json
+          curl --silent --show-error --fail --connect-timeout 5 --max-time 10 \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "${api}/actions/workflows/production-monitor.yml/runs?branch=main&event=schedule&per_page=100" \
+            --output /tmp/schedule-runs.json
+          current_started="$(jq -r '.created_at // empty' /tmp/current-run.json)"
+          if [[ -z "${current_started}" ]]; then
+            echo "::error title=Missing schedule evidence::Current schedule timestamp is unavailable."
+            exit 1
+          fi
+          mapfile -t previous_times < <(jq -r --arg current "${GITHUB_RUN_ID}" '
+            [.workflow_runs[]
+              | select((.id | tostring) != $current)
+              | select(.event == "schedule" and .head_branch == "main")
+              | .created_at]
+            | sort
+            | .[-3:]
+            | .[]
+          ' /tmp/schedule-runs.json)
+          if (( ${#previous_times[@]} < 3 )); then
+            echo "::error title=Insufficient schedule evidence::Three previous main-branch schedule events are required."
+            exit 1
+          fi
+          schedule_times=("${previous_times[@]}" "${current_started}")
+          for ((i=1; i<${#schedule_times[@]}; i++)); do
+            previous_epoch="$(date -u -d "${schedule_times[i-1]}" +%s)"
+            current_epoch="$(date -u -d "${schedule_times[i]}" +%s)"
+            gap_seconds=$((current_epoch - previous_epoch))
+            echo "Schedule interval ${i}: ${gap_seconds}s (${schedule_times[i-1]} -> ${schedule_times[i]})"
+            if (( gap_seconds > 1200 )); then
+              echo "::error title=GitHub Actions schedule gap::One of the last three intervals was ${gap_seconds}s; maximum allowed is 1200s."
+              exit 1
+            fi
+          done
+          echo "Three consecutive GitHub Actions schedule intervals: PASS"
+
   live-market-health:
     # Never gate a pull request on production state from code that has not been deployed yet.
     # Scheduled/manual runs continue to validate the live deployment after rollout.
@@ -36,55 +93,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 4
     steps:
-      - name: Report actual GitHub schedule interval
-        if: github.event_name == 'schedule'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          api="https://api.github.com/repos/${GITHUB_REPOSITORY}"
-          if ! curl --silent --show-error --fail --connect-timeout 5 --max-time 10 \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "${api}/actions/runs/${GITHUB_RUN_ID}" --output /tmp/current-run.json; then
-            echo "::warning::Could not read current GitHub Actions run metadata; schedule interval not measured."
-            exit 0
-          fi
-          if ! curl --silent --show-error --fail --connect-timeout 5 --max-time 10 \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "${api}/actions/workflows/production-monitor.yml/runs?branch=main&event=schedule&per_page=100" \
-            --output /tmp/schedule-runs.json; then
-            echo "::warning::Could not read GitHub schedule history; schedule interval not measured."
-            exit 0
-          fi
-          current_started="$(jq -r '.created_at // empty' /tmp/current-run.json)"
-          previous_started="$(jq -r --arg current "${GITHUB_RUN_ID}" --arg started "${current_started}" '
-            [.workflow_runs[]
-              | select((.id | tostring) != $current)
-              | select(.event == "schedule" and .head_branch == "main")
-              | select(.created_at < $started)]
-            | sort_by(.created_at)
-            | last
-            | .created_at // empty
-          ' /tmp/schedule-runs.json)"
-          if [[ -z "${current_started}" || -z "${previous_started}" ]]; then
-            echo "Schedule interval: insufficient prior run evidence returned by GitHub API."
-            exit 0
-          fi
-          current_epoch="$(date -u -d "${current_started}" +%s)"
-          previous_epoch="$(date -u -d "${previous_started}" +%s)"
-          gap_seconds=$((current_epoch - previous_epoch))
-          echo "Previous main schedule event: ${previous_started}"
-          echo "Current main schedule event: ${current_started}"
-          echo "Observed schedule interval seconds: ${gap_seconds}"
-          if (( gap_seconds > 1200 )); then
-            echo "::warning title=GitHub Actions schedule gap::Observed interval was ${gap_seconds}s, greater than the 1200s monitoring threshold. This reports actual event timestamps; it does not infer individual missing runs."
-          fi
-
       - name: Verify live service and external market data
         shell: bash
         run: |
