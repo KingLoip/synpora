@@ -198,7 +198,7 @@ def empirical_risk_choice(history, current, tariff, seed):
     rng = random.Random(seed)
     samples = {name: [] for name in ("AI Compute", "BTC Mining", "Battery", "Grid")}
     wins = {name: 0 for name in samples}
-    for _ in range(replicates):
+    for _ in range(BOOTSTRAP_SAMPLES):
         rb, rg, rf = rng.choice(returns)
         future = {
             **current,
