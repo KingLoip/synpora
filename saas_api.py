@@ -2046,8 +2046,10 @@ def install(app):
         gpu_facility_overhead_kw: float=0.0
         facility_overhead_kw: float=0.0
 
-    def _eligible_market_rows(c, limit=168, include_ts=False):
-        # Forecast fitting and weights must use the same provenance gate as learning labels.
+    def _eligible_market_rows(c, limit=168, include_ts=False, require_site_tariff=True):
+        # Site tariffs are required for realized economic labels, but not for
+        # forecasting globally sourced BTC hashprice and GPU marketplace prices.
+        # The user's own tariff is supplied separately to the dispatch calculation.
         raw=c.execute("SELECT ts,payload,btc_hashprice_usd_ph_day,gpu_l40s_usd_hour,austria_spot_eur_kwh FROM market_snapshots ORDER BY ts DESC LIMIT ?",(int(limit),)).fetchall()
         rows=[]
         for row in raw:
@@ -2055,10 +2057,17 @@ def install(app):
                 payload=json.loads(row[1])
             except Exception:
                 continue
-            if not _snapshot_is_learning_eligible(payload):
+            if require_site_tariff:
+                if not _snapshot_is_learning_eligible(payload):
+                    continue
+            elif not _snapshot_is_market_ready(payload):
                 continue
-            try: site_energy=float(payload["site_energy_cost_eur_kwh"])
-            except (KeyError,TypeError,ValueError): continue
+            site_energy=None
+            try:
+                site_energy=float(payload["site_energy_cost_eur_kwh"])
+            except (KeyError,TypeError,ValueError):
+                if require_site_tariff:
+                    continue
             values=(row[0],row[2],row[3],site_energy)
             rows.append(values if include_ts else values[1:])
         # SQL fetches the newest bounded window; restore chronological order before
@@ -2067,64 +2076,159 @@ def install(app):
         return rows
 
     def _adaptive_model_weights(c, series_key):
-        rows=_eligible_market_rows(c,168,include_ts=True)
+        # Calibrate weights with rolling-origin errors from the same 48-observation
+        # feature window used by _ensemble_forecast. The previous implementation
+        # fitted weights on a long-window mean/slope but applied them to a different
+        # short-window mean/slope at inference time.
+        rows=_eligible_market_rows(c,168,include_ts=True,require_site_tariff=False)
         idx={"btc":1,"gpu":2,"energy":3}[series_key]
         y=[float(r[idx]) for r in rows if r[idx] is not None]
-        if len(y)<8:
-            return {"recent_mean":.34,"last_value":.33,"trend":.33}
-        cut=min(48,len(y)-4)
-        train=y[:-cut]
-        test=y[-cut:]
-        mean=sum(train)/len(train)
-        last=train[-1]
-        slope=(train[-1]-train[0])/(len(train)-1) if len(train)>1 else 0.0
-        preds={"recent_mean":[mean]*len(test),"last_value":[last]*len(test),
-               "trend":[last+slope*(i+1) for i in range(len(test))]}
-        errors={k:sum(abs(a-b) for a,b in zip(test,v))/len(test) for k,v in preds.items()}
-        inv={k:1.0/(v+1e-9) for k,v in errors.items()}
-        total=sum(inv.values())
-        return {k:round(v/total,4) for k,v in inv.items()}
+        if len(y)<24:
+            return {"recent_mean":0.0,"last_value":1.0,"trend":0.0}
+        errors={"recent_mean":[],"last_value":[],"trend":[]}
+        first=max(8,len(y)-48)
+        for target_idx in range(first,len(y)):
+            history=y[max(0,target_idx-48):target_idx]
+            mean=sum(history)/len(history)
+            last=history[-1]
+            slope=(history[-1]-history[0])/(len(history)-1) if len(history)>1 else 0.0
+            predictions={"recent_mean":mean,"last_value":last,"trend":last+slope}
+            for name,prediction in predictions.items():
+                errors[name].append(abs(y[target_idx]-prediction))
+        maes={name:sum(values)/len(values) for name,values in errors.items() if values}
+        if not maes or "last_value" not in maes:
+            return {"recent_mean":0.0,"last_value":1.0,"trend":0.0}
+        best=min(maes,key=maes.get)
+        # Never take model risk unless a candidate beats persistence by at least
+        # 5% on rolling-origin validation. Otherwise use the no-change baseline.
+        if best=="last_value" or maes[best]>=maes["last_value"]*0.95:
+            best="last_value"
+        return {name:(1.0 if name==best else 0.0)
+                for name in ("recent_mean","last_value","trend")}
+
+    def _adaptive_horizon_weights(values, sample_steps):
+        import math
+        import statistics
+        names=("recent_mean","last_value","trend","mean_24","median_24",
+               "seasonal_24","seasonal_168","ewma_02","ewma_05")
+        fallback={name:(1.0 if name=="last_value" else 0.0) for name in names}
+        # Select a model using only historical outcomes at this same forecast
+        # horizon. A one-step winner is not assumed to be a six- or 24-hour winner.
+        if sample_steps < 1 or len(values) < sample_steps + 32:
+            return fallback
+        errors={name:[] for name in names}
+        for origin in range(max(168,len(values)-sample_steps-200),len(values)-sample_steps):
+            history=values[max(0,origin-168):origin]
+            recent=history[-48:]
+            last=recent[-1]
+            mean=sum(recent)/len(recent)
+            mean24=sum(history[-24:])/min(24,len(history))
+            median24=statistics.median(history[-24:])
+            seasonal24=history[-24] if len(history)>=24 else last
+            seasonal168=history[-168] if len(history)>=168 else last
+            def ewma(series,alpha):
+                value=series[0]
+                for item in series[1:]:
+                    value=alpha*item+(1.0-alpha)*value
+                return value
+            slope=(recent[-1]-recent[0])/(len(recent)-1) if len(recent)>1 else 0.0
+            damped_steps=min(12.0,float(sample_steps))*math.exp(
+                -max(0.0,float(sample_steps)-12.0)/12.0)
+            predictions={"recent_mean":mean,"last_value":last,
+                "trend":last+slope*damped_steps,"mean_24":mean24,
+                "median_24":median24,"seasonal_24":seasonal24,
+                "seasonal_168":seasonal168,"ewma_02":ewma(recent,0.2),
+                "ewma_05":ewma(recent,0.5)}
+            actual=values[origin+sample_steps]
+            for name,prediction in predictions.items():
+                errors[name].append(abs(actual-prediction))
+        maes={name:sum(series)/len(series) for name,series in errors.items() if len(series)>=24}
+        if "last_value" not in maes:
+            return fallback
+        best=min(maes,key=maes.get)
+        if best=="last_value" or maes[best]>=maes["last_value"]*0.95:
+            best="last_value"
+        return {name:(1.0 if name==best else 0.0) for name in names}
 
     def _ensemble_forecast(c, series_key, horizon, fallback):
-        weights=_adaptive_model_weights(c,series_key)
-        rows=_eligible_market_rows(c,48)
-        idx={"btc":0,"gpu":1,"energy":2}[series_key]
-        y=[float(r[idx]) for r in rows if r[idx] is not None]
-        if not y: return [fallback]*horizon,weights
-        mean=sum(y)/len(y); last=y[-1]
-        slope=(y[-1]-y[0])/(len(y)-1) if len(y)>1 else 0
+        import math
+        import statistics
+        rows=_eligible_market_rows(c,2000,include_ts=True,require_site_tariff=False)
+        idx={"btc":1,"gpu":2,"energy":3}[series_key]
+        valid=[r for r in rows if r[idx] is not None]
+        y=[float(r[idx]) for r in valid]
+        if not y: return [fallback]*horizon,{"method":"unverified_fallback"}
+        timestamps=[float(r[0]) for r in valid]
+        gaps=[timestamps[i]-timestamps[i-1] for i in range(1,len(timestamps))
+              if timestamps[i]>timestamps[i-1]]
+        interval_seconds=sorted(gaps)[len(gaps)//2] if gaps else 300.0
+        if interval_seconds<=0:
+            interval_seconds=300.0
+        history=y[-168:]
+        recent=history[-48:]
+        mean=sum(recent)/len(recent)
+        mean24=sum(history[-24:])/min(24,len(history))
+        median24=statistics.median(history[-24:])
+        last=recent[-1]
+        seasonal24=history[-24] if len(history)>=24 else last
+        seasonal168=history[-168] if len(history)>=168 else last
+        def ewma(series,alpha):
+            value=series[0]
+            for item in series[1:]:
+                value=alpha*item+(1.0-alpha)*value
+            return value
+        slope=(recent[-1]-recent[0])/(len(recent)-1) if len(recent)>1 else 0.0
         out=[]
+        horizon_weights={}
         for h in range(1,horizon+1):
-            pred=(weights["recent_mean"]*mean + weights["last_value"]*last +
-                  weights["trend"]*(last+slope*h))
-            out.append(pred)
-        return out,weights
+            sample_steps=max(1,round((h*3600.0)/interval_seconds))
+            weights=_adaptive_horizon_weights(y,sample_steps)
+            damped_steps=min(12.0,float(sample_steps))*math.exp(
+                -max(0.0,float(sample_steps)-12.0)/12.0)
+            predictions={"recent_mean":mean,"last_value":last,
+                "trend":last+slope*damped_steps,"mean_24":mean24,
+                "median_24":median24,"seasonal_24":seasonal24,
+                "seasonal_168":seasonal168,"ewma_02":ewma(recent,0.2),
+                "ewma_05":ewma(recent,0.5)}
+            pred=sum(weights[name]*predictions[name] for name in predictions)
+            out.append(max(0.0,pred))
+            horizon_weights[str(h)] = weights
+        return out,{"method":"horizon_specific_rolling_origin",
+                    "sample_interval_seconds":round(interval_seconds,2),
+                    "weights_by_horizon":horizon_weights}
 
     def _model_select(c):
-        rows=_eligible_market_rows(c,168,include_ts=True)
+        rows=_eligible_market_rows(c,168,include_ts=True,require_site_tariff=False)
         result={}
         for name,idx in (("btc",1),("gpu",2),("energy",3)):
             y=[float(r[idx]) for r in rows if r[idx] is not None]
-            if len(y)<8:
-                result[name]={"model":"recent_mean","mae":None,"samples":len(y),"ready":False}
+            errors={"recent_mean":[],"last_value":[],"trend":[]}
+            first=max(8,len(y)-48)
+            for target_idx in range(first,len(y)):
+                history=y[max(0,target_idx-48):target_idx]
+                mean=sum(history)/len(history)
+                last=history[-1]
+                slope=(history[-1]-history[0])/(len(history)-1) if len(history)>1 else 0.0
+                predictions={"recent_mean":mean,"last_value":last,"trend":last+slope}
+                for model,prediction in predictions.items():
+                    errors[model].append(abs(y[target_idx]-prediction))
+            scores={model:sum(values)/len(values) for model,values in errors.items() if values}
+            if not scores:
+                result[name]={"model":"last_value","mae":None,"samples":len(y),"ready":False}
                 continue
-            cut=min(48,len(y)-4)
-            train=y[:-cut]
-            test=y[-cut:]
-            mean=sum(train)/len(train); last=train[-1]
-            preds={"recent_mean":[mean]*len(test),"last_value":[last]*len(test)}
-            slope=(train[-1]-train[0])/(len(train)-1) if len(train)>1 else 0.0
-            preds["trend"]=[last+slope*(i+1) for i in range(len(test))]
-            scores={k:sum(abs(a-b) for a,b in zip(test,v))/len(test) for k,v in preds.items()}
             best=min(scores,key=scores.get)
-            result[name]={"model":best,"mae":round(scores[best],8),"scores":{k:round(v,8) for k,v in scores.items()},"samples":len(y),"ready":len(y)>=24}
+            if best!="last_value" and scores[best]>=scores.get("last_value",float("inf"))*0.95:
+                best="last_value"
+            result[name]={"model":best,"mae":round(scores[best],8),
+                          "scores":{k:round(v,8) for k,v in scores.items()},
+                          "samples":len(y),"ready":len(y)>=24}
         return result
 
     def _ensemble_confidence(c, series_key):
         w=_adaptive_model_weights(c,series_key)
         vals=list(w.values())
         concentration=max(vals) if vals else 0.33
-        rows=_eligible_market_rows(c,48)
+        rows=_eligible_market_rows(c,48,require_site_tariff=False)
         idx={"btc":0,"gpu":1,"energy":2}[series_key]
         y=[float(r[idx]) for r in rows if r[idx] is not None]
         if len(y)<8:
@@ -2694,18 +2798,19 @@ def install(app):
         if not c.execute("SELECT 1 FROM synpora_saas_farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
         learn=_forecast_learning(c,farm_id)
         models=_model_select(c)
+        models["energy"]={"model":"user_supplied_constant","mae":None,"samples":0,"ready":True,"forecasted":False}
         # Energy tariffs are site-specific user inputs; never infer them from another
         # location's spot market. Market forecasts require fresh, provenance-verified data.
         hours=max(1,min(72,x.horizon_hours))
         snapshot_freshness=_market_snapshot_freshness(c)
         try:
-            adaptive_ready=(snapshot_freshness.get("status")=="fresh" and len(_eligible_market_rows(c,8))>=8)
+            adaptive_ready=(snapshot_freshness.get("status")=="fresh" and len(_eligible_market_rows(c,24,require_site_tariff=False))>=24)
         except Exception:
             adaptive_ready=False
         if adaptive_ready:
             btc_fc,btc_w=_ensemble_forecast(c,"btc",hours,x.btc_hashprice_usd_ph_day)
             gpu_fc,gpu_w=_ensemble_forecast(c,"gpu",hours,x.gpu_hourly_usd)
-            conf={"btc":_ensemble_confidence(c,"btc"),"gpu":_ensemble_confidence(c,"gpu"),"energy":0.0}
+            conf={"btc":_ensemble_confidence(c,"btc"),"gpu":_ensemble_confidence(c,"gpu"),"energy":1.0}
             forecast_method="historical_adaptive_model_selection"
             forecast_source="fresh_external_market_data"
             market_warnings=[]
@@ -2756,7 +2861,7 @@ def install(app):
         snapshot_freshness=_market_snapshot_freshness(c)
         latest_eligible=False
         try:
-            latest_eligible=len(_eligible_market_rows(c,8))>=8
+            latest_eligible=len(_eligible_market_rows(c,24,require_site_tariff=False))>=24
             if snapshot_freshness.get("status")!="fresh" or not latest_eligible:
                 raise ValueError("No fresh provenance-verified market snapshot")
             btc_fc,_=_ensemble_forecast(c,"btc",hours,x.btc_hashprice_usd_ph_day)
