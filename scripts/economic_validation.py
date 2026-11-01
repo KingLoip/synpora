@@ -280,6 +280,22 @@ def summarize_backtest(pairs, label):
     }
 
 
+def _candidate_stable_across_blocks(model_errors, baseline_errors, blocks=4):
+    n = min(len(model_errors), len(baseline_errors))
+    if n < blocks * 8:
+        return False
+    block_size = n // blocks
+    positive = 0
+    for block in range(blocks):
+        start = block * block_size
+        end = n if block == blocks - 1 else (block + 1) * block_size
+        model_mae = statistics.fmean(model_errors[start:end])
+        baseline_mae = statistics.fmean(baseline_errors[start:end])
+        if baseline_mae > 1e-12 and model_mae < baseline_mae:
+            positive += 1
+    return positive == blocks
+
+
 def corrected_forecast_weights(values, sample_steps=1):
     """Select a candidate using past-only outcomes at the exact forecast horizon."""
     names = ("recent_mean", "last_value", "trend", "mean_24", "median_24",
@@ -333,7 +349,9 @@ def corrected_forecast_weights(values, sample_steps=1):
         )
         # A candidate must clear a stricter training margin and a positive
         # block-bootstrap lower bound before it is allowed to displace persistence.
-        if training_skill < min_training_skill or ci["lower_95"] is None or ci["lower_95"] <= 0.0:
+        stable = _candidate_stable_across_blocks(errors[best], errors["last_value"], blocks=4)
+        if (training_skill < min_training_skill or ci["lower_95"] is None
+                or ci["lower_95"] <= 0.0 or not stable):
             best = "last_value"
     return {name: (1.0 if name == best else 0.0) for name in names}
 
