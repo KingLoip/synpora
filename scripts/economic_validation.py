@@ -298,7 +298,7 @@ def corrected_forecast_weights(values):
     if not maes or "last_value" not in maes:
         return {"recent_mean": 0.0, "last_value": 1.0, "trend": 0.0}
     best = min(maes, key=maes.get)
-    if best == "last_value" or maes[best] > maes["last_value"] * 0.95:
+    if best == "last_value" or maes[best] >= maes["last_value"] * 0.95:
         best = "last_value"
     return {name: (1.0 if name == best else 0.0)
             for name in ("recent_mean", "last_value", "trend")}
