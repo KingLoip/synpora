@@ -2051,6 +2051,9 @@ def install(app):
             except (KeyError,TypeError,ValueError): continue
             values=(row[0],row[2],row[3],site_energy)
             rows.append(values if include_ts else values[1:])
+        # SQL fetches the newest bounded window; restore chronological order before
+        # fitting or evaluating any forward-looking model.
+        rows.reverse()
         return rows
 
     def _adaptive_model_weights(c, series_key):
@@ -2059,11 +2062,14 @@ def install(app):
         y=[float(r[idx]) for r in rows if r[idx] is not None]
         if len(y)<8:
             return {"recent_mean":.34,"last_value":.33,"trend":.33}
-        cut=min(48,len(y)-4); test=y[:cut]; train=y[cut:]
-        mean=sum(train)/len(train); last=train[0]
-        slope=(train[0]-train[-1])/(len(train)-1) if len(train)>1 else 0
+        cut=min(48,len(y)-4)
+        train=y[:-cut]
+        test=y[-cut:]
+        mean=sum(train)/len(train)
+        last=train[-1]
+        slope=(train[-1]-train[0])/(len(train)-1) if len(train)>1 else 0.0
         preds={"recent_mean":[mean]*len(test),"last_value":[last]*len(test),
-               "trend":[train[0]+slope*(i+1) for i in range(len(test))]}
+               "trend":[last+slope*(i+1) for i in range(len(test))]}
         errors={k:sum(abs(a-b) for a,b in zip(test,v))/len(test) for k,v in preds.items()}
         inv={k:1.0/(v+1e-9) for k,v in errors.items()}
         total=sum(inv.values())
@@ -2075,8 +2081,8 @@ def install(app):
         idx={"btc":0,"gpu":1,"energy":2}[series_key]
         y=[float(r[idx]) for r in rows if r[idx] is not None]
         if not y: return [fallback]*horizon,weights
-        mean=sum(y)/len(y); last=y[0]
-        slope=(y[0]-y[-1])/(len(y)-1) if len(y)>1 else 0
+        mean=sum(y)/len(y); last=y[-1]
+        slope=(y[-1]-y[0])/(len(y)-1) if len(y)>1 else 0
         out=[]
         for h in range(1,horizon+1):
             pred=(weights["recent_mean"]*mean + weights["last_value"]*last +
@@ -2092,11 +2098,13 @@ def install(app):
             if len(y)<8:
                 result[name]={"model":"recent_mean","mae":None,"samples":len(y),"ready":False}
                 continue
-            cut=min(48,len(y)-4); test=y[:cut]; train=y[cut:]
-            mean=sum(train)/len(train); last=train[0]
+            cut=min(48,len(y)-4)
+            train=y[:-cut]
+            test=y[-cut:]
+            mean=sum(train)/len(train); last=train[-1]
             preds={"recent_mean":[mean]*len(test),"last_value":[last]*len(test)}
-            slope=(train[0]-train[-1])/(len(train)-1) if len(train)>1 else 0
-            preds["trend"]=[train[0]+slope*(i+1) for i in range(len(test))]
+            slope=(train[-1]-train[0])/(len(train)-1) if len(train)>1 else 0.0
+            preds["trend"]=[last+slope*(i+1) for i in range(len(test))]
             scores={k:sum(abs(a-b) for a,b in zip(test,v))/len(test) for k,v in preds.items()}
             best=min(scores,key=scores.get)
             result[name]={"model":best,"mae":round(scores[best],8),"scores":{k:round(v,8) for k,v in scores.items()},"samples":len(y),"ready":len(y)>=24}
@@ -2695,9 +2703,10 @@ def install(app):
                 a=[float(r[idx]) for r in recent if r[idx] is not None]
                 return sum(a)/len(a) if a else default
             btc0=avg(0,x.btc_hashprice_usd_ph_day); gpu0=avg(1,x.gpu_hourly_usd)
-            pv_shape=max(0.0,math.sin((h+1)/hours*math.pi))
+            # pv_kwh is a horizon total, not an hourly production forecast.
+            # Allocate it evenly and label the assumption; never fabricate a solar curve.
             btc=btc_fc[h]; gpu=gpu_fc[h]; energy=energy_fc[h]
-            pv=x.pv_kwh/hours*(0.35+1.3*pv_shape)
+            pv=max(0.0,float(x.pv_kwh))/hours
             gpu_v=(gpu/x.eur_usd)*x.gpu_utilization*(1-x.gpu_platform_fee)/0.35
             btc_v=(btc/x.eur_usd)/(x.asic_efficiency_j_th*24)*0.98*0.98
             rows.append({"hour":h,"pv_kwh":round(pv,3),"gpu_hourly_usd":round(gpu,4),
@@ -2723,20 +2732,28 @@ def install(app):
         if not c.execute("SELECT 1 FROM synpora_saas_farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
         assets=[dict(r) for r in c.execute("SELECT id,name,kind,power_kw FROM synpora_saas_assets WHERE farm_id=? ORDER BY created_at",(farm_id,)).fetchall()]
         hours=max(1,min(72,x.horizon_hours)); dt=max(0.25,x.interval_hours)
+        snapshot_freshness=_market_snapshot_freshness(c)
         try:
+            latest_eligible=bool(_eligible_market_rows(c,1))
+            if snapshot_freshness.get("status")!="fresh" or not latest_eligible:
+                raise ValueError("No fresh provenance-verified market snapshot")
             btc_fc,_=_ensemble_forecast(c,"btc",hours,x.btc_hashprice_usd_ph_day)
             gpu_fc,_=_ensemble_forecast(c,"gpu",hours,x.gpu_hourly_usd)
             forecast_source="adaptive_market_with_site_tariff_input"
+            forecast_warnings=[]
         except Exception:
             btc_fc=[x.btc_hashprice_usd_ph_day]*hours
             gpu_fc=[x.gpu_hourly_usd]*hours
-            forecast_source="input_fallback"
+            forecast_source="input_fallback_unverified"
+            forecast_warnings=["Market forecast unavailable or not fresh/provenance-verified; supplied input values are used as unverified fallbacks."]
         # Never apply an Austrian or cross-user energy forecast to this farm.
         energy_fc=[float(x.energy_cost_eur_kwh)]*hours
         reserve=max(0,min(100,x.battery_reserve_pct)); cap=max(0,x.battery_capacity_kwh); soc=max(cap*reserve/100,min(cap,cap*x.battery_soc_pct/100))
         power=max(0,x.battery_power_kw); ce=max(.01,min(1,x.battery_charge_efficiency)); de=max(.01,min(1,x.battery_discharge_efficiency)); soc_min=cap*reserve/100; initial_soc=soc
-        import math
-        shape=[max(.05,math.sin(math.pi*(i+.5)/hours)) for i in range(hours)]; pv_total=max(0,x.pv_kwh); scale=pv_total/sum(shape) if sum(shape) else 0; pv=[v*scale for v in shape]
+        # The API accepts only a horizon PV total. A flat allocation is an explicit
+        # neutral assumption, not a fabricated time-of-day solar forecast.
+        pv_total=max(0.0,float(x.pv_kwh))
+        pv=[pv_total/hours]*hours
         candidates=[{"name":a["name"],"kind":"AI Compute" if str(a["kind"]).upper()=="GPU" else "BTC Mining","power":float(a["power_kw"] or 0)} for a in assets if str(a["kind"]).upper() in ("GPU","BTC") and float(a["power_kw"] or 0)>0]
         plan=[]; trace=[]; summary={"btc_kwh":0.0,"gpu_kwh":0.0,"pv_generation_kwh":0.0,"pv_to_compute_kwh":0.0,"grid_export_kwh":0.0,"battery_charge_kwh":0.0,"battery_charge_stored_kwh":0.0,"battery_discharge_kwh":0.0,"battery_losses_kwh":0.0,"total_value_eur":0.0,"energy_cost_eur":0.0}
         for h in range(hours):
@@ -2748,9 +2765,23 @@ def install(app):
             gpu_gross=(float(gpu_fc[h])/eur_usd)*gpu_util*(1-gpu_fee)/(.35+max(0.0,x.gpu_facility_overhead_kw)+max(0.0,x.facility_overhead_kw))
             gpu=gpu_gross-float(energy_fc[h]); grid=max(0.0,x.grid_value_eur_kwh-max(0.0,x.grid_export_fee_eur_kwh)); price=float(energy_fc[h]); before=soc
             btc=max(0.0,btc); gpu=max(0.0,gpu)
-            future=max([btc,gpu,grid]+[max((float(btc_fc[j])/x.eur_usd)/(x.asic_efficiency_j_th*24)*.98*.98,(float(gpu_fc[j])/x.eur_usd)*x.gpu_utilization*(1-x.gpu_platform_fee)/.35,grid) for j in range(h+1,hours)] or [max(btc,gpu,grid)])
+            current_best=max(btc,gpu,grid)
+            future=current_best
+            for j in range(h+1,hours):
+                future_btc_gross=(float(btc_fc[j])/eur_usd)/(asic_eff*24)*.98*.98
+                future_btc_over=max(0.0,x.btc_facility_overhead_kw)+max(0.0,x.facility_overhead_kw)
+                future_btc_device=max(0.01,float(x.btc_device_power_kw))
+                if future_btc_over:
+                    future_btc_gross*=future_btc_device/(future_btc_device+future_btc_over)
+                future_gpu_gross=(float(gpu_fc[j])/eur_usd)*gpu_util*(1-gpu_fee)/(.35+max(0.0,x.gpu_facility_overhead_kw)+max(0.0,x.facility_overhead_kw))
+                future=max(future,max(0.0,future_btc_gross-float(energy_fc[j])),
+                           max(0.0,future_gpu_gross-float(energy_fc[j])),grid)
+            round_trip=ce*de
+            degradation=max(0.0,float(x.battery_degradation_eur_kwh))
             summary["pv_generation_kwh"]+=pv[h]
-            charge=min(pv[h],power*dt,(cap-soc)/ce) if future>max(btc,gpu,grid)+.005 and cap>soc else 0
+            # Charge only when the future net value, after round-trip losses and
+            # degradation, exceeds the best current use/export value.
+            charge=min(pv[h],power*dt,(cap-soc)/ce) if future*round_trip-degradation>current_best+.005 and cap>soc else 0
             charge=max(0.0,charge); soc+=charge*ce; rem=pv[h]-charge
             summary["battery_charge_kwh"]+=charge
             summary["battery_charge_stored_kwh"]+=charge*ce
@@ -2764,7 +2795,10 @@ def install(app):
             if rem>0:
                 summary["total_value_eur"]+=grid*rem; summary["grid_export_kwh"]+=rem
                 plan.append({"hour":h,"asset":"Grid","action":"Grid","pv_kwh":round(rem,3),"battery_discharge_kwh":0,"battery_charge_kwh":round(charge,3),"grid_export_kwh":round(rem,3),"value_eur_kwh":round(grid,5),"soc_before_pct":round(100*before/cap,2) if cap else 0,"soc_after_pct":round(100*soc/cap,2) if cap else 0,"reason":"PV surplus"})
-            if charge<=1e-9 and future>max(btc,gpu,grid)+max(.005,x.battery_value_eur_kwh*max(0.01,min(1.0,x.battery_round_trip_efficiency))) and soc>soc_min:
+            # Discharge when today's best net compute margin beats the future
+            # opportunity after round-trip losses and degradation. The previous
+            # condition was reversed and discharged precisely when waiting was better.
+            if charge<=1e-9 and max(btc,gpu)>grid+.005 and current_best>future*round_trip+degradation+.005 and soc>soc_min:
                 kind="AI Compute" if gpu>=btc else "BTC Mining"; target=next((a for a in candidates if a["kind"]==kind),None); value=max(gpu,btc)
                 if target:
                     take=min(target["power"]*dt,(soc-soc_min)*de,power*dt)
@@ -2780,7 +2814,11 @@ def install(app):
         summary["net_value_eur"]=round(summary["total_value_eur"],2)
         summary["battery_degradation_cost_eur"]=round(summary["battery_discharge_kwh"]*max(0.0,x.battery_degradation_eur_kwh),3)
         summary["net_value_eur"]=round(summary["net_value_eur"]-summary["battery_degradation_cost_eur"],2)
-        return {"farm_id":farm_id,"horizon_hours":hours,"interval_hours":dt,"plan":plan,"soc_trace":trace,"forecasts":{"btc_hashprice_usd_ph_day":btc_fc,"gpu_hourly_usd":gpu_fc,"energy_cost_eur_kwh":energy_fc},"summary":{k:round(v,3) if isinstance(v,float) else v for k,v in summary.items()},"constraints":{"battery_reserve_pct":reserve,"battery_capacity_kwh":cap,"battery_power_kw":power,"charge_efficiency":ce,"discharge_efficiency":de},"forecast_source":forecast_source,"optimizer":"forecast_aware_horizon_v1","objective":"maximize_expected_value_with_battery_opportunity_cost","recommendation_only":True,"hardware_write":False}
+        dispatch_quality={"status":"validated" if forecast_source=="adaptive_market_with_site_tariff_input" else "degraded",
+                          "market_snapshot_freshness":snapshot_freshness,
+                          "pv_profile_method":"flat_allocation_of_user_supplied_horizon_total",
+                          "warnings":forecast_warnings+["Hourly PV distribution is a flat allocation of the supplied horizon total; it is not a site-specific PV forecast."]}
+        return {"farm_id":farm_id,"horizon_hours":hours,"interval_hours":dt,"plan":plan,"soc_trace":trace,"forecasts":{"btc_hashprice_usd_ph_day":btc_fc,"gpu_hourly_usd":gpu_fc,"energy_cost_eur_kwh":energy_fc},"summary":{k:round(v,3) if isinstance(v,float) else v for k,v in summary.items()},"constraints":{"battery_reserve_pct":reserve,"battery_capacity_kwh":cap,"battery_power_kw":power,"charge_efficiency":ce,"discharge_efficiency":de},"forecast_source":forecast_source,"forecast_quality":dispatch_quality,"optimizer":"forecast_aware_horizon_v2","objective":"maximize_expected_value_with_battery_opportunity_cost","recommendation_only":True,"hardware_write":False}
 
     @app.post("/api/v1/farms/{farm_id}/scenario")
     def scenario(farm_id:str,x:ScenarioIn,authorization:str|None=Header(default=None)):
