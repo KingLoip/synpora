@@ -178,6 +178,13 @@ class EconomicValidationTests(unittest.TestCase):
         self.assertEqual(ci["replicates"], 20)
         self.assertGreater(ci["lower_95"], 0.0)
 
+    def test_candidate_must_improve_in_every_chronological_block(self):
+        stable_model = [0.5] * 100
+        baseline = [1.0] * 100
+        unstable_model = [0.5] * 75 + [2.0] * 25
+        self.assertTrue(MODULE._candidate_stable_across_blocks(stable_model, baseline, 4))
+        self.assertFalse(MODULE._candidate_stable_across_blocks(unstable_model, baseline, 4))
+
     def test_corrected_horizon_validation_covers_api_forecast_horizons(self):
         rows = []
         for i in range(650):
