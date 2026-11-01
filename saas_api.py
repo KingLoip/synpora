@@ -2036,8 +2036,10 @@ def install(app):
         gpu_facility_overhead_kw: float=0.0
         facility_overhead_kw: float=0.0
 
-    def _eligible_market_rows(c, limit=168, include_ts=False):
-        # Forecast fitting and weights must use the same provenance gate as learning labels.
+    def _eligible_market_rows(c, limit=168, include_ts=False, require_site_tariff=True):
+        # Site tariffs are required for realized economic labels, but not for
+        # forecasting globally sourced BTC hashprice and GPU marketplace prices.
+        # The user's own tariff is supplied separately to the dispatch calculation.
         raw=c.execute("SELECT ts,payload,btc_hashprice_usd_ph_day,gpu_l40s_usd_hour,austria_spot_eur_kwh FROM market_snapshots ORDER BY ts DESC LIMIT ?",(int(limit),)).fetchall()
         rows=[]
         for row in raw:
@@ -2045,10 +2047,17 @@ def install(app):
                 payload=json.loads(row[1])
             except Exception:
                 continue
-            if not _snapshot_is_learning_eligible(payload):
+            if require_site_tariff:
+                if not _snapshot_is_learning_eligible(payload):
+                    continue
+            elif not _snapshot_is_market_ready(payload):
                 continue
-            try: site_energy=float(payload["site_energy_cost_eur_kwh"])
-            except (KeyError,TypeError,ValueError): continue
+            site_energy=None
+            try:
+                site_energy=float(payload["site_energy_cost_eur_kwh"])
+            except (KeyError,TypeError,ValueError):
+                if require_site_tariff:
+                    continue
             values=(row[0],row[2],row[3],site_energy)
             rows.append(values if include_ts else values[1:])
         # SQL fetches the newest bounded window; restore chronological order before
@@ -2061,7 +2070,7 @@ def install(app):
         # feature window used by _ensemble_forecast. The previous implementation
         # fitted weights on a long-window mean/slope but applied them to a different
         # short-window mean/slope at inference time.
-        rows=_eligible_market_rows(c,168,include_ts=True)
+        rows=_eligible_market_rows(c,168,include_ts=True,require_site_tariff=False)
         idx={"btc":1,"gpu":2,"energy":3}[series_key]
         y=[float(r[idx]) for r in rows if r[idx] is not None]
         if len(y)<24:
@@ -2094,7 +2103,7 @@ def install(app):
         if sample_steps < 1 or len(values) < sample_steps + 32:
             return {"recent_mean":0.0,"last_value":1.0,"trend":0.0}
         errors={"recent_mean":[],"last_value":[],"trend":[]}
-        for origin in range(8,len(values)-sample_steps):
+        for origin in range(max(8,len(values)-sample_steps-200),len(values)-sample_steps):
             history=values[max(0,origin-48):origin]
             mean=sum(history)/len(history)
             last=history[-1]
@@ -2179,7 +2188,7 @@ def install(app):
         w=_adaptive_model_weights(c,series_key)
         vals=list(w.values())
         concentration=max(vals) if vals else 0.33
-        rows=_eligible_market_rows(c,48)
+        rows=_eligible_market_rows(c,48,require_site_tariff=False)
         idx={"btc":0,"gpu":1,"energy":2}[series_key]
         y=[float(r[idx]) for r in rows if r[idx] is not None]
         if len(y)<8:
@@ -2749,18 +2758,19 @@ def install(app):
         if not c.execute("SELECT 1 FROM synpora_saas_farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
         learn=_forecast_learning(c,farm_id)
         models=_model_select(c)
+        models["energy"]={"model":"user_supplied_constant","mae":None,"samples":0,"ready":True,"forecasted":False}
         # Energy tariffs are site-specific user inputs; never infer them from another
         # location's spot market. Market forecasts require fresh, provenance-verified data.
         hours=max(1,min(72,x.horizon_hours))
         snapshot_freshness=_market_snapshot_freshness(c)
         try:
-            adaptive_ready=(snapshot_freshness.get("status")=="fresh" and len(_eligible_market_rows(c,8))>=8)
+            adaptive_ready=(snapshot_freshness.get("status")=="fresh" and len(_eligible_market_rows(c,24,require_site_tariff=False))>=24)
         except Exception:
             adaptive_ready=False
         if adaptive_ready:
             btc_fc,btc_w=_ensemble_forecast(c,"btc",hours,x.btc_hashprice_usd_ph_day)
             gpu_fc,gpu_w=_ensemble_forecast(c,"gpu",hours,x.gpu_hourly_usd)
-            conf={"btc":_ensemble_confidence(c,"btc"),"gpu":_ensemble_confidence(c,"gpu"),"energy":0.0}
+            conf={"btc":_ensemble_confidence(c,"btc"),"gpu":_ensemble_confidence(c,"gpu"),"energy":1.0}
             forecast_method="historical_adaptive_model_selection"
             forecast_source="fresh_external_market_data"
             market_warnings=[]
@@ -2811,7 +2821,7 @@ def install(app):
         snapshot_freshness=_market_snapshot_freshness(c)
         latest_eligible=False
         try:
-            latest_eligible=len(_eligible_market_rows(c,8))>=8
+            latest_eligible=len(_eligible_market_rows(c,24,require_site_tariff=False))>=24
             if snapshot_freshness.get("status")!="fresh" or not latest_eligible:
                 raise ValueError("No fresh provenance-verified market snapshot")
             btc_fc,_=_ensemble_forecast(c,"btc",hours,x.btc_hashprice_usd_ph_day)
