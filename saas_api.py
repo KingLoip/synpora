@@ -2057,37 +2057,60 @@ def install(app):
         return rows
 
     def _adaptive_model_weights(c, series_key):
+        # Calibrate weights with rolling-origin errors from the same 48-observation
+        # feature window used by _ensemble_forecast. The previous implementation
+        # fitted weights on a long-window mean/slope but applied them to a different
+        # short-window mean/slope at inference time.
         rows=_eligible_market_rows(c,168,include_ts=True)
         idx={"btc":1,"gpu":2,"energy":3}[series_key]
         y=[float(r[idx]) for r in rows if r[idx] is not None]
-        if len(y)<8:
-            return {"recent_mean":.34,"last_value":.33,"trend":.33}
-        cut=min(48,len(y)-4)
-        train=y[:-cut]
-        test=y[-cut:]
-        mean=sum(train)/len(train)
-        last=train[-1]
-        slope=(train[-1]-train[0])/(len(train)-1) if len(train)>1 else 0.0
-        preds={"recent_mean":[mean]*len(test),"last_value":[last]*len(test),
-               "trend":[last+slope*(i+1) for i in range(len(test))]}
-        errors={k:sum(abs(a-b) for a,b in zip(test,v))/len(test) for k,v in preds.items()}
-        inv={k:1.0/(v+1e-9) for k,v in errors.items()}
-        total=sum(inv.values())
-        return {k:round(v/total,4) for k,v in inv.items()}
+        if len(y)<24:
+            return {"recent_mean":0.0,"last_value":1.0,"trend":0.0}
+        errors={"recent_mean":[],"last_value":[],"trend":[]}
+        first=max(8,len(y)-48)
+        for target_idx in range(first,len(y)):
+            history=y[max(0,target_idx-48):target_idx]
+            mean=sum(history)/len(history)
+            last=history[-1]
+            slope=(history[-1]-history[0])/(len(history)-1) if len(history)>1 else 0.0
+            predictions={"recent_mean":mean,"last_value":last,"trend":last+slope}
+            for name,prediction in predictions.items():
+                errors[name].append(abs(y[target_idx]-prediction))
+        maes={name:sum(values)/len(values) for name,values in errors.items() if values}
+        inverse={name:1.0/(mae+1e-9) for name,mae in maes.items()}
+        total=sum(inverse.values())
+        if not total:
+            return {"recent_mean":0.0,"last_value":1.0,"trend":0.0}
+        return {name:round(inverse.get(name,0.0)/total,4)
+                for name in ("recent_mean","last_value","trend")}
 
     def _ensemble_forecast(c, series_key, horizon, fallback):
         weights=_adaptive_model_weights(c,series_key)
-        rows=_eligible_market_rows(c,48)
-        idx={"btc":0,"gpu":1,"energy":2}[series_key]
+        rows=_eligible_market_rows(c,48,include_ts=True)
+        idx={"btc":1,"gpu":2,"energy":3}[series_key]
         y=[float(r[idx]) for r in rows if r[idx] is not None]
         if not y: return [fallback]*horizon,weights
-        mean=sum(y)/len(y); last=y[-1]
-        slope=(y[-1]-y[0])/(len(y)-1) if len(y)>1 else 0
+        timestamps=[float(r[0]) for r in rows if r[idx] is not None]
+        gaps=[timestamps[i]-timestamps[i-1] for i in range(1,len(timestamps))
+              if timestamps[i]>timestamps[i-1]]
+        interval_seconds=sorted(gaps)[len(gaps)//2] if gaps else 300.0
+        if interval_seconds<=0:
+            interval_seconds=300.0
+        mean=sum(y)/len(y)
+        last=y[-1]
+        slope=(y[-1]-y[0])/(len(y)-1) if len(y)>1 else 0.0
         out=[]
         for h in range(1,horizon+1):
+            # Market snapshots arrive every few minutes, while API horizons are
+            # expressed in hours. Convert units, then damp the short-term trend
+            # back toward persistence over longer horizons to avoid extrapolating
+            # a five-minute slope linearly for up to 72 hours.
+            sample_steps=(h*3600.0)/interval_seconds
+            damped_steps=min(12.0,sample_steps)*math.exp(-max(0.0,sample_steps-12.0)/48.0)
+            trend=last+slope*damped_steps
             pred=(weights["recent_mean"]*mean + weights["last_value"]*last +
-                  weights["trend"]*(last+slope*h))
-            out.append(pred)
+                  weights["trend"]*trend)
+            out.append(max(0.0,pred))
         return out,weights
 
     def _model_select(c):
@@ -2095,19 +2118,24 @@ def install(app):
         result={}
         for name,idx in (("btc",1),("gpu",2),("energy",3)):
             y=[float(r[idx]) for r in rows if r[idx] is not None]
-            if len(y)<8:
-                result[name]={"model":"recent_mean","mae":None,"samples":len(y),"ready":False}
+            errors={"recent_mean":[],"last_value":[],"trend":[]}
+            first=max(8,len(y)-48)
+            for target_idx in range(first,len(y)):
+                history=y[max(0,target_idx-48):target_idx]
+                mean=sum(history)/len(history)
+                last=history[-1]
+                slope=(history[-1]-history[0])/(len(history)-1) if len(history)>1 else 0.0
+                predictions={"recent_mean":mean,"last_value":last,"trend":last+slope}
+                for model,prediction in predictions.items():
+                    errors[model].append(abs(y[target_idx]-prediction))
+            scores={model:sum(values)/len(values) for model,values in errors.items() if values}
+            if not scores:
+                result[name]={"model":"last_value","mae":None,"samples":len(y),"ready":False}
                 continue
-            cut=min(48,len(y)-4)
-            train=y[:-cut]
-            test=y[-cut:]
-            mean=sum(train)/len(train); last=train[-1]
-            preds={"recent_mean":[mean]*len(test),"last_value":[last]*len(test)}
-            slope=(train[-1]-train[0])/(len(train)-1) if len(train)>1 else 0.0
-            preds["trend"]=[last+slope*(i+1) for i in range(len(test))]
-            scores={k:sum(abs(a-b) for a,b in zip(test,v))/len(test) for k,v in preds.items()}
             best=min(scores,key=scores.get)
-            result[name]={"model":best,"mae":round(scores[best],8),"scores":{k:round(v,8) for k,v in scores.items()},"samples":len(y),"ready":len(y)>=24}
+            result[name]={"model":best,"mae":round(scores[best],8),
+                          "scores":{k:round(v,8) for k,v in scores.items()},
+                          "samples":len(y),"ready":len(y)>=24}
         return result
 
     def _ensemble_confidence(c, series_key):
