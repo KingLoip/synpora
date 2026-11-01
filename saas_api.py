@@ -2108,31 +2108,47 @@ def install(app):
 
     def _adaptive_horizon_weights(values, sample_steps):
         import math
+        import statistics
+        names=("recent_mean","last_value","trend","mean_24","median_24",
+               "seasonal_24","seasonal_168","ewma_02","ewma_05")
+        fallback={name:(1.0 if name=="last_value" else 0.0) for name in names}
         # Select a model using only historical outcomes at this same forecast
         # horizon. A one-step winner is not assumed to be a six- or 24-hour winner.
         if sample_steps < 1 or len(values) < sample_steps + 32:
-            return {"recent_mean":0.0,"last_value":1.0,"trend":0.0}
-        errors={"recent_mean":[],"last_value":[],"trend":[]}
-        for origin in range(max(8,len(values)-sample_steps-200),len(values)-sample_steps):
-            history=values[max(0,origin-48):origin]
-            mean=sum(history)/len(history)
-            last=history[-1]
-            slope=(history[-1]-history[0])/(len(history)-1) if len(history)>1 else 0.0
+            return fallback
+        errors={name:[] for name in names}
+        for origin in range(max(168,len(values)-sample_steps-200),len(values)-sample_steps):
+            history=values[max(0,origin-168):origin]
+            recent=history[-48:]
+            last=recent[-1]
+            mean=sum(recent)/len(recent)
+            mean24=sum(history[-24:])/min(24,len(history))
+            median24=statistics.median(history[-24:])
+            seasonal24=history[-24] if len(history)>=24 else last
+            seasonal168=history[-168] if len(history)>=168 else last
+            def ewma(series,alpha):
+                value=series[0]
+                for item in series[1:]:
+                    value=alpha*item+(1.0-alpha)*value
+                return value
+            slope=(recent[-1]-recent[0])/(len(recent)-1) if len(recent)>1 else 0.0
             damped_steps=min(12.0,float(sample_steps))*math.exp(
                 -max(0.0,float(sample_steps)-12.0)/12.0)
             predictions={"recent_mean":mean,"last_value":last,
-                         "trend":last+slope*damped_steps}
+                "trend":last+slope*damped_steps,"mean_24":mean24,
+                "median_24":median24,"seasonal_24":seasonal24,
+                "seasonal_168":seasonal168,"ewma_02":ewma(recent,0.2),
+                "ewma_05":ewma(recent,0.5)}
             actual=values[origin+sample_steps]
             for name,prediction in predictions.items():
                 errors[name].append(abs(actual-prediction))
         maes={name:sum(series)/len(series) for name,series in errors.items() if len(series)>=24}
         if "last_value" not in maes:
-            return {"recent_mean":0.0,"last_value":1.0,"trend":0.0}
+            return fallback
         best=min(maes,key=maes.get)
         if best=="last_value" or maes[best]>=maes["last_value"]*0.95:
             best="last_value"
-        return {name:(1.0 if name==best else 0.0)
-                for name in ("recent_mean","last_value","trend")}
+        return {name:(1.0 if name==best else 0.0) for name in names}
 
     def _ensemble_forecast(c, series_key, horizon, fallback):
         import math
@@ -2147,10 +2163,20 @@ def install(app):
         interval_seconds=sorted(gaps)[len(gaps)//2] if gaps else 300.0
         if interval_seconds<=0:
             interval_seconds=300.0
-        history=y[-48:]
-        mean=sum(history)/len(history)
-        last=history[-1]
-        slope=(history[-1]-history[0])/(len(history)-1) if len(history)>1 else 0.0
+        history=y[-168:]
+        recent=history[-48:]
+        mean=sum(recent)/len(recent)
+        mean24=sum(history[-24:])/min(24,len(history))
+        median24=statistics.median(history[-24:])
+        last=recent[-1]
+        seasonal24=history[-24] if len(history)>=24 else last
+        seasonal168=history[-168] if len(history)>=168 else last
+        def ewma(series,alpha):
+            value=series[0]
+            for item in series[1:]:
+                value=alpha*item+(1.0-alpha)*value
+            return value
+        slope=(recent[-1]-recent[0])/(len(recent)-1) if len(recent)>1 else 0.0
         out=[]
         horizon_weights={}
         for h in range(1,horizon+1):
@@ -2158,9 +2184,12 @@ def install(app):
             weights=_adaptive_horizon_weights(y,sample_steps)
             damped_steps=min(12.0,float(sample_steps))*math.exp(
                 -max(0.0,float(sample_steps)-12.0)/12.0)
-            trend=last+slope*damped_steps
-            pred=(weights["recent_mean"]*mean + weights["last_value"]*last +
-                  weights["trend"]*trend)
+            predictions={"recent_mean":mean,"last_value":last,
+                "trend":last+slope*damped_steps,"mean_24":mean24,
+                "median_24":median24,"seasonal_24":seasonal24,
+                "seasonal_168":seasonal168,"ewma_02":ewma(recent,0.2),
+                "ewma_05":ewma(recent,0.5)}
+            pred=sum(weights[name]*predictions[name] for name in predictions)
             out.append(max(0.0,pred))
             horizon_weights[str(h)] = weights
         return out,{"method":"horizon_specific_rolling_origin",
