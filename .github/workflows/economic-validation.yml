@@ -47,6 +47,7 @@ jobs:
               backtest = result["empirical_risk_aware_walk_forward"]
               gate = dict(backtest["forecast_quality_gate"])
               gate["actual_pairs"] = backtest.get("walk_forward_shrunk_forecast", {}).get("pairs", 0)
+              gate["production_ensemble"] = backtest.get("production_ensemble_forecast_validation", {})
               gates[name] = gate
           blocked = {
               name: gate for name, gate in gates.items()
@@ -71,6 +72,21 @@ jobs:
               skill_text = "n/a" if skill is None else f"{skill:.3%}"
               lines.append(
                   f"| {name} | {gate.get('status')} | {gate.get('actual_pairs')} | {skill_text} |"
+              )
+          lines += [
+              "",
+              "## Production adaptive-ensemble replay (diagnostic)",
+              "",
+              "| Tariff scenario | Best candidate | Pairs | MAE skill vs persistence | Eligible |",
+              "|---|---|---:|---:|---:|",
+          ]
+          for name, gate in gates.items():
+              candidate = gate.get("production_ensemble", {})
+              candidate_skill = candidate.get("best_mae_skill_vs_persistence")
+              candidate_skill_text = "n/a" if candidate_skill is None else f"{candidate_skill:.3%}"
+              lines.append(
+                  f"| {name} | {candidate.get('best_model', 'n/a')} | {candidate.get('pairs', 0)} | "
+                  f"{candidate_skill_text} | {candidate.get('release_eligible', False)} |"
               )
           lines += [
               "",
