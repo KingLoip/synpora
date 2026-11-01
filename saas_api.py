@@ -2077,11 +2077,14 @@ def install(app):
             for name,prediction in predictions.items():
                 errors[name].append(abs(y[target_idx]-prediction))
         maes={name:sum(values)/len(values) for name,values in errors.items() if values}
-        inverse={name:1.0/(mae+1e-9) for name,mae in maes.items()}
-        total=sum(inverse.values())
-        if not total:
+        if not maes or "last_value" not in maes:
             return {"recent_mean":0.0,"last_value":1.0,"trend":0.0}
-        return {name:round(inverse.get(name,0.0)/total,4)
+        best=min(maes,key=maes.get)
+        # Never take model risk unless a candidate beats persistence by at least
+        # 5% on rolling-origin validation. Otherwise use the no-change baseline.
+        if best=="last_value" or maes[best]>maes["last_value"]*0.95:
+            best="last_value"
+        return {name:(1.0 if name==best else 0.0)
                 for name in ("recent_mean","last_value","trend")}
 
     def _ensemble_forecast(c, series_key, horizon, fallback):
@@ -2107,7 +2110,7 @@ def install(app):
             # back toward persistence over longer horizons to avoid extrapolating
             # a five-minute slope linearly for up to 72 hours.
             sample_steps=(h*3600.0)/interval_seconds
-            damped_steps=min(12.0,sample_steps)*math.exp(-max(0.0,sample_steps-12.0)/48.0)
+            damped_steps=min(12.0,sample_steps)*math.exp(-max(0.0,sample_steps-12.0)/12.0)
             trend=last+slope*damped_steps
             pred=(weights["recent_mean"]*mean + weights["last_value"]*last +
                   weights["trend"]*trend)
@@ -2134,6 +2137,8 @@ def install(app):
                 result[name]={"model":"last_value","mae":None,"samples":len(y),"ready":False}
                 continue
             best=min(scores,key=scores.get)
+            if best!="last_value" and scores[best]>scores.get("last_value",float("inf"))*0.95:
+                best="last_value"
             result[name]={"model":best,"mae":round(scores[best],8),
                           "scores":{k:round(v,8) for k,v in scores.items()},
                           "samples":len(y),"ready":len(y)>=24}
