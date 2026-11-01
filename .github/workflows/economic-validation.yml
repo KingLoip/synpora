@@ -42,10 +42,12 @@ jobs:
           with open("/tmp/synpora-economic-validation.json", encoding="utf-8") as handle:
               report = json.load(handle)
 
-          gates = {
-              name: result["empirical_risk_aware_walk_forward"]["forecast_quality_gate"]
-              for name, result in report.get("results", {}).items()
-          }
+          gates = {}
+          for name, result in report.get("results", {}).items():
+              backtest = result["empirical_risk_aware_walk_forward"]
+              gate = dict(backtest["forecast_quality_gate"])
+              gate["actual_pairs"] = backtest.get("walk_forward_shrunk_forecast", {}).get("pairs", 0)
+              gates[name] = gate
           blocked = {
               name: gate for name, gate in gates.items()
               if gate.get("status") != "pass"
@@ -64,9 +66,9 @@ jobs:
           ]
           for name, gate in gates.items():
               skill = gate.get("observed_mae_skill_vs_persistence")
+              skill_text = "n/a" if skill is None else f"{skill:.3%}"
               lines.append(
-                  f"| {name} | {gate.get('status')} | {gate.get('minimum_pairs')} | "
-                  f"{'n/a' if skill is None else f'{skill:.3%}'} |"
+                  f"| {name} | {gate.get('status')} | {gate.get('actual_pairs')} | {skill_text} |"
               )
           lines += [
               "",
