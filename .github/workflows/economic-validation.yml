@@ -77,17 +77,18 @@ jobs:
               "",
               "## Production adaptive-ensemble replay (diagnostic)",
               "",
-              "| Tariff scenario | Best candidate | Pairs | MAE skill vs persistence | Eligible |",
+              "| Tariff scenario | Candidate model | Pairs | MAE skill vs persistence | Eligible |",
               "|---|---|---:|---:|---:|",
           ]
           for name, gate in gates.items():
               candidate = gate.get("production_ensemble", {})
-              candidate_skill = candidate.get("best_mae_skill_vs_persistence")
-              candidate_skill_text = "n/a" if candidate_skill is None else f"{candidate_skill:.3%}"
-              lines.append(
-                  f"| {name} | {candidate.get('best_model', 'n/a')} | {candidate.get('pairs', 0)} | "
-                  f"{candidate_skill_text} | {candidate.get('release_eligible', False)} |"
-              )
+              for model_name, model_result in candidate.get("models", {}).items():
+                  candidate_skill = model_result.get("mae_skill_vs_persistence")
+                  candidate_skill_text = "n/a" if candidate_skill is None else f"{candidate_skill:.3%}"
+                  lines.append(
+                      f"| {name} | {model_name} | {candidate.get('pairs', 0)} | "
+                      f"{candidate_skill_text} | {model_result.get('release_eligible', False)} |"
+                  )
           lines += [
               "",
               "Investment validation remains separate from technical production readiness. "
