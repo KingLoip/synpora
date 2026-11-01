@@ -52,6 +52,11 @@ class ChronologicalForecastRegressionTests(unittest.TestCase):
         self.assertIn("len(values) < sample_steps + 32", source)
         self.assertIn('maes[best]>=maes["last_value"]*0.95', source)
 
+    def test_forecast_candidate_family_includes_seasonal_and_ewma_models(self):
+        source = ast.get_source_segment(SOURCE, find_function("_adaptive_horizon_weights"))
+        for name in ("seasonal_24", "seasonal_168", "ewma_02", "ewma_05", "median_24"):
+            self.assertIn(name, source)
+
     def test_ensemble_forecast_uses_horizon_specific_weights_and_snapshot_cadence(self):
         source = ast.get_source_segment(SOURCE, find_function("_ensemble_forecast"))
         self.assertIn("_eligible_market_rows(c,2000,include_ts=True,require_site_tariff=False)", source)
