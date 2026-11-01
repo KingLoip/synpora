@@ -2688,7 +2688,10 @@ def install(app):
         # location's spot market. Market forecasts require fresh, provenance-verified data.
         hours=max(1,min(72,x.horizon_hours))
         snapshot_freshness=_market_snapshot_freshness(c)
-        adaptive_ready=(snapshot_freshness.get("status")=="fresh" and len(_eligible_market_rows(c,8))>=8)
+        try:
+            adaptive_ready=(snapshot_freshness.get("status")=="fresh" and len(_eligible_market_rows(c,8))>=8)
+        except Exception:
+            adaptive_ready=False
         if adaptive_ready:
             btc_fc,btc_w=_ensemble_forecast(c,"btc",hours,x.btc_hashprice_usd_ph_day)
             gpu_fc,gpu_w=_ensemble_forecast(c,"gpu",hours,x.gpu_hourly_usd)
@@ -2739,6 +2742,7 @@ def install(app):
         assets=[dict(r) for r in c.execute("SELECT id,name,kind,power_kw FROM synpora_saas_assets WHERE farm_id=? ORDER BY created_at",(farm_id,)).fetchall()]
         hours=max(1,min(72,x.horizon_hours)); dt=max(0.25,x.interval_hours)
         snapshot_freshness=_market_snapshot_freshness(c)
+        latest_eligible=False
         try:
             latest_eligible=len(_eligible_market_rows(c,8))>=8
             if snapshot_freshness.get("status")!="fresh" or not latest_eligible:
