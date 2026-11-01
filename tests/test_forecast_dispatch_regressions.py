@@ -38,6 +38,12 @@ class ChronologicalForecastRegressionTests(unittest.TestCase):
         self.assertIn("last=y[-1]", source)
         self.assertIn("slope=(y[-1]-y[0])", source)
 
+    def test_market_history_supports_compact_extended_provenance_data(self):
+        source = ast.get_source_segment(SOURCE, find_function("market_history"))
+        self.assertIn("compact:bool=False", source)
+        self.assertIn("2000 if compact else 500", source)
+        self.assertIn('compact_payload["data_quality"]', source)
+
 
 class DispatchSafetyRegressionTests(unittest.TestCase):
     def test_forecast_plan_marks_input_fallback_as_unverified(self):
