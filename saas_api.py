@@ -2724,11 +2724,13 @@ def install(app):
                          "btc_value_eur_kwh":round(btc_v,5),"best_option":"AI Compute" if gpu_v>=btc_v else "BTC Mining"})
         forecast_quality=_forecast_quality(rows,models,conf,hours)
         forecast_quality["warnings"].append("Energy cost is held at the supplied site tariff; no location-independent electricity-price forecast is applied.")
+        forecast_quality["warnings"].append("Hourly PV is a flat allocation of the supplied horizon total; it is not a site-specific PV forecast.")
         forecast_quality["market_snapshot_freshness"]=snapshot_freshness
         forecast_quality["warnings"] += snapshot_freshness["warnings"] + market_warnings
         if not adaptive_ready or snapshot_freshness["status"] in ("missing","invalid","stale","reference_or_partial"):
             forecast_quality["status"]="degraded" if forecast_quality["valid"] else "invalid"
         return {"farm_id":farm_id,"horizon_hours":hours,"forecast":rows,
+                "pv_profile_method":"flat_allocation_of_user_supplied_horizon_total",
                 "method":forecast_method,"forecast_source":forecast_source,"learning":learn,"models":models,"ensemble_weights":{"btc":btc_w,"gpu":gpu_w,"energy":energy_w},"ensemble_confidence":conf,
                 "forecast_quality":forecast_quality,
                 "recommendation_only":True,"hardware_write":False}
