@@ -2106,7 +2106,7 @@ def install(app):
         return {name:(1.0 if name==best else 0.0)
                 for name in ("recent_mean","last_value","trend")}
 
-    def _adaptive_horizon_weights(values, sample_steps):
+    def _adaptive_horizon_weights(values, sample_steps, interval_seconds=300.0):
         import math
         import statistics
         names=("recent_mean","last_value","trend","mean_24","median_24",
@@ -2124,8 +2124,14 @@ def install(app):
             mean=sum(recent)/len(recent)
             mean24=sum(history[-24:])/min(24,len(history))
             median24=statistics.median(history[-24:])
-            seasonal24=history[-24] if len(history)>=24 else last
-            seasonal168=history[-168] if len(history)>=168 else last
+            interval=max(1.0,float(interval_seconds))
+            target_index=origin+sample_steps
+            period_24h=max(1,round(24.0*3600.0/interval))
+            period_168h=max(1,round(168.0*3600.0/interval))
+            seasonal24_index=target_index-period_24h
+            seasonal168_index=target_index-period_168h
+            seasonal24=(values[seasonal24_index] if 0<=seasonal24_index<=origin else last)
+            seasonal168=(values[seasonal168_index] if 0<=seasonal168_index<=origin else last)
             def ewma(series,alpha):
                 value=series[0]
                 for item in series[1:]:
@@ -2136,8 +2142,8 @@ def install(app):
                 -max(0.0,float(sample_steps)-12.0)/12.0)
             predictions={"recent_mean":mean,"last_value":last,
                 "trend":last+slope*damped_steps,"mean_24":mean24,
-                "median_24":median24,"seasonal_24":seasonal24,
-                "seasonal_168":seasonal168,"ewma_02":ewma(recent,0.2),
+                "median_24":median24,"seasonal_24h":seasonal24,
+                "seasonal_168h":seasonal168,"ewma_02":ewma(recent,0.2),
                 "ewma_05":ewma(recent,0.5)}
             actual=values[origin+sample_steps]
             for name,prediction in predictions.items():
@@ -2182,7 +2188,7 @@ def install(app):
         horizon_weights={}
         for h in range(1,horizon+1):
             sample_steps=max(1,round((h*3600.0)/interval_seconds))
-            weights=_adaptive_horizon_weights(y,sample_steps)
+            weights=_adaptive_horizon_weights(y,sample_steps,interval_seconds)
             damped_steps=min(12.0,float(sample_steps))*math.exp(
                 -max(0.0,float(sample_steps)-12.0)/12.0)
             predictions={"recent_mean":mean,"last_value":last,
@@ -2250,15 +2256,20 @@ def install(app):
         baseline_errors=[]
         for origin in range(first_origin,len(y)-sample_steps):
             training=y[:origin]
-            weights=_adaptive_horizon_weights(training,sample_steps)
+            weights=_adaptive_horizon_weights(training,sample_steps,interval_seconds)
             history=training[-168:]
             recent=history[-48:]
             mean=sum(recent)/len(recent)
             last=recent[-1]
             mean24=sum(history[-24:])/min(24,len(history))
             median24=statistics.median(history[-24:])
-            seasonal24=history[-24] if len(history)>=24 else last
-            seasonal168=history[-168] if len(history)>=168 else last
+            target_index=len(training)-1+sample_steps
+            period_24h=max(1,round(24.0*3600.0/interval_seconds))
+            period_168h=max(1,round(168.0*3600.0/interval_seconds))
+            seasonal24_index=target_index-period_24h
+            seasonal168_index=target_index-period_168h
+            seasonal24=(training[seasonal24_index] if 0<=seasonal24_index<len(training) else last)
+            seasonal168=(training[seasonal168_index] if 0<=seasonal168_index<len(training) else last)
             def ewma(series,alpha):
                 value=series[0]
                 for item in series[1:]:
