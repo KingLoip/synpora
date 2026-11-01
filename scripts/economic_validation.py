@@ -305,7 +305,7 @@ def corrected_forecast_weights(values, sample_steps=1, interval_seconds=300.0):
         return fallback
     errors = {name: [] for name in names}
     for origin in range(max(168, len(values) - sample_steps - 100), len(values) - sample_steps):
-        history = values[max(0, origin - 168):origin]
+        history = values[max(0, origin - 167):origin + 1]
         recent = history[-48:]
         last = recent[-1]
         mean = statistics.fmean(recent)
