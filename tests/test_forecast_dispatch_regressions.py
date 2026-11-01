@@ -34,11 +34,18 @@ class ChronologicalForecastRegressionTests(unittest.TestCase):
         self.assertIn("history=y[max(0,target_idx-48):target_idx]", source)
         self.assertIn("first=max(8,len(y)-48)", source)
 
-    def test_ensemble_forecast_converts_hours_to_snapshot_steps_and_damps_trend(self):
+    def test_horizon_weights_are_selected_from_same_horizon_outcomes(self):
+        source = ast.get_source_segment(SOURCE, find_function("_adaptive_horizon_weights"))
+        self.assertIn("values[origin+sample_steps]", source)
+        self.assertIn("len(values) < sample_steps + 32", source)
+        self.assertIn('maes[best]>=maes["last_value"]*0.95', source)
+
+    def test_ensemble_forecast_uses_horizon_specific_weights_and_snapshot_cadence(self):
         source = ast.get_source_segment(SOURCE, find_function("_ensemble_forecast"))
-        self.assertIn("last=y[-1]", source)
-        self.assertIn("sample_steps=(h*3600.0)/interval_seconds", source)
-        self.assertIn("math.exp(-max(0.0,sample_steps-12.0)/12.0)", source)
+        self.assertIn("_eligible_market_rows(c,500,include_ts=True)", source)
+        self.assertIn("sample_steps=max(1,round((h*3600.0)/interval_seconds))", source)
+        self.assertIn("_adaptive_horizon_weights(y,sample_steps)", source)
+        self.assertIn('"weights_by_horizon":horizon_weights', source)
         self.assertIn("max(0.0,pred)", source)
 
 
