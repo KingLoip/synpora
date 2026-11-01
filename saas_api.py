@@ -2136,7 +2136,7 @@ def install(app):
 
     def _ensemble_forecast(c, series_key, horizon, fallback):
         import math
-        rows=_eligible_market_rows(c,500,include_ts=True)
+        rows=_eligible_market_rows(c,2000,include_ts=True,require_site_tariff=False)
         idx={"btc":1,"gpu":2,"energy":3}[series_key]
         valid=[r for r in rows if r[idx] is not None]
         y=[float(r[idx]) for r in valid]
@@ -2168,7 +2168,7 @@ def install(app):
                     "weights_by_horizon":horizon_weights}
 
     def _model_select(c):
-        rows=_eligible_market_rows(c,168,include_ts=True)
+        rows=_eligible_market_rows(c,168,include_ts=True,require_site_tariff=False)
         result={}
         for name,idx in (("btc",1),("gpu",2),("energy",3)):
             y=[float(r[idx]) for r in rows if r[idx] is not None]
