@@ -2688,7 +2688,7 @@ def install(app):
         # location's spot market. Market forecasts require fresh, provenance-verified data.
         hours=max(1,min(72,x.horizon_hours))
         snapshot_freshness=_market_snapshot_freshness(c)
-        adaptive_ready=(snapshot_freshness.get("status")=="fresh" and bool(_eligible_market_rows(c,1)))
+        adaptive_ready=(snapshot_freshness.get("status")=="fresh" and len(_eligible_market_rows(c,8))>=8)
         if adaptive_ready:
             btc_fc,btc_w=_ensemble_forecast(c,"btc",hours,x.btc_hashprice_usd_ph_day)
             gpu_fc,gpu_w=_ensemble_forecast(c,"gpu",hours,x.gpu_hourly_usd)
@@ -2740,7 +2740,7 @@ def install(app):
         hours=max(1,min(72,x.horizon_hours)); dt=max(0.25,x.interval_hours)
         snapshot_freshness=_market_snapshot_freshness(c)
         try:
-            latest_eligible=bool(_eligible_market_rows(c,1))
+            latest_eligible=len(_eligible_market_rows(c,8))>=8
             if snapshot_freshness.get("status")!="fresh" or not latest_eligible:
                 raise ValueError("No fresh provenance-verified market snapshot")
             btc_fc,_=_ensemble_forecast(c,"btc",hours,x.btc_hashprice_usd_ph_day)
@@ -2789,7 +2789,7 @@ def install(app):
             summary["pv_generation_kwh"]+=pv[h]
             # Charge only when the future net value, after round-trip losses and
             # degradation, exceeds the best current use/export value.
-            charge=min(pv[h],power*dt,(cap-soc)/ce) if future*round_trip-degradation>current_best+.005 and cap>soc else 0
+            charge=min(pv[h],power*dt,(cap-soc)/ce) if latest_eligible and future*round_trip-degradation>current_best+.005 and cap>soc else 0
             charge=max(0.0,charge); soc+=charge*ce; rem=pv[h]-charge
             summary["battery_charge_kwh"]+=charge
             summary["battery_charge_stored_kwh"]+=charge*ce
@@ -2806,7 +2806,7 @@ def install(app):
             # Discharge when today's best net compute margin beats the future
             # opportunity after round-trip losses and degradation. The previous
             # condition was reversed and discharged precisely when waiting was better.
-            if charge<=1e-9 and max(btc,gpu)>grid+.005 and current_best>future+degradation+.005 and soc>soc_min:
+            if latest_eligible and charge<=1e-9 and max(btc,gpu)>grid+.005 and current_best>future+degradation+.005 and soc>soc_min:
                 kind="AI Compute" if gpu>=btc else "BTC Mining"; target=next((a for a in candidates if a["kind"]==kind),None); value=max(gpu,btc)
                 if target:
                     take=min(target["power"]*dt,(soc-soc_min)*de,power*dt)
