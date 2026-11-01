@@ -2224,19 +2224,66 @@ def install(app):
                           "samples":len(y),"ready":len(y)>=24}
         return result
 
-    def _ensemble_confidence(c, series_key):
-        w=_adaptive_model_weights(c,series_key)
-        vals=list(w.values())
-        concentration=max(vals) if vals else 0.33
-        rows=_eligible_market_rows(c,48,require_site_tariff=False)
-        idx={"btc":0,"gpu":1,"energy":2}[series_key]
-        y=[float(r[idx]) for r in rows if r[idx] is not None]
-        if len(y)<8:
+    def _ensemble_confidence(c, series_key, horizon_hours=1):
+        import statistics
+        # Confidence must be measured at the requested horizon, not inferred from
+        # one-step model weights. Hold out the latest 24 origins and train each
+        # replay strictly on observations available before that origin.
+        rows=_eligible_market_rows(c,2000,include_ts=True,require_site_tariff=False)
+        idx={"btc":1,"gpu":2,"energy":3}[series_key]
+        valid=[r for r in rows if r[idx] is not None]
+        y=[float(r[idx]) for r in valid]
+        if len(y)<216:
             return 0.55
-        mean=sum(y)/len(y)
-        volatility=(sum(abs(v-mean) for v in y)/len(y))/(abs(mean)+1e-9)
-        stability=max(0.0,min(1.0,1.0-volatility))
-        return round(max(.55,min(.95,.55+.25*concentration+.20*stability)),3)
+        timestamps=[float(r[0]) for r in valid]
+        gaps=[timestamps[i]-timestamps[i-1] for i in range(1,len(timestamps))
+              if timestamps[i]>timestamps[i-1]]
+        interval_seconds=statistics.median(gaps) if gaps else 300.0
+        if interval_seconds<=0:
+            return 0.55
+        sample_steps=max(1,round((float(horizon_hours)*3600.0)/interval_seconds))
+        first_origin=len(y)-sample_steps-24
+        if first_origin < sample_steps+192:
+            return 0.55
+        model_errors=[]
+        baseline_errors=[]
+        for origin in range(first_origin,len(y)-sample_steps):
+            training=y[:origin]
+            weights=_adaptive_horizon_weights(training,sample_steps)
+            history=training[-168:]
+            recent=history[-48:]
+            mean=sum(recent)/len(recent)
+            last=recent[-1]
+            mean24=sum(history[-24:])/min(24,len(history))
+            median24=statistics.median(history[-24:])
+            seasonal24=history[-24] if len(history)>=24 else last
+            seasonal168=history[-168] if len(history)>=168 else last
+            def ewma(series,alpha):
+                value=series[0]
+                for item in series[1:]:
+                    value=alpha*item+(1.0-alpha)*value
+                return value
+            slope=(recent[-1]-recent[0])/(len(recent)-1) if len(recent)>1 else 0.0
+            damped_steps=min(12.0,float(sample_steps))*math.exp(
+                -max(0.0,float(sample_steps)-12.0)/12.0)
+            candidates={"recent_mean":mean,"last_value":last,
+                "trend":last+slope*damped_steps,"mean_24":mean24,
+                "median_24":median24,"seasonal_24":seasonal24,
+                "seasonal_168":seasonal168,"ewma_02":ewma(recent,0.2),
+                "ewma_05":ewma(recent,0.5)}
+            predicted=sum(weights[name]*candidates[name] for name in candidates)
+            actual=y[origin+sample_steps]
+            model_errors.append(abs(actual-predicted))
+            baseline_errors.append(abs(actual-y[origin]))
+        if len(model_errors)<24:
+            return 0.55
+        baseline_mae=statistics.fmean(baseline_errors)
+        if baseline_mae<=1e-12:
+            return 0.55
+        skill=1.0-statistics.fmean(model_errors)/baseline_mae
+        # This is a conservative quality heuristic, not a calibrated probability.
+        confidence=0.55+0.40*max(0.0,min(1.0,skill))
+        return round(max(0.55,min(0.95,confidence)),3)
 
     def _settled_learning_stats(c, farm_id, strategy):
         rows=c.execute("SELECT predicted_value,actual_value,actual_best_value,regret_eur_kwh FROM decision_ledger WHERE farm_id=? AND chosen=? AND status='settled' AND predicted_value IS NOT NULL AND actual_value IS NOT NULL ORDER BY ts DESC LIMIT 100",(farm_id,strategy)).fetchall()
@@ -2810,7 +2857,7 @@ def install(app):
         if adaptive_ready:
             btc_fc,btc_w=_ensemble_forecast(c,"btc",hours,x.btc_hashprice_usd_ph_day)
             gpu_fc,gpu_w=_ensemble_forecast(c,"gpu",hours,x.gpu_hourly_usd)
-            conf={"btc":_ensemble_confidence(c,"btc"),"gpu":_ensemble_confidence(c,"gpu"),"energy":1.0}
+            conf={"btc":_ensemble_confidence(c,"btc",hours),"gpu":_ensemble_confidence(c,"gpu",hours),"energy":1.0}
             forecast_method="historical_adaptive_model_selection"
             forecast_source="fresh_external_market_data"
             market_warnings=[]
@@ -2838,6 +2885,8 @@ def install(app):
                          "btc_hashprice_usd_ph_day":round(btc,4),"gpu_value_eur_kwh":round(gpu_v,5),"forecast_energy_cost_eur_kwh":round(energy,5),
                          "btc_value_eur_kwh":round(btc_v,5),"best_option":"AI Compute" if gpu_v>=btc_v else "BTC Mining"})
         forecast_quality=_forecast_quality(rows,models,conf,hours)
+        forecast_quality["confidence_method"]="horizon_specific_rolling_origin_holdout_vs_persistence"
+        forecast_quality["confidence_is_probability"]=False
         forecast_quality["warnings"].append("Energy cost is held at the supplied site tariff; no location-independent electricity-price forecast is applied.")
         forecast_quality["warnings"].append("Hourly PV is a flat allocation of the supplied horizon total; it is not a site-specific PV forecast.")
         forecast_quality["market_snapshot_freshness"]=snapshot_freshness
