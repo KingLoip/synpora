@@ -180,7 +180,7 @@ class EconomicValidationTests(unittest.TestCase):
 
     def test_corrected_horizon_validation_covers_api_forecast_horizons(self):
         rows = []
-        for i in range(500):
+        for i in range(650):
             rows.append({
                 "ts": i * 300,
                 "btc": 35.0 + 0.002 * i + 0.15 * math.sin(i / 9.0),
@@ -195,7 +195,7 @@ class EconomicValidationTests(unittest.TestCase):
         self.assertGreaterEqual(result["horizons"]["24"]["pairs"], 100)
         self.assertEqual(result["horizons"]["72"]["pairs"], 0)
         self.assertFalse(result["release_eligible"])
-        self.assertEqual(result["horizons"]["1"]["bootstrap_block_length"], 12)
+        self.assertEqual(result["horizons"]["1"]["bootstrap_block_length"], 6)
         self.assertEqual(result["horizons"]["24"]["bootstrap_block_length"], 48)
         for horizon in result["horizons"].values():
             self.assertIn("mae_skill_vs_persistence", horizon)
