@@ -20,23 +20,11 @@ class ChronologicalForecastRegressionTests(unittest.TestCase):
         self.assertIn("ORDER BY ts DESC LIMIT ?", source)
         self.assertIn("rows.reverse()", source)
 
-    def test_adaptive_weights_train_on_past_and_score_future(self):
-        source = ast.get_source_segment(SOURCE, find_function("_adaptive_model_weights"))
-        self.assertIn("train=y[:-cut]", source)
-        self.assertIn("test=y[-cut:]", source)
-        self.assertIn("last=train[-1]", source)
-        self.assertIn("last+slope*(i+1)", source)
-
-    def test_model_selection_uses_same_forward_holdout(self):
-        source = ast.get_source_segment(SOURCE, find_function("_model_select"))
-        self.assertIn("train=y[:-cut]", source)
-        self.assertIn("test=y[-cut:]", source)
-        self.assertIn("last=train[-1]", source)
-
-    def test_ensemble_forecast_starts_from_latest_observation(self):
-        source = ast.get_source_segment(SOURCE, find_function("_ensemble_forecast"))
-        self.assertIn("last=y[-1]", source)
-        self.assertIn("slope=(y[-1]-y[0])", source)
+    def test_market_price_forecasts_do_not_require_site_tariff_history(self):
+        source = ast.get_source_segment(SOURCE, find_function("_eligible_market_rows"))
+        self.assertIn("require_site_tariff=True", source)
+        self.assertIn("_snapshot_is_market_ready(payload)", source)
+        self.assertIn("_snapshot_is_learning_eligible(payload)", source)
 
     def test_market_history_supports_compact_extended_provenance_data(self):
         source = ast.get_source_segment(SOURCE, find_function("market_history"))
@@ -44,20 +32,59 @@ class ChronologicalForecastRegressionTests(unittest.TestCase):
         self.assertIn("2000 if compact else 500", source)
         self.assertIn('compact_payload["data_quality"]', source)
 
+    def test_adaptive_weights_use_rolling_origin_errors_on_inference_window(self):
+        source = ast.get_source_segment(SOURCE, find_function("_adaptive_model_weights"))
+        self.assertIn("history=y[max(0,target_idx-48):target_idx]", source)
+        self.assertIn("first=max(8,len(y)-48)", source)
+        self.assertIn('"last_value":last', source)
+        self.assertIn("len(y)<24", source)
+        self.assertIn('maes[best]>=maes["last_value"]*0.95', source)
+        self.assertIn('best="last_value"', source)
+
+    def test_model_selection_uses_the_same_rolling_origin_window(self):
+        source = ast.get_source_segment(SOURCE, find_function("_model_select"))
+        self.assertIn("history=y[max(0,target_idx-48):target_idx]", source)
+        self.assertIn("first=max(8,len(y)-48)", source)
+
+    def test_horizon_weights_are_selected_from_same_horizon_outcomes(self):
+        source = ast.get_source_segment(SOURCE, find_function("_adaptive_horizon_weights"))
+        self.assertIn("values[origin+sample_steps]", source)
+        self.assertIn("len(values) < sample_steps + 32", source)
+        self.assertIn('maes[best]>=maes["last_value"]*0.95', source)
+
+    def test_forecast_candidate_family_includes_seasonal_and_ewma_models(self):
+        source = ast.get_source_segment(SOURCE, find_function("_adaptive_horizon_weights"))
+        for name in ("seasonal_24", "seasonal_168", "ewma_02", "ewma_05", "median_24"):
+            self.assertIn(name, source)
+
+    def test_ensemble_forecast_uses_horizon_specific_weights_and_snapshot_cadence(self):
+        source = ast.get_source_segment(SOURCE, find_function("_ensemble_forecast"))
+        self.assertIn("_eligible_market_rows(c,2000,include_ts=True,require_site_tariff=False)", source)
+        self.assertIn("sample_steps=max(1,round((h*3600.0)/interval_seconds))", source)
+        self.assertIn("_adaptive_horizon_weights(y,sample_steps)", source)
+        self.assertIn('"weights_by_horizon":horizon_weights', source)
+        self.assertIn("max(0.0,pred)", source)
+
 
 class DispatchSafetyRegressionTests(unittest.TestCase):
     def test_forecast_plan_marks_input_fallback_as_unverified(self):
         source = ast.get_source_segment(SOURCE, find_function("forecast_plan"))
         self.assertIn('_market_snapshot_freshness(c)', source)
-        self.assertIn('_eligible_market_rows(c,8)', source)
+        self.assertIn('_eligible_market_rows(c,24,require_site_tariff=False)', source)
         self.assertIn('forecast_method="user_input_fallback_unverified"', source)
         self.assertIn('"ensemble_confidence":conf', source)
         self.assertIn('"pv_profile_method":"flat_allocation_of_user_supplied_horizon_total"', source)
 
+    def test_energy_tariff_is_treated_as_a_user_supplied_constant_not_a_market_forecast(self):
+        source = ast.get_source_segment(SOURCE, find_function("forecast_plan"))
+        self.assertIn('"model":"user_supplied_constant"', source)
+        self.assertIn('"forecasted":False', source)
+        self.assertIn('"energy":1.0', source)
+
     def test_dispatch_requires_fresh_provenance_verified_market_data(self):
         source = ast.get_source_segment(SOURCE, find_function("dispatch_plan"))
         self.assertIn('_market_snapshot_freshness(c)', source)
-        self.assertIn('_eligible_market_rows(c,8)', source)
+        self.assertIn('_eligible_market_rows(c,24,require_site_tariff=False)', source)
         self.assertIn('forecast_source="input_fallback_unverified"', source)
         self.assertIn('else "degraded"', source)
 
