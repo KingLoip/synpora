@@ -81,7 +81,8 @@ jobs:
               "|---|---:|---:|---:|---:|---:|---:|---:|",
           ]
           for name, result in corrected.items():
-              validation = result.get("production_corrected_horizon_validation", {})
+              backtest = result.get("empirical_risk_aware_walk_forward", {})
+              validation = backtest.get("production_corrected_horizon_validation", {})
               for horizon, metrics in validation.get("horizons", {}).items():
                   ci_low = metrics.get("mae_skill_confidence_interval_95", {}).get("lower_95")
                   ci_text = "n/a" if ci_low is None else f"{ci_low:.3%}"
