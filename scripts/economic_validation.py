@@ -198,7 +198,7 @@ def empirical_risk_choice(history, current, tariff, seed):
     rng = random.Random(seed)
     samples = {name: [] for name in ("AI Compute", "BTC Mining", "Battery", "Grid")}
     wins = {name: 0 for name in samples}
-    for _ in range(BOOTSTRAP_SAMPLES):
+    for _ in range(replicates):
         rb, rg, rf = rng.choice(returns)
         future = {
             **current,
@@ -320,8 +320,21 @@ def corrected_forecast_weights(values, sample_steps=1):
     if "last_value" not in maes:
         return fallback
     best = min(maes, key=maes.get)
-    if best == "last_value" or maes[best] >= maes["last_value"] * 0.95:
+    baseline_mae = maes["last_value"]
+    min_training_skill = 0.15
+    if baseline_mae <= 1e-12 or best == "last_value":
         best = "last_value"
+    else:
+        training_skill = 1.0 - maes[best] / baseline_mae
+        block_length = min(48, max(6, int(sample_steps)))
+        ci = _block_bootstrap_skill_ci(
+            errors[best], errors["last_value"], SEED + sample_steps,
+            block_length=block_length, replicates=200,
+        )
+        # A candidate must clear a stricter training margin and a positive
+        # block-bootstrap lower bound before it is allowed to displace persistence.
+        if training_skill < min_training_skill or ci["lower_95"] is None or ci["lower_95"] <= 0.0:
+            best = "last_value"
     return {name: (1.0 if name == best else 0.0) for name in names}
 
 
@@ -353,7 +366,7 @@ def corrected_forecast_value(values, weights, horizon_hours, interval_seconds):
     return max(0.0, sum(weights[name] * predictions[name] for name in predictions))
 
 
-def _block_bootstrap_skill_ci(model_errors, baseline_errors, seed, block_length=6):
+def _block_bootstrap_skill_ci(model_errors, baseline_errors, seed, block_length=6, replicates=BOOTSTRAP_SAMPLES):
     n = min(len(model_errors), len(baseline_errors))
     if n < 30:
         return {"lower_95": None, "upper_95": None, "replicates": 0}
@@ -447,7 +460,15 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
                 "mae_skill_vs_persistence": round(1.0 - model_series_mae / baseline_series_mae, 6)
                 if model_series_mae is not None and baseline_series_mae and baseline_series_mae > 1e-12 else None,
             }
-        ci = _block_bootstrap_skill_ci(combined_errors, combined_baseline_errors, SEED + horizon)
+        all_gaps = [rows[j]["ts"] - rows[j - 1]["ts"] for j in range(1, len(rows))
+                    if rows[j]["ts"] > rows[j - 1]["ts"]]
+        median_interval = statistics.median(all_gaps) if all_gaps else 3600.0
+        block_length = min(48, max(6, math.ceil(
+            (horizon * 3600.0) / (median_interval * origin_stride))))
+        ci = _block_bootstrap_skill_ci(
+            combined_errors, combined_baseline_errors, SEED + horizon,
+            block_length=block_length,
+        )
         nonnegative = all(
             value["mae_skill_vs_persistence"] is not None
             and value["mae_skill_vs_persistence"] >= 0.0
@@ -461,6 +482,7 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
             "persistence_mae_eur_per_kwh": round(baseline_mae, 6) if baseline_mae is not None else None,
             "mae_skill_vs_persistence": round(skill, 6) if skill is not None else None,
             "mae_skill_confidence_interval_95": ci,
+            "bootstrap_block_length": block_length,
             "per_strategy": per_strategy,
             "release_eligible": bool(
                 pairs >= 100 and skill is not None and skill >= 0.05
