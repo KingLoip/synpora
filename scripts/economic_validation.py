@@ -280,22 +280,28 @@ def summarize_backtest(pairs, label):
     }
 
 
-def corrected_forecast_weights(values):
-    """Mirror the production rolling-origin calibration on the inference window."""
-    if len(values) < 24:
+def corrected_forecast_weights(values, sample_steps=1):
+    """Select a candidate using past-only outcomes at the exact forecast horizon."""
+    if sample_steps < 1 or len(values) < sample_steps + 32:
         return {"recent_mean": 0.0, "last_value": 1.0, "trend": 0.0}
     errors = {"recent_mean": [], "last_value": [], "trend": []}
-    first = max(8, len(values) - 48)
-    for target_idx in range(first, len(values)):
-        history = values[max(0, target_idx - 48):target_idx]
+    for origin in range(8, len(values) - sample_steps):
+        history = values[max(0, origin - 48):origin]
         mean = statistics.fmean(history)
         last = history[-1]
         slope = (history[-1] - history[0]) / (len(history) - 1) if len(history) > 1 else 0.0
-        predictions = {"recent_mean": mean, "last_value": last, "trend": last + slope}
+        damped_steps = min(12.0, float(sample_steps)) * math.exp(
+            -max(0.0, float(sample_steps) - 12.0) / 12.0)
+        predictions = {
+            "recent_mean": mean, "last_value": last,
+            "trend": last + slope * damped_steps,
+        }
+        actual = values[origin + sample_steps]
         for name, prediction in predictions.items():
-            errors[name].append(abs(values[target_idx] - prediction))
-    maes = {name: statistics.fmean(series) for name, series in errors.items() if series}
-    if not maes or "last_value" not in maes:
+            errors[name].append(abs(actual - prediction))
+    maes = {name: statistics.fmean(series) for name, series in errors.items()
+            if len(series) >= 24}
+    if "last_value" not in maes:
         return {"recent_mean": 0.0, "last_value": 1.0, "trend": 0.0}
     best = min(maes, key=maes.get)
     if best == "last_value" or maes[best] >= maes["last_value"] * 0.95:
@@ -362,7 +368,7 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
             if abs(actual_gap - expected_seconds) > max(300.0, expected_seconds * 0.10):
                 skipped += 1
                 continue
-            history_rows = rows[max(0, i - 167):i + 1]
+            history_rows = rows[max(0, i - 499):i + 1]
             recent_rows = history_rows[-48:]
             gaps = [recent_rows[j]["ts"] - recent_rows[j - 1]["ts"]
                     for j in range(1, len(recent_rows))
@@ -370,8 +376,9 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
             interval_seconds = statistics.median(gaps) if gaps else 300.0
             btc_values = [row["btc"] for row in history_rows]
             gpu_values = [row["gpu"] for row in history_rows]
-            btc_weights = corrected_forecast_weights(btc_values)
-            gpu_weights = corrected_forecast_weights(gpu_values)
+            sample_steps = max(1, round(horizon * 3600.0 / interval_seconds))
+            btc_weights = corrected_forecast_weights(btc_values, sample_steps)
+            gpu_weights = corrected_forecast_weights(gpu_values, sample_steps)
             predicted = dict(decision)
             predicted["btc"] = corrected_forecast_value(
                 btc_values, btc_weights, horizon, interval_seconds)
