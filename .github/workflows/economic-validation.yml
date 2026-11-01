@@ -99,6 +99,17 @@ jobs:
                   )
           lines += [
               "",
+              "| Tariff scenario | BTC selected model counts | GPU selected model counts |",
+              "|---|---|---|",
+          ]
+          for name, gate in gates.items():
+              candidate = gate.get("production_ensemble", {})
+              counts = candidate.get("selected_model_name_counts", {})
+              lines.append(
+                  f"| {name} | {counts.get('btc', {})} | {counts.get('gpu', {})} |"
+              )
+          lines += [
+              "",
               "Investment validation remains separate from technical production readiness. "
               "No realized GPU payouts, BTC pool settlements, all-in electricity invoices, "
               "or metered battery outcomes are inferred from market quotes.",
