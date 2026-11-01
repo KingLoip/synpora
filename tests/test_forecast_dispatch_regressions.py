@@ -20,23 +20,24 @@ class ChronologicalForecastRegressionTests(unittest.TestCase):
         self.assertIn("ORDER BY ts DESC LIMIT ?", source)
         self.assertIn("rows.reverse()", source)
 
-    def test_adaptive_weights_train_on_past_and_score_future(self):
+    def test_adaptive_weights_use_rolling_origin_errors_on_inference_window(self):
         source = ast.get_source_segment(SOURCE, find_function("_adaptive_model_weights"))
-        self.assertIn("train=y[:-cut]", source)
-        self.assertIn("test=y[-cut:]", source)
-        self.assertIn("last=train[-1]", source)
-        self.assertIn("last+slope*(i+1)", source)
+        self.assertIn("history=y[max(0,target_idx-48):target_idx]", source)
+        self.assertIn("first=max(8,len(y)-48)", source)
+        self.assertIn('"last_value":last', source)
+        self.assertIn("len(y)<24", source)
 
-    def test_model_selection_uses_same_forward_holdout(self):
+    def test_model_selection_uses_the_same_rolling_origin_window(self):
         source = ast.get_source_segment(SOURCE, find_function("_model_select"))
-        self.assertIn("train=y[:-cut]", source)
-        self.assertIn("test=y[-cut:]", source)
-        self.assertIn("last=train[-1]", source)
+        self.assertIn("history=y[max(0,target_idx-48):target_idx]", source)
+        self.assertIn("first=max(8,len(y)-48)", source)
 
-    def test_ensemble_forecast_starts_from_latest_observation(self):
+    def test_ensemble_forecast_converts_hours_to_snapshot_steps_and_damps_trend(self):
         source = ast.get_source_segment(SOURCE, find_function("_ensemble_forecast"))
         self.assertIn("last=y[-1]", source)
-        self.assertIn("slope=(y[-1]-y[0])", source)
+        self.assertIn("sample_steps=(h*3600.0)/interval_seconds", source)
+        self.assertIn("math.exp(-max(0.0,sample_steps-12.0)/48.0)", source)
+        self.assertIn("max(0.0,pred)", source)
 
 
 class DispatchSafetyRegressionTests(unittest.TestCase):
