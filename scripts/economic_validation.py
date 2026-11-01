@@ -305,6 +305,29 @@ def production_adaptive_weights(values):
     return {name: value / total for name, value in inverse.items()}
 
 
+def production_select_model(values):
+    """Mirror saas_api._model_select: choose the lowest-MAE model on a past-only holdout."""
+    if len(values) < 8:
+        return "last_value"
+    cut = min(48, len(values) - 4)
+    train = values[:-cut]
+    test = values[-cut:]
+    mean = statistics.fmean(train)
+    last = train[-1]
+    slope = (train[-1] - train[0]) / (len(train) - 1) if len(train) > 1 else 0.0
+    predictions = {
+        "recent_mean": [mean] * len(test),
+        "last_value": [last] * len(test),
+        "trend": [last + slope * (i + 1) for i in range(len(test))],
+    }
+    scores = {
+        name: statistics.fmean(abs(actual - predicted)
+                               for actual, predicted in zip(test, forecast))
+        for name, forecast in predictions.items()
+    }
+    return min(scores, key=scores.get)
+
+
 def production_adaptive_forecast(training_values, forecast_values):
     """Mirror production: weights use 168 rows; forecast components use 48 rows."""
     mean = statistics.fmean(forecast_values)
@@ -313,6 +336,8 @@ def production_adaptive_forecast(training_values, forecast_values):
              if len(forecast_values) > 1 else 0.0)
     trend = last + slope
     weights = production_adaptive_weights(training_values)
+    selected_model_name = production_select_model(training_values)
+    components = {"recent_mean": mean, "last_value": last, "trend": trend}
     return {
         "persistence": last,
         "recent_mean": mean,
@@ -322,6 +347,8 @@ def production_adaptive_forecast(training_values, forecast_values):
             + weights["last_value"] * last
             + weights["trend"] * trend
         ),
+        "selected_model": components[selected_model_name],
+        "selected_model_name": selected_model_name,
         "weights": weights,
     }
 
@@ -358,7 +385,7 @@ def production_ensemble_forecast_validation(rows, tariff, max_history=168):
     tariff. The live API remains site-learning-degraded until its own eligibility
     conditions are met; this report does not silently change that production gate.
     """
-    models = ("recent_mean", "trend", "adaptive_ensemble")
+    models = ("recent_mean", "trend", "adaptive_ensemble", "selected_model")
     strategies = ("BTC Mining", "AI Compute")
     errors = {model: {strategy: [] for strategy in strategies} for model in models}
     baseline_errors = {strategy: [] for strategy in strategies}
@@ -465,6 +492,10 @@ def production_ensemble_forecast_validation(rows, tariff, max_history=168):
         "models": results,
         "excluded_nonconsecutive_or_long_gap_pairs": skipped_gaps,
         "max_training_history": max_history,
+        "selected_model_name_counts": {
+            "btc": {},
+            "gpu": {},
+        },
         "warning": "Diagnostic global-market replay with constant tariff; not proof of realized profitability or site-specific online-learning eligibility.",
     }
 
