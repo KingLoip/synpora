@@ -356,7 +356,8 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
         combined_errors = []
         combined_baseline_errors = []
         skipped = 0
-        origin_stride = max(1, len(rows) // 500)\n        for i in range(23, len(rows) - 1, origin_stride):
+        origin_stride = max(1, len(rows) // 500)
+        for i in range(23, len(rows) - 1, origin_stride):
             decision = rows[i]
             expected_seconds = horizon * 3600.0
             target_index = min(
