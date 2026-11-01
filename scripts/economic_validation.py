@@ -296,6 +296,34 @@ def _candidate_stable_across_blocks(model_errors, baseline_errors, blocks=4):
     return positive == blocks
 
 
+
+def candidate_holdout_skill(model_errors, baseline_errors, min_training_skill=0.15,
+                            min_validation_skill=0.05):
+    """Split recent rolling-origin errors into model-selection and untouched holdout blocks."""
+    n = min(len(model_errors), len(baseline_errors))
+    split = int(n * 0.75)
+    if split < 24 or n - split < 8:
+        return {
+            "eligible": False, "training_skill": None, "validation_skill": None,
+            "training_pairs": split, "validation_pairs": n - split,
+        }
+    train_model = statistics.fmean(model_errors[:split])
+    train_baseline = statistics.fmean(baseline_errors[:split])
+    valid_model = statistics.fmean(model_errors[split:n])
+    valid_baseline = statistics.fmean(baseline_errors[split:n])
+    training_skill = 1.0 - train_model / train_baseline if train_baseline > 1e-12 else None
+    validation_skill = 1.0 - valid_model / valid_baseline if valid_baseline > 1e-12 else None
+    return {
+        "eligible": bool(training_skill is not None and validation_skill is not None
+                         and training_skill >= min_training_skill
+                         and validation_skill >= min_validation_skill),
+        "training_skill": round(training_skill, 6) if training_skill is not None else None,
+        "validation_skill": round(validation_skill, 6) if validation_skill is not None else None,
+        "training_pairs": split,
+        "validation_pairs": n - split,
+    }
+
+
 def corrected_forecast_weights(values, sample_steps=1, interval_seconds=300.0):
     """Select a candidate using past-only outcomes at the exact forecast horizon."""
     names = ("recent_mean", "last_value", "trend", "mean_24", "median_24",
@@ -337,26 +365,26 @@ def corrected_forecast_weights(values, sample_steps=1, interval_seconds=300.0):
         actual = values[origin + sample_steps]
         for name, prediction in predictions.items():
             errors[name].append(abs(actual - prediction))
-    maes = {name: statistics.fmean(series) for name, series in errors.items()
-            if len(series) >= 24}
-    if "last_value" not in maes:
+    split = int(len(errors["last_value"]) * 0.75)
+    train_maes = {
+        name: statistics.fmean(series[:split])
+        for name, series in errors.items() if split >= 24
+    }
+    if "last_value" not in train_maes:
         return fallback
-    best = min(maes, key=maes.get)
-    baseline_mae = maes["last_value"]
-    min_training_skill = 0.15
-    if baseline_mae <= 1e-12 or best == "last_value":
-        best = "last_value"
-    else:
-        training_skill = 1.0 - maes[best] / baseline_mae
+    best = min(train_maes, key=train_maes.get)
+    if best != "last_value":
+        holdout = candidate_holdout_skill(errors[best], errors["last_value"])
         block_length = min(48, max(6, int(sample_steps)))
         ci = _block_bootstrap_skill_ci(
-            errors[best], errors["last_value"], SEED + sample_steps,
+            errors[best][:split], errors["last_value"][:split], SEED + sample_steps,
             block_length=block_length, replicates=50,
         )
-        # A candidate must clear a stricter training margin and a positive
-        # block-bootstrap lower bound before it is allowed to displace persistence.
-        stable = _candidate_stable_across_blocks(errors[best], errors["last_value"], blocks=4)
-        if (training_skill < min_training_skill or ci["lower_95"] is None
+        stable = _candidate_stable_across_blocks(
+            errors[best][:split], errors["last_value"][:split], blocks=4)
+        # Selection uses only the training block; a separate later block must
+        # independently beat persistence before the candidate is accepted.
+        if (not holdout["eligible"] or ci["lower_95"] is None
                 or ci["lower_95"] <= 0.0 or not stable):
             best = "last_value"
     return {name: (1.0 if name == best else 0.0) for name in names}
