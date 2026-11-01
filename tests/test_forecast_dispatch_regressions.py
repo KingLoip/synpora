@@ -46,6 +46,7 @@ class DispatchSafetyRegressionTests(unittest.TestCase):
         self.assertIn('_eligible_market_rows(c,8)', source)
         self.assertIn('forecast_method="user_input_fallback_unverified"', source)
         self.assertIn('"ensemble_confidence":conf', source)
+        self.assertIn('"pv_profile_method":"flat_allocation_of_user_supplied_horizon_total"', source)
 
     def test_dispatch_requires_fresh_provenance_verified_market_data(self):
         source = ast.get_source_segment(SOURCE, find_function("dispatch_plan"))
