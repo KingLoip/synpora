@@ -15,6 +15,9 @@ def external_field(age):
 
 
 class EconomicValidationTests(unittest.TestCase):
+    def test_market_history_validation_requests_compact_extended_history(self):
+        self.assertIn("limit=2000&compact=true", MODULE.MARKET_URL)
+
     def test_rejects_malformed_quality_metadata(self):
         self.assertFalse(MODULE.market_ready({
             "btc_hashprice_usd_ph_day": 40,
@@ -147,6 +150,42 @@ class EconomicValidationTests(unittest.TestCase):
             self.assertEqual(case["maintenance_eur_year"], 750.0)
             self.assertFalse(case["realized_cashflow_validated"])
 
+
+
+
+    def test_corrected_forecast_guard_falls_back_to_persistence_without_five_percent_gain(self):
+        flat = [10.0] * 60
+        weights = MODULE.corrected_forecast_weights(flat)
+        self.assertEqual(weights, {"recent_mean": 0.0, "last_value": 1.0, "trend": 0.0})
+
+    def test_corrected_forecast_guard_selects_trend_only_when_holdout_proves_gain(self):
+        rising = [10.0 + i * 0.1 for i in range(80)]
+        weights = MODULE.corrected_forecast_weights(rising)
+        self.assertEqual(weights, {"recent_mean": 0.0, "last_value": 0.0, "trend": 1.0})
+
+    def test_long_horizon_uses_persistence_when_history_is_too_short(self):
+        values = [10.0 + i * 0.1 for i in range(80)]
+        weights = MODULE.corrected_forecast_weights(values, sample_steps=120)
+        self.assertEqual(weights, {"recent_mean": 0.0, "last_value": 1.0, "trend": 0.0})
+
+    def test_corrected_horizon_validation_covers_api_forecast_horizons(self):
+        rows = []
+        for i in range(500):
+            rows.append({
+                "ts": i * 300,
+                "btc": 35.0 + 0.002 * i + 0.15 * math.sin(i / 9.0),
+                "gpu": 1.0 + 0.0008 * i + 0.02 * math.sin(i / 13.0),
+                "fx": 1.10 + 0.00001 * i,
+                "gpu_power": 0.35, "gpu_util": 0.70, "gpu_fee": 0.15,
+            })
+        result = MODULE.production_corrected_horizon_validation(rows, 0.20)
+        self.assertEqual(set(result["horizons"]), {"1", "6", "24"})
+        self.assertGreaterEqual(result["horizons"]["1"]["pairs"], 100)
+        self.assertGreaterEqual(result["horizons"]["6"]["pairs"], 100)
+        self.assertGreaterEqual(result["horizons"]["24"]["pairs"], 100)
+        for horizon in result["horizons"].values():
+            self.assertIn("mae_skill_vs_persistence", horizon)
+            self.assertIn("mae_skill_confidence_interval_95", horizon)
 
     def test_forecast_quality_gate_blocks_persistence_only_calibration(self):
         rows = []

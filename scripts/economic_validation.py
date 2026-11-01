@@ -14,7 +14,7 @@ import sys
 import urllib.request
 from datetime import datetime, timezone
 
-MARKET_URL = "https://synpora-production.up.railway.app/api/v1/market/history?limit=500"
+MARKET_URL = "https://synpora-production.up.railway.app/api/v1/market/history?limit=2000&compact=true"
 TARIFFS = {
     # Current public tariff page on 2026-10-30: supplier energy component only.
     # The first 1,500 kWh rate is conditional on the 2026 household discount.
@@ -280,6 +280,176 @@ def summarize_backtest(pairs, label):
     }
 
 
+def corrected_forecast_weights(values, sample_steps=1):
+    """Select a candidate using past-only outcomes at the exact forecast horizon."""
+    if sample_steps < 1 or len(values) < sample_steps + 32:
+        return {"recent_mean": 0.0, "last_value": 1.0, "trend": 0.0}
+    errors = {"recent_mean": [], "last_value": [], "trend": []}
+    for origin in range(max(8, len(values) - sample_steps - 200), len(values) - sample_steps):
+        history = values[max(0, origin - 48):origin]
+        mean = statistics.fmean(history)
+        last = history[-1]
+        slope = (history[-1] - history[0]) / (len(history) - 1) if len(history) > 1 else 0.0
+        damped_steps = min(12.0, float(sample_steps)) * math.exp(
+            -max(0.0, float(sample_steps) - 12.0) / 12.0)
+        predictions = {
+            "recent_mean": mean, "last_value": last,
+            "trend": last + slope * damped_steps,
+        }
+        actual = values[origin + sample_steps]
+        for name, prediction in predictions.items():
+            errors[name].append(abs(actual - prediction))
+    maes = {name: statistics.fmean(series) for name, series in errors.items()
+            if len(series) >= 24}
+    if "last_value" not in maes:
+        return {"recent_mean": 0.0, "last_value": 1.0, "trend": 0.0}
+    best = min(maes, key=maes.get)
+    if best == "last_value" or maes[best] >= maes["last_value"] * 0.95:
+        best = "last_value"
+    return {name: (1.0 if name == best else 0.0)
+            for name in ("recent_mean", "last_value", "trend")}
+
+
+def corrected_forecast_value(values, weights, horizon_hours, interval_seconds):
+    """Forecast with production's 48-snapshot features and damped, unit-correct trend."""
+    history = values[-48:]
+    mean = statistics.fmean(history)
+    last = history[-1]
+    slope = (history[-1] - history[0]) / (len(history) - 1) if len(history) > 1 else 0.0
+    interval_seconds = interval_seconds if interval_seconds > 0 else 300.0
+    sample_steps = horizon_hours * 3600.0 / interval_seconds
+    damped_steps = min(12.0, sample_steps) * math.exp(-max(0.0, sample_steps - 12.0) / 12.0)
+    trend = last + slope * damped_steps
+    return max(0.0, weights["recent_mean"] * mean
+               + weights["last_value"] * last + weights["trend"] * trend)
+
+
+def _block_bootstrap_skill_ci(model_errors, baseline_errors, seed, block_length=6):
+    n = min(len(model_errors), len(baseline_errors))
+    if n < 30:
+        return {"lower_95": None, "upper_95": None, "replicates": 0}
+    rng = random.Random(seed)
+    skills = []
+    for _ in range(BOOTSTRAP_SAMPLES):
+        indices = []
+        while len(indices) < n:
+            start = rng.randrange(n)
+            indices.extend((start + offset) % n for offset in range(block_length))
+        indices = indices[:n]
+        model_mae = statistics.fmean(model_errors[i] for i in indices)
+        baseline_mae = statistics.fmean(baseline_errors[i] for i in indices)
+        if baseline_mae > 1e-12:
+            skills.append(1.0 - model_mae / baseline_mae)
+    return {
+        "lower_95": round(quantile(skills, 0.025), 6) if skills else None,
+        "upper_95": round(quantile(skills, 0.975), 6) if skills else None,
+        "replicates": len(skills),
+    }
+
+
+def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 24)):
+    """Validate the corrected production forecast at the API's actual hour horizons."""
+    results = {}
+    for horizon in horizons_hours:
+        strategy_errors = {"BTC Mining": [], "AI Compute": []}
+        baseline_errors = {"BTC Mining": [], "AI Compute": []}
+        combined_errors = []
+        combined_baseline_errors = []
+        skipped = 0
+        origin_stride = max(1, len(rows) // 500)
+        for i in range(23, len(rows) - 1, origin_stride):
+            decision = rows[i]
+            expected_seconds = horizon * 3600.0
+            target_index = min(
+                range(i + 1, len(rows)),
+                key=lambda j: abs((rows[j]["ts"] - decision["ts"]) - expected_seconds),
+            )
+            target = rows[target_index]
+            actual_gap = target["ts"] - decision["ts"]
+            if abs(actual_gap - expected_seconds) > max(300.0, expected_seconds * 0.10):
+                skipped += 1
+                continue
+            history_rows = rows[max(0, i - 1999):i + 1]
+            recent_rows = history_rows[-48:]
+            gaps = [recent_rows[j]["ts"] - recent_rows[j - 1]["ts"]
+                    for j in range(1, len(recent_rows))
+                    if recent_rows[j]["ts"] > recent_rows[j - 1]["ts"]]
+            interval_seconds = statistics.median(gaps) if gaps else 300.0
+            btc_values = [row["btc"] for row in history_rows]
+            gpu_values = [row["gpu"] for row in history_rows]
+            sample_steps = max(1, round(horizon * 3600.0 / interval_seconds))
+            btc_weights = corrected_forecast_weights(btc_values, sample_steps)
+            gpu_weights = corrected_forecast_weights(gpu_values, sample_steps)
+            predicted = dict(decision)
+            predicted["btc"] = corrected_forecast_value(
+                btc_values, btc_weights, horizon, interval_seconds)
+            predicted["gpu"] = corrected_forecast_value(
+                gpu_values, gpu_weights, horizon, interval_seconds)
+            # The live API holds the supplied EUR/USD input constant across the forecast.
+            actual_values = economics(target, tariff)
+            predicted_values = economics(predicted, tariff)
+            persistence_values = economics(decision, tariff)
+            pair_model = []
+            pair_baseline = []
+            for strategy in ("BTC Mining", "AI Compute"):
+                strategy_errors[strategy].append(
+                    abs(actual_values[strategy] - predicted_values[strategy]))
+                baseline_errors[strategy].append(
+                    abs(actual_values[strategy] - persistence_values[strategy]))
+                pair_model.append(strategy_errors[strategy][-1])
+                pair_baseline.append(baseline_errors[strategy][-1])
+            combined_errors.append(statistics.fmean(pair_model))
+            combined_baseline_errors.append(statistics.fmean(pair_baseline))
+        pairs = len(combined_errors)
+        model_mae = statistics.fmean(combined_errors) if pairs else None
+        baseline_mae = statistics.fmean(combined_baseline_errors) if pairs else None
+        skill = (1.0 - model_mae / baseline_mae
+                 if model_mae is not None and baseline_mae is not None and baseline_mae > 1e-12
+                 else None)
+        per_strategy = {}
+        for strategy in ("BTC Mining", "AI Compute"):
+            model_series = strategy_errors[strategy]
+            baseline_series = baseline_errors[strategy]
+            model_series_mae = statistics.fmean(model_series) if model_series else None
+            baseline_series_mae = statistics.fmean(baseline_series) if baseline_series else None
+            per_strategy[strategy] = {
+                "mae_eur_per_kwh": round(model_series_mae, 6) if model_series_mae is not None else None,
+                "persistence_mae_eur_per_kwh": round(baseline_series_mae, 6) if baseline_series_mae is not None else None,
+                "mae_skill_vs_persistence": round(1.0 - model_series_mae / baseline_series_mae, 6)
+                if model_series_mae is not None and baseline_series_mae and baseline_series_mae > 1e-12 else None,
+            }
+        ci = _block_bootstrap_skill_ci(combined_errors, combined_baseline_errors, SEED + horizon)
+        nonnegative = all(
+            value["mae_skill_vs_persistence"] is not None
+            and value["mae_skill_vs_persistence"] >= 0.0
+            for value in per_strategy.values()
+        )
+        results[str(horizon)] = {
+            "horizon_hours": horizon,
+            "pairs": pairs,
+            "skipped_nonmatching_horizon": skipped,
+            "mae_eur_per_kwh": round(model_mae, 6) if model_mae is not None else None,
+            "persistence_mae_eur_per_kwh": round(baseline_mae, 6) if baseline_mae is not None else None,
+            "mae_skill_vs_persistence": round(skill, 6) if skill is not None else None,
+            "mae_skill_confidence_interval_95": ci,
+            "per_strategy": per_strategy,
+            "release_eligible": bool(
+                pairs >= 100 and skill is not None and skill >= 0.05
+                and ci["lower_95"] is not None and ci["lower_95"] > 0.0
+                and nonnegative
+            ),
+        }
+    return {
+        "method": "rolling_origin_same_features_as_production_with_hourly_horizon_and_damped_trend",
+        "status": "evaluated" if any(value["pairs"] >= 100 for value in results.values()) else "insufficient_data",
+        "minimum_pairs": 100,
+        "minimum_mae_skill_vs_persistence": 0.05,
+        "horizons": results,
+        "release_eligible": any(value["release_eligible"] for value in results.values()),
+        "warning": "Global market quotes and constant tariff; not realized payouts or site-specific investment validation.",
+    }
+
+
 def run_backtest(rows, tariff, min_history=WINDOW):
     empirical_pairs = []
     calibrated_pairs = []
@@ -397,6 +567,7 @@ def run_backtest(rows, tariff, min_history=WINDOW):
         "reason": "Forecasts must beat persistence by at least 5% on 100+ out-of-sample pairs; current evidence does not meet this bar."
     }
     return {
+        "production_corrected_horizon_validation": production_corrected_horizon_validation(rows, tariff),
         "forecast_quality_gate": forecast_gate,
         "production_parametric_monte_carlo": summarize_backtest(parametric_pairs, "production_independent_lognormal"),
         "independent_empirical_paired_bootstrap": summarize_backtest(empirical_pairs, "historical_paired_bootstrap"),
