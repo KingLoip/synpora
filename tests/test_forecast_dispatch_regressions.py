@@ -45,7 +45,7 @@ class DispatchSafetyRegressionTests(unittest.TestCase):
         self.assertIn('_market_snapshot_freshness(c)', source)
         self.assertIn('_eligible_market_rows(c,1)', source)
         self.assertIn('forecast_source="input_fallback_unverified"', source)
-        self.assertIn('"status":"degraded"', source)
+        self.assertIn('else "degraded"', source)
 
     def test_dispatch_does_not_invent_hourly_solar_curve(self):
         source = ast.get_source_segment(SOURCE, find_function("dispatch_plan"))
