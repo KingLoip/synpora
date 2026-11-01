@@ -326,6 +326,31 @@ def production_adaptive_forecast(training_values, forecast_values):
     }
 
 
+def moving_block_bootstrap_skill_ci(model_errors, baseline_errors, block_length=6):
+    """Paired circular moving-block bootstrap for MAE skill; preserves short-run dependence."""
+    n = min(len(model_errors), len(baseline_errors))
+    if n < 30:
+        return {"lower_95": None, "upper_95": None, "replicates": 0, "block_length": block_length}
+    rng = random.Random(20261101)
+    skills = []
+    for _ in range(BOOTSTRAP_SAMPLES):
+        indices = []
+        while len(indices) < n:
+            start = rng.randrange(n)
+            indices.extend((start + offset) % n for offset in range(block_length))
+        indices = indices[:n]
+        model_mae = statistics.fmean(model_errors[i] for i in indices)
+        baseline_mae = statistics.fmean(baseline_errors[i] for i in indices)
+        if baseline_mae > 1e-12:
+            skills.append(1.0 - model_mae / baseline_mae)
+    return {
+        "lower_95": round(quantile(skills, 0.025), 6) if skills else None,
+        "upper_95": round(quantile(skills, 0.975), 6) if skills else None,
+        "replicates": len(skills),
+        "block_length": block_length,
+    }
+
+
 def production_ensemble_forecast_validation(rows, tariff, max_history=168):
     """Walk-forward test of production's BTC/GPU ensemble against persistence.
 
@@ -337,6 +362,8 @@ def production_ensemble_forecast_validation(rows, tariff, max_history=168):
     strategies = ("BTC Mining", "AI Compute")
     errors = {model: {strategy: [] for strategy in strategies} for model in models}
     baseline_errors = {strategy: [] for strategy in strategies}
+    pair_errors = {model: [] for model in models}
+    baseline_pair_errors = []
     skipped_gaps = 0
     for i in range(7, len(rows) - 1):
         decision = rows[i]
@@ -357,6 +384,9 @@ def production_ensemble_forecast_validation(rows, tariff, max_history=168):
         )
         actual = economics(next_row, tariff)
         baseline = economics(decision, tariff)
+        baseline_pair_errors.append(statistics.fmean(
+            abs(actual[strategy] - baseline[strategy]) for strategy in strategies
+        ))
         for strategy in strategies:
             baseline_errors[strategy].append(abs(actual[strategy] - baseline[strategy]))
         for model in models:
@@ -364,6 +394,9 @@ def production_ensemble_forecast_validation(rows, tariff, max_history=168):
             predicted_row["btc"] = btc_forecasts[model]
             predicted_row["gpu"] = gpu_forecasts[model]
             predicted = economics(predicted_row, tariff)
+            pair_errors[model].append(statistics.fmean(
+                abs(actual[strategy] - predicted[strategy]) for strategy in strategies
+            ))
             for strategy in strategies:
                 errors[model][strategy].append(abs(actual[strategy] - predicted[strategy]))
 
@@ -394,12 +427,24 @@ def production_ensemble_forecast_validation(rows, tariff, max_history=168):
             }
         mae = statistics.fmean(all_errors) if all_errors else None
         skill = 1.0 - mae / baseline_mae if mae is not None and baseline_mae and baseline_mae > 1e-12 else None
+        skill_ci = moving_block_bootstrap_skill_ci(pair_errors[model], baseline_pair_errors)
+        per_strategy_nonnegative = all(
+            item["mae_skill_vs_persistence"] is not None
+            and item["mae_skill_vs_persistence"] >= 0.0
+            for item in per_strategy.values()
+        )
         results[model] = {
             "mae_eur_per_kwh": round(mae, 6) if mae is not None else None,
             "persistence_mae_eur_per_kwh": round(baseline_mae, 6) if baseline_mae is not None else None,
             "mae_skill_vs_persistence": round(skill, 6) if skill is not None else None,
+            "mae_skill_confidence_interval_95": skill_ci,
             "per_strategy": per_strategy,
-            "release_eligible": bool(pair_count >= 100 and skill is not None and skill >= 0.05),
+            "per_strategy_nonnegative_skill": per_strategy_nonnegative,
+            "release_eligible": bool(
+                pair_count >= 100 and skill is not None and skill >= 0.05
+                and skill_ci["lower_95"] is not None and skill_ci["lower_95"] > 0.0
+                and per_strategy_nonnegative
+            ),
         }
     best_model = max(
         results,
@@ -416,7 +461,7 @@ def production_ensemble_forecast_validation(rows, tariff, max_history=168):
         "persistence_mae_eur_per_kwh": round(baseline_mae, 6) if baseline_mae is not None else None,
         "best_model": best_model,
         "best_mae_skill_vs_persistence": best_skill,
-        "release_eligible": bool(pair_count >= 100 and best_skill is not None and best_skill >= 0.05),
+        "release_eligible": any(result["release_eligible"] for result in results.values()),
         "models": results,
         "excluded_nonconsecutive_or_long_gap_pairs": skipped_gaps,
         "max_training_history": max_history,
