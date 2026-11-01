@@ -1950,21 +1950,31 @@ def install(app):
         return {"farm_id":farm_id,"samples":len(rows),"settled":len(settled),"open":sum(1 for r in rows if r[0]=="open"),"mae_eur_kwh":round(mae,6) if mae is not None else None,"learning_ready":len(settled)>=5,"recommendation_only":True}
 
     @app.get("/api/v1/market/history")
-    def market_history(limit:int=100):
-        # Bound query cost and avoid a malformed historical payload taking down the
-        # entire diagnostics endpoint. Negative SQLite LIMIT values mean "no limit".
-        bounded_limit=max(1,min(int(limit),500))
+    def market_history(limit:int=100, compact:bool=False):
+        # Full payload history stays capped at 500. Compact, provenance-preserving
+        # market history can return 2,000 rows for longer-horizon validation.
+        bounded_limit=max(1,min(int(limit),2000 if compact else 500))
         c=init_db()
         try:
             rows=c.execute("SELECT ts,payload FROM market_snapshots ORDER BY ts DESC LIMIT ?",(bounded_limit,)).fetchall()
         except Exception:
             rows=[]
         result=[]
+        required=("btc_hashprice_usd_ph_day","gpu_l40s_usd_hour","eur_usd")
+        optional=("gpu_l40s_power_kw","gpu_utilization","gpu_platform_fee")
         for row in rows:
             try:
                 payload=json.loads(row[1]) if row[1] else None
             except (TypeError,ValueError,json.JSONDecodeError):
                 payload=None
+            if compact and isinstance(payload,dict):
+                quality=payload.get("data_quality")
+                fields=quality.get("fields",{}) if isinstance(quality,dict) else {}
+                compact_payload={key:payload.get(key) for key in required+optional}
+                compact_payload["data_quality"]={"fields":{
+                    key:fields.get(key) for key in required
+                } if isinstance(fields,dict) else {}}
+                payload=compact_payload
             result.append({"timestamp":row[0],"data":payload,"payload_valid":isinstance(payload,dict)})
         return result
 
