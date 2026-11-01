@@ -55,30 +55,35 @@ jobs:
             "${api}/actions/workflows/production-monitor.yml/runs?branch=main&event=schedule&per_page=100" \
             --output /tmp/schedule-runs.json
           current_started="$(jq -r '.created_at // empty' /tmp/current-run.json)"
-          previous_started="$(jq -r --arg current "${GITHUB_RUN_ID}" --arg started "${current_started}" '
+          if [[ -z "${current_started}" ]]; then
+            echo "::error title=Missing schedule evidence::Current schedule timestamp is unavailable."
+            exit 1
+          fi
+          mapfile -t previous_times < <(jq -r --arg current "${GITHUB_RUN_ID}" '
             [.workflow_runs[]
               | select((.id | tostring) != $current)
               | select(.event == "schedule" and .head_branch == "main")
-              | select(.created_at < $started)]
-            | sort_by(.created_at)
-            | last
-            | .created_at // empty
-          ' /tmp/schedule-runs.json)"
-          if [[ -z "${current_started}" || -z "${previous_started}" ]]; then
-            echo "::error title=Missing schedule evidence::No previous main-branch schedule event is available."
+              | .created_at]
+            | sort
+            | .[-3:]
+            | .[]
+          ' /tmp/schedule-runs.json)
+          if (( ${#previous_times[@]} < 3 )); then
+            echo "::error title=Insufficient schedule evidence::Three previous main-branch schedule events are required."
             exit 1
           fi
-          current_epoch="$(date -u -d "${current_started}" +%s)"
-          previous_epoch="$(date -u -d "${previous_started}" +%s)"
-          gap_seconds=$((current_epoch - previous_epoch))
-          echo "Previous main schedule event: ${previous_started}"
-          echo "Current main schedule event: ${current_started}"
-          echo "Observed schedule interval seconds: ${gap_seconds}"
-          if (( gap_seconds > 1200 )); then
-            echo "::error title=GitHub Actions schedule gap::Observed interval was ${gap_seconds}s; maximum allowed is 1200s."
-            exit 1
-          fi
-          echo "GitHub Actions schedule cadence: PASS"
+          schedule_times=("${previous_times[@]}" "${current_started}")
+          for ((i=1; i<${#schedule_times[@]}; i++)); do
+            previous_epoch="$(date -u -d "${schedule_times[i-1]}" +%s)"
+            current_epoch="$(date -u -d "${schedule_times[i]}" +%s)"
+            gap_seconds=$((current_epoch - previous_epoch))
+            echo "Schedule interval ${i}: ${gap_seconds}s (${schedule_times[i-1]} -> ${schedule_times[i]})"
+            if (( gap_seconds > 1200 )); then
+              echo "::error title=GitHub Actions schedule gap::One of the last three intervals was ${gap_seconds}s; maximum allowed is 1200s."
+              exit 1
+            fi
+          done
+          echo "Three consecutive GitHub Actions schedule intervals: PASS"
 
   live-market-health:
     # Never gate a pull request on production state from code that has not been deployed yet.
