@@ -407,6 +407,21 @@ def _block_bootstrap_skill_ci(model_errors, baseline_errors, seed, block_length=
     }
 
 
+
+def horizon_release_gate(horizons, required_horizons=(1, 6, 24, 72)):
+    """Require every advertised horizon to meet the same independent release bar."""
+    failed = [
+        horizon for horizon in required_horizons
+        if not isinstance(horizons.get(str(horizon)), dict)
+        or horizons[str(horizon)].get("release_eligible") is not True
+    ]
+    return {
+        "status": "pass" if not failed else "blocked",
+        "required_horizons_hours": list(required_horizons),
+        "ineligible_horizons_hours": failed,
+    }
+
+
 def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 24, 72)):
     """Validate the corrected production forecast at the API's actual hour horizons."""
     results = {}
@@ -511,14 +526,16 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
                 and nonnegative
             ),
         }
+    release_gate = horizon_release_gate(results, horizons_hours)
     return {
         "method": "rolling_origin_same_features_as_production_with_hourly_horizon_and_damped_trend",
-        "status": "evaluated" if any(value["pairs"] >= 100 for value in results.values()) else "insufficient_data",
+        "status": release_gate["status"],
         "minimum_pairs": 100,
         "minimum_mae_skill_vs_persistence": 0.05,
         "horizons": results,
         "required_horizons_hours": list(horizons_hours),
-        "release_eligible": bool(results) and all(value["release_eligible"] for value in results.values()),
+        "release_gate": release_gate,
+        "release_eligible": release_gate["status"] == "pass",
         "warning": "Global market quotes and constant tariff; not realized payouts or site-specific investment validation.",
     }
 
