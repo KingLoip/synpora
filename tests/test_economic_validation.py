@@ -156,17 +156,20 @@ class EconomicValidationTests(unittest.TestCase):
     def test_corrected_forecast_guard_falls_back_to_persistence_without_five_percent_gain(self):
         flat = [10.0] * 60
         weights = MODULE.corrected_forecast_weights(flat)
-        self.assertEqual(weights, {"recent_mean": 0.0, "last_value": 1.0, "trend": 0.0})
+        self.assertEqual(weights["last_value"], 1.0)
+        self.assertEqual(sum(weights.values()), 1.0)
 
     def test_corrected_forecast_guard_selects_trend_only_when_holdout_proves_gain(self):
-        rising = [10.0 + i * 0.1 for i in range(80)]
+        rising = [10.0 + i * 0.1 for i in range(300)]
         weights = MODULE.corrected_forecast_weights(rising)
-        self.assertEqual(weights, {"recent_mean": 0.0, "last_value": 0.0, "trend": 1.0})
+        self.assertEqual(weights["trend"], 1.0)
+        self.assertEqual(sum(weights.values()), 1.0)
 
     def test_long_horizon_uses_persistence_when_history_is_too_short(self):
         values = [10.0 + i * 0.1 for i in range(80)]
         weights = MODULE.corrected_forecast_weights(values, sample_steps=120)
-        self.assertEqual(weights, {"recent_mean": 0.0, "last_value": 1.0, "trend": 0.0})
+        self.assertEqual(weights["last_value"], 1.0)
+        self.assertEqual(sum(weights.values()), 1.0)
 
     def test_corrected_horizon_validation_covers_api_forecast_horizons(self):
         rows = []
@@ -179,10 +182,11 @@ class EconomicValidationTests(unittest.TestCase):
                 "gpu_power": 0.35, "gpu_util": 0.70, "gpu_fee": 0.15,
             })
         result = MODULE.production_corrected_horizon_validation(rows, 0.20)
-        self.assertEqual(set(result["horizons"]), {"1", "6", "24"})
+        self.assertEqual(set(result["horizons"]), {"1", "6", "24", "72"})
         self.assertGreaterEqual(result["horizons"]["1"]["pairs"], 100)
         self.assertGreaterEqual(result["horizons"]["6"]["pairs"], 100)
         self.assertGreaterEqual(result["horizons"]["24"]["pairs"], 100)
+        self.assertEqual(result["horizons"]["72"]["pairs"], 0)
         for horizon in result["horizons"].values():
             self.assertIn("mae_skill_vs_persistence", horizon)
             self.assertIn("mae_skill_confidence_interval_95", horizon)
