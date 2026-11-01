@@ -372,7 +372,7 @@ def _block_bootstrap_skill_ci(model_errors, baseline_errors, seed, block_length=
         return {"lower_95": None, "upper_95": None, "replicates": 0}
     rng = random.Random(seed)
     skills = []
-    for _ in range(BOOTSTRAP_SAMPLES):
+    for _ in range(replicates):
         indices = []
         while len(indices) < n:
             start = rng.randrange(n)
