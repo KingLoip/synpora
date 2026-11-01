@@ -2684,25 +2684,32 @@ def install(app):
         if not c.execute("SELECT 1 FROM synpora_saas_farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
         learn=_forecast_learning(c,farm_id)
         models=_model_select(c)
-        # Energy is not a learned forecast until the product stores a verified site-specific tariff series.
-        conf={"btc":_ensemble_confidence(c,"btc"),"gpu":_ensemble_confidence(c,"gpu"),"energy":0.0}
+        # Energy tariffs are site-specific user inputs; never infer them from another
+        # location's spot market. Market forecasts require fresh, provenance-verified data.
         hours=max(1,min(72,x.horizon_hours))
-        btc_fc,btc_w=_ensemble_forecast(c,"btc",hours,x.btc_hashprice_usd_ph_day)
-        gpu_fc,gpu_w=_ensemble_forecast(c,"gpu",hours,x.gpu_hourly_usd)
-        # Energy tariffs are site-specific user inputs. Do not forecast them from historical
-        # Austrian spot prices or other users' locations; hold the supplied tariff constant
-        # until a verified site-specific tariff time series exists.
+        snapshot_freshness=_market_snapshot_freshness(c)
+        adaptive_ready=(snapshot_freshness.get("status")=="fresh" and bool(_eligible_market_rows(c,1)))
+        if adaptive_ready:
+            btc_fc,btc_w=_ensemble_forecast(c,"btc",hours,x.btc_hashprice_usd_ph_day)
+            gpu_fc,gpu_w=_ensemble_forecast(c,"gpu",hours,x.gpu_hourly_usd)
+            conf={"btc":_ensemble_confidence(c,"btc"),"gpu":_ensemble_confidence(c,"gpu"),"energy":0.0}
+            forecast_method="historical_adaptive_model_selection"
+            forecast_source="fresh_external_market_data"
+            market_warnings=[]
+        else:
+            btc_fc=[float(x.btc_hashprice_usd_ph_day)]*hours
+            gpu_fc=[float(x.gpu_hourly_usd)]*hours
+            btc_w={"method":"unverified_user_input_fallback","weights":{}}
+            gpu_w={"method":"unverified_user_input_fallback","weights":{}}
+            conf={"btc":0.0,"gpu":0.0,"energy":0.0}
+            forecast_method="user_input_fallback_unverified"
+            forecast_source="unverified_user_input"
+            market_warnings=["No fresh provenance-verified market snapshot; supplied BTC/GPU values are unverified fallbacks."]
+        # Energy tariffs are site-specific user inputs and are held constant.
         energy_fc=[float(x.energy_cost_eur_kwh)]*hours
         energy_w={"method":"user_supplied_site_tariff","weights":{}}
-        import math
         rows=[]
         for h in range(hours):
-            # learned baseline: recent observed level + transparent cyclical prior
-            recent=c.execute("SELECT btc_hashprice_usd_ph_day,gpu_l40s_usd_hour,austria_spot_eur_kwh FROM market_snapshots ORDER BY ts DESC LIMIT 24").fetchall()
-            def avg(idx,default):
-                a=[float(r[idx]) for r in recent if r[idx] is not None]
-                return sum(a)/len(a) if a else default
-            btc0=avg(0,x.btc_hashprice_usd_ph_day); gpu0=avg(1,x.gpu_hourly_usd)
             # pv_kwh is a horizon total, not an hourly production forecast.
             # Allocate it evenly and label the assumption; never fabricate a solar curve.
             btc=btc_fc[h]; gpu=gpu_fc[h]; energy=energy_fc[h]
@@ -2714,13 +2721,12 @@ def install(app):
                          "btc_value_eur_kwh":round(btc_v,5),"best_option":"AI Compute" if gpu_v>=btc_v else "BTC Mining"})
         forecast_quality=_forecast_quality(rows,models,conf,hours)
         forecast_quality["warnings"].append("Energy cost is held at the supplied site tariff; no location-independent electricity-price forecast is applied.")
-        snapshot_freshness=_market_snapshot_freshness(c)
         forecast_quality["market_snapshot_freshness"]=snapshot_freshness
-        forecast_quality["warnings"] += snapshot_freshness["warnings"]
-        if snapshot_freshness["status"] in ("missing","invalid","stale","reference_or_partial"):
+        forecast_quality["warnings"] += snapshot_freshness["warnings"] + market_warnings
+        if not adaptive_ready or snapshot_freshness["status"] in ("missing","invalid","stale","reference_or_partial"):
             forecast_quality["status"]="degraded" if forecast_quality["valid"] else "invalid"
         return {"farm_id":farm_id,"horizon_hours":hours,"forecast":rows,
-                "method":"historical_adaptive_model_selection","learning":learn,"models":models,"ensemble_weights":{"btc":btc_w,"gpu":gpu_w,"energy":energy_w},"ensemble_confidence":conf,
+                "method":forecast_method,"forecast_source":forecast_source,"learning":learn,"models":models,"ensemble_weights":{"btc":btc_w,"gpu":gpu_w,"energy":energy_w},"ensemble_confidence":conf,
                 "forecast_quality":forecast_quality,
                 "recommendation_only":True,"hardware_write":False}
 
