@@ -153,6 +153,20 @@ class EconomicValidationTests(unittest.TestCase):
 
 
 
+    def test_time_based_seasonal_candidate_matches_daily_cycle(self):
+        period = 120
+        values = [10.0 + math.sin(2.0 * math.pi * i / period) for i in range(1000)]
+        weights = MODULE.corrected_forecast_weights(values, sample_steps=30, interval_seconds=720)
+        self.assertEqual(weights["seasonal_24h"], 1.0)
+        prediction = MODULE.corrected_forecast_value(
+            values, {"seasonal_24h": 1.0, **{
+                name: 0.0 for name in ("recent_mean", "last_value", "trend", "mean_24",
+                    "median_24", "seasonal_168h", "ewma_02", "ewma_05")
+            }}, 6, 720
+        )
+        expected_index = len(values) - 1 + 30 - period
+        self.assertAlmostEqual(prediction, values[expected_index], places=10)
+
     def test_corrected_forecast_guard_falls_back_to_persistence_without_five_percent_gain(self):
         flat = [10.0] * 60
         weights = MODULE.corrected_forecast_weights(flat)
