@@ -186,6 +186,7 @@ class EconomicValidationTests(unittest.TestCase):
         self.assertGreaterEqual(result["horizons"]["1"]["pairs"], 100)
         self.assertGreaterEqual(result["horizons"]["6"]["pairs"], 100)
         self.assertGreaterEqual(result["horizons"]["24"]["pairs"], 100)
+        self.assertEqual(result["horizons"]["72"]["pairs"], 0)
         for horizon in result["horizons"].values():
             self.assertIn("mae_skill_vs_persistence", horizon)
             self.assertIn("mae_skill_confidence_interval_95", horizon)
