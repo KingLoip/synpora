@@ -2110,7 +2110,7 @@ def install(app):
         import math
         import statistics
         names=("recent_mean","last_value","trend","mean_24","median_24",
-               "seasonal_24","seasonal_168","ewma_02","ewma_05")
+               "seasonal_24h","seasonal_168h","ewma_02","ewma_05")
         fallback={name:(1.0 if name=="last_value" else 0.0) for name in names}
         # Select a model using only historical outcomes at this same forecast
         # horizon. A one-step winner is not assumed to be a six- or 24-hour winner.
@@ -2176,8 +2176,13 @@ def install(app):
         mean24=sum(history[-24:])/min(24,len(history))
         median24=statistics.median(history[-24:])
         last=recent[-1]
-        seasonal24=history[-24] if len(history)>=24 else last
-        seasonal168=history[-168] if len(history)>=168 else last
+        target_index=len(y)-1+sample_steps
+        period_24h=max(1,round(24.0*3600.0/interval_seconds))
+        period_168h=max(1,round(168.0*3600.0/interval_seconds))
+        seasonal24_index=target_index-period_24h
+        seasonal168_index=target_index-period_168h
+        seasonal24=(y[seasonal24_index] if 0<=seasonal24_index<len(y) else last)
+        seasonal168=(y[seasonal168_index] if 0<=seasonal168_index<len(y) else last)
         def ewma(series,alpha):
             value=series[0]
             for item in series[1:]:
@@ -2193,8 +2198,8 @@ def install(app):
                 -max(0.0,float(sample_steps)-12.0)/12.0)
             predictions={"recent_mean":mean,"last_value":last,
                 "trend":last+slope*damped_steps,"mean_24":mean24,
-                "median_24":median24,"seasonal_24":seasonal24,
-                "seasonal_168":seasonal168,"ewma_02":ewma(recent,0.2),
+                "median_24":median24,"seasonal_24h":seasonal24,
+                "seasonal_168h":seasonal168,"ewma_02":ewma(recent,0.2),
                 "ewma_05":ewma(recent,0.5)}
             pred=sum(weights[name]*predictions[name] for name in predictions)
             out.append(max(0.0,pred))
@@ -2280,8 +2285,8 @@ def install(app):
                 -max(0.0,float(sample_steps)-12.0)/12.0)
             candidates={"recent_mean":mean,"last_value":last,
                 "trend":last+slope*damped_steps,"mean_24":mean24,
-                "median_24":median24,"seasonal_24":seasonal24,
-                "seasonal_168":seasonal168,"ewma_02":ewma(recent,0.2),
+                "median_24":median24,"seasonal_24h":seasonal24,
+                "seasonal_168h":seasonal168,"ewma_02":ewma(recent,0.2),
                 "ewma_05":ewma(recent,0.5)}
             predicted=sum(weights[name]*candidates[name] for name in candidates)
             actual=y[origin+sample_steps]
