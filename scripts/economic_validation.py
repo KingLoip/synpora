@@ -294,14 +294,13 @@ def corrected_forecast_weights(values):
         predictions = {"recent_mean": mean, "last_value": last, "trend": last + slope}
         for name, prediction in predictions.items():
             errors[name].append(abs(values[target_idx] - prediction))
-    inverse = {
-        name: 1.0 / (statistics.fmean(series) + 1e-9)
-        for name, series in errors.items() if series
-    }
-    total = sum(inverse.values())
-    if total <= 0:
+    maes = {name: statistics.fmean(series) for name, series in errors.items() if series}
+    if not maes or "last_value" not in maes:
         return {"recent_mean": 0.0, "last_value": 1.0, "trend": 0.0}
-    return {name: inverse.get(name, 0.0) / total
+    best = min(maes, key=maes.get)
+    if best == "last_value" or maes[best] > maes["last_value"] * 0.95:
+        best = "last_value"
+    return {name: (1.0 if name == best else 0.0)
             for name in ("recent_mean", "last_value", "trend")}
 
 
@@ -313,7 +312,7 @@ def corrected_forecast_value(values, weights, horizon_hours, interval_seconds):
     slope = (history[-1] - history[0]) / (len(history) - 1) if len(history) > 1 else 0.0
     interval_seconds = interval_seconds if interval_seconds > 0 else 300.0
     sample_steps = horizon_hours * 3600.0 / interval_seconds
-    damped_steps = min(12.0, sample_steps) * math.exp(-max(0.0, sample_steps - 12.0) / 48.0)
+    damped_steps = min(12.0, sample_steps) * math.exp(-max(0.0, sample_steps - 12.0) / 12.0)
     trend = last + slope * damped_steps
     return max(0.0, weights["recent_mean"] * mean
                + weights["last_value"] * last + weights["trend"] * trend)
