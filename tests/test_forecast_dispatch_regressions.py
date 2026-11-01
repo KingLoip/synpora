@@ -20,6 +20,18 @@ class ChronologicalForecastRegressionTests(unittest.TestCase):
         self.assertIn("ORDER BY ts DESC LIMIT ?", source)
         self.assertIn("rows.reverse()", source)
 
+    def test_market_price_forecasts_do_not_require_site_tariff_history(self):
+        source = ast.get_source_segment(SOURCE, find_function("_eligible_market_rows"))
+        self.assertIn("require_site_tariff=True", source)
+        self.assertIn("_snapshot_is_market_ready(payload)", source)
+        self.assertIn("_snapshot_is_learning_eligible(payload)", source)
+
+    def test_market_history_supports_compact_extended_provenance_data(self):
+        source = ast.get_source_segment(SOURCE, find_function("market_history"))
+        self.assertIn("compact:bool=False", source)
+        self.assertIn("2000 if compact else 500", source)
+        self.assertIn('"data_quality":{"fields":', source)
+
     def test_adaptive_weights_use_rolling_origin_errors_on_inference_window(self):
         source = ast.get_source_segment(SOURCE, find_function("_adaptive_model_weights"))
         self.assertIn("history=y[max(0,target_idx-48):target_idx]", source)
@@ -42,7 +54,7 @@ class ChronologicalForecastRegressionTests(unittest.TestCase):
 
     def test_ensemble_forecast_uses_horizon_specific_weights_and_snapshot_cadence(self):
         source = ast.get_source_segment(SOURCE, find_function("_ensemble_forecast"))
-        self.assertIn("_eligible_market_rows(c,500,include_ts=True)", source)
+        self.assertIn("_eligible_market_rows(c,2000,include_ts=True,require_site_tariff=False)", source)
         self.assertIn("sample_steps=max(1,round((h*3600.0)/interval_seconds))", source)
         self.assertIn("_adaptive_horizon_weights(y,sample_steps)", source)
         self.assertIn('"weights_by_horizon":horizon_weights', source)
@@ -53,7 +65,7 @@ class DispatchSafetyRegressionTests(unittest.TestCase):
     def test_forecast_plan_marks_input_fallback_as_unverified(self):
         source = ast.get_source_segment(SOURCE, find_function("forecast_plan"))
         self.assertIn('_market_snapshot_freshness(c)', source)
-        self.assertIn('_eligible_market_rows(c,8)', source)
+        self.assertIn('_eligible_market_rows(c,24,require_site_tariff=False)', source)
         self.assertIn('forecast_method="user_input_fallback_unverified"', source)
         self.assertIn('"ensemble_confidence":conf', source)
         self.assertIn('"pv_profile_method":"flat_allocation_of_user_supplied_horizon_total"', source)
@@ -61,7 +73,7 @@ class DispatchSafetyRegressionTests(unittest.TestCase):
     def test_dispatch_requires_fresh_provenance_verified_market_data(self):
         source = ast.get_source_segment(SOURCE, find_function("dispatch_plan"))
         self.assertIn('_market_snapshot_freshness(c)', source)
-        self.assertIn('_eligible_market_rows(c,8)', source)
+        self.assertIn('_eligible_market_rows(c,24,require_site_tariff=False)', source)
         self.assertIn('forecast_source="input_fallback_unverified"', source)
         self.assertIn('else "degraded"', source)
 
