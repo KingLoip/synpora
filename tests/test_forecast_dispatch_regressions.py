@@ -30,7 +30,7 @@ class ChronologicalForecastRegressionTests(unittest.TestCase):
         source = ast.get_source_segment(SOURCE, find_function("market_history"))
         self.assertIn("compact:bool=False", source)
         self.assertIn("2000 if compact else 500", source)
-        self.assertIn('"data_quality":{"fields":', source)
+        self.assertIn('compact_payload["data_quality"]', source)
 
     def test_adaptive_weights_use_rolling_origin_errors_on_inference_window(self):
         source = ast.get_source_segment(SOURCE, find_function("_adaptive_model_weights"))
