@@ -2118,7 +2118,7 @@ def install(app):
             return fallback
         errors={name:[] for name in names}
         for origin in range(max(168,len(values)-sample_steps-200),len(values)-sample_steps):
-            history=values[max(0,origin-168):origin]
+            history=values[max(0,origin-167):origin+1]
             recent=history[-48:]
             last=recent[-1]
             mean=sum(recent)/len(recent)
@@ -2260,7 +2260,7 @@ def install(app):
         model_errors=[]
         baseline_errors=[]
         for origin in range(first_origin,len(y)-sample_steps):
-            training=y[:origin]
+            training=y[:origin+1]
             weights=_adaptive_horizon_weights(training,sample_steps,interval_seconds)
             history=training[-168:]
             recent=history[-48:]
