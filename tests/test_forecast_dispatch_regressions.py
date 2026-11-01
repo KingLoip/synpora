@@ -46,6 +46,13 @@ class ChronologicalForecastRegressionTests(unittest.TestCase):
         self.assertIn("history=y[max(0,target_idx-48):target_idx]", source)
         self.assertIn("first=max(8,len(y)-48)", source)
 
+    def test_horizon_seasonality_uses_elapsed_hours_not_snapshot_count(self):
+        source = ast.get_source_segment(SOURCE, find_function("_adaptive_horizon_weights"))
+        self.assertIn("24.0*3600.0/interval", source)
+        self.assertIn("168.0*3600.0/interval", source)
+        self.assertIn('"seasonal_24h":seasonal24', source)
+        self.assertIn('"seasonal_168h":seasonal168', source)
+
     def test_horizon_weights_are_selected_from_same_horizon_outcomes(self):
         source = ast.get_source_segment(SOURCE, find_function("_adaptive_horizon_weights"))
         self.assertIn("values[origin+sample_steps]", source)
