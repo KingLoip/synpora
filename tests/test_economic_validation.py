@@ -171,6 +171,13 @@ class EconomicValidationTests(unittest.TestCase):
         self.assertEqual(weights["last_value"], 1.0)
         self.assertEqual(sum(weights.values()), 1.0)
 
+    def test_candidate_selection_uses_positive_block_bootstrap_evidence(self):
+        ci = MODULE._block_bootstrap_skill_ci(
+            [1.0] * 100, [2.0] * 100, seed=7, block_length=12, replicates=20
+        )
+        self.assertEqual(ci["replicates"], 20)
+        self.assertGreater(ci["lower_95"], 0.0)
+
     def test_corrected_horizon_validation_covers_api_forecast_horizons(self):
         rows = []
         for i in range(500):
@@ -187,6 +194,8 @@ class EconomicValidationTests(unittest.TestCase):
         self.assertGreaterEqual(result["horizons"]["6"]["pairs"], 100)
         self.assertGreaterEqual(result["horizons"]["24"]["pairs"], 100)
         self.assertEqual(result["horizons"]["72"]["pairs"], 0)
+        self.assertEqual(result["horizons"]["1"]["bootstrap_block_length"], 12)
+        self.assertEqual(result["horizons"]["24"]["bootstrap_block_length"], 48)
         for horizon in result["horizons"].values():
             self.assertIn("mae_skill_vs_persistence", horizon)
             self.assertIn("mae_skill_confidence_interval_95", horizon)
