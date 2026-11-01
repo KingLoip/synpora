@@ -154,6 +154,14 @@ class EconomicValidationTests(unittest.TestCase):
 
 
 
+    def test_candidate_selection_rejects_regime_shift_that_fails_untouched_holdout(self):
+        baseline = [1.0] * 100
+        model = [0.5] * 75 + [1.5] * 25
+        result = MODULE.candidate_holdout_skill(model, baseline)
+        self.assertGreaterEqual(result["training_skill"], 0.15)
+        self.assertLess(result["validation_skill"], 0.05)
+        self.assertFalse(result["eligible"])
+
     def test_time_based_seasonal_candidate_matches_daily_cycle(self):
         period = 120
         values = [10.0 + math.sin(2.0 * math.pi * i / period) for i in range(1000)]
