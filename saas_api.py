@@ -2225,6 +2225,7 @@ def install(app):
         return result
 
     def _ensemble_confidence(c, series_key, horizon_hours=1):
+        import math
         import statistics
         # Confidence must be measured at the requested horizon, not inferred from
         # one-step model weights. Hold out the latest 24 origins and train each
