@@ -280,6 +280,142 @@ def summarize_backtest(pairs, label):
     }
 
 
+def production_adaptive_weights(values):
+    """Mirror saas_api._adaptive_model_weights using only observations available at t."""
+    if len(values) < 8:
+        return {"recent_mean": 0.34, "last_value": 0.33, "trend": 0.33}
+    cut = min(48, len(values) - 4)
+    train = values[:-cut]
+    test = values[-cut:]
+    mean = statistics.fmean(train)
+    last = train[-1]
+    slope = (train[-1] - train[0]) / (len(train) - 1) if len(train) > 1 else 0.0
+    predictions = {
+        "recent_mean": [mean] * len(test),
+        "last_value": [last] * len(test),
+        "trend": [last + slope * (i + 1) for i in range(len(test))],
+    }
+    errors = {
+        name: statistics.fmean(abs(actual - predicted)
+                               for actual, predicted in zip(test, forecast))
+        for name, forecast in predictions.items()
+    }
+    inverse = {name: 1.0 / (error + 1e-9) for name, error in errors.items()}
+    total = sum(inverse.values())
+    return {name: value / total for name, value in inverse.items()}
+
+
+def production_adaptive_forecast(values):
+    """Mirror the production one-step recent-mean/last/trend ensemble."""
+    mean = statistics.fmean(values)
+    last = values[-1]
+    slope = (values[-1] - values[0]) / (len(values) - 1) if len(values) > 1 else 0.0
+    trend = last + slope
+    weights = production_adaptive_weights(values)
+    return {
+        "persistence": last,
+        "recent_mean": mean,
+        "trend": trend,
+        "adaptive_ensemble": (
+            weights["recent_mean"] * mean
+            + weights["last_value"] * last
+            + weights["trend"] * trend
+        ),
+        "weights": weights,
+    }
+
+
+def production_ensemble_forecast_validation(rows, tariff, max_history=168):
+    """Walk-forward test of production's BTC/GPU ensemble against persistence.
+
+    This diagnostic uses global external market history and an explicit constant
+    tariff. The live API remains site-learning-degraded until its own eligibility
+    conditions are met; this report does not silently change that production gate.
+    """
+    models = ("recent_mean", "trend", "adaptive_ensemble")
+    strategies = ("BTC Mining", "AI Compute")
+    errors = {model: {strategy: [] for strategy in strategies} for model in models}
+    baseline_errors = {strategy: [] for strategy in strategies}
+    skipped_gaps = 0
+    for i in range(7, len(rows) - 1):
+        decision = rows[i]
+        next_row = rows[i + 1]
+        gap_minutes = (next_row["ts"] - decision["ts"]) / 60.0
+        if gap_minutes <= 0 or gap_minutes > MAX_BACKTEST_GAP_MINUTES:
+            skipped_gaps += 1
+            continue
+        history = rows[max(0, i - max_history + 1):i + 1]
+        btc_forecasts = production_adaptive_forecast([r["btc"] for r in history])
+        gpu_forecasts = production_adaptive_forecast([r["gpu"] for r in history])
+        actual = economics(next_row, tariff)
+        baseline = economics(decision, tariff)
+        for strategy in strategies:
+            baseline_errors[strategy].append(abs(actual[strategy] - baseline[strategy]))
+        for model in models:
+            predicted_row = dict(decision)
+            predicted_row["btc"] = btc_forecasts[model]
+            predicted_row["gpu"] = gpu_forecasts[model]
+            predicted = economics(predicted_row, tariff)
+            for strategy in strategies:
+                errors[model][strategy].append(abs(actual[strategy] - predicted[strategy]))
+
+    pair_count = min((len(errors[m][strategies[0]]) for m in models), default=0)
+    baseline_mae_by_strategy = {
+        strategy: statistics.fmean(values) if values else None
+        for strategy, values in baseline_errors.items()
+    }
+    baseline_mae = (
+        statistics.fmean([v for v in baseline_mae_by_strategy.values() if v is not None])
+        if pair_count else None
+    )
+    results = {}
+    for model in models:
+        per_strategy = {}
+        all_errors = []
+        for strategy in strategies:
+            values = errors[model][strategy]
+            all_errors.extend(values)
+            mae = statistics.fmean(values) if values else None
+            baseline_strategy_mae = baseline_mae_by_strategy[strategy]
+            per_strategy[strategy] = {
+                "mae_eur_per_kwh": round(mae, 6) if mae is not None else None,
+                "persistence_mae_eur_per_kwh": round(baseline_strategy_mae, 6)
+                if baseline_strategy_mae is not None else None,
+                "mae_skill_vs_persistence": round(1.0 - mae / baseline_strategy_mae, 6)
+                if mae is not None and baseline_strategy_mae and baseline_strategy_mae > 1e-12 else None,
+            }
+        mae = statistics.fmean(all_errors) if all_errors else None
+        skill = 1.0 - mae / baseline_mae if mae is not None and baseline_mae and baseline_mae > 1e-12 else None
+        results[model] = {
+            "mae_eur_per_kwh": round(mae, 6) if mae is not None else None,
+            "persistence_mae_eur_per_kwh": round(baseline_mae, 6) if baseline_mae is not None else None,
+            "mae_skill_vs_persistence": round(skill, 6) if skill is not None else None,
+            "per_strategy": per_strategy,
+            "release_eligible": bool(pair_count >= 100 and skill is not None and skill >= 0.05),
+        }
+    best_model = max(
+        results,
+        key=lambda name: results[name]["mae_skill_vs_persistence"]
+        if results[name]["mae_skill_vs_persistence"] is not None else -float("inf"),
+    ) if results else None
+    best_skill = results[best_model]["mae_skill_vs_persistence"] if best_model else None
+    return {
+        "method": "walk_forward_replica_of_production_adaptive_model_weights",
+        "status": "evaluated" if pair_count >= 100 else "insufficient_data",
+        "pairs": pair_count,
+        "minimum_pairs": 100,
+        "minimum_mae_skill_vs_persistence": 0.05,
+        "persistence_mae_eur_per_kwh": round(baseline_mae, 6) if baseline_mae is not None else None,
+        "best_model": best_model,
+        "best_mae_skill_vs_persistence": best_skill,
+        "release_eligible": bool(pair_count >= 100 and best_skill is not None and best_skill >= 0.05),
+        "models": results,
+        "excluded_nonconsecutive_or_long_gap_pairs": skipped_gaps,
+        "max_training_history": max_history,
+        "warning": "Diagnostic global-market replay with constant tariff; not proof of realized profitability or site-specific online-learning eligibility.",
+    }
+
+
 def run_backtest(rows, tariff, min_history=WINDOW):
     empirical_pairs = []
     calibrated_pairs = []
@@ -401,6 +537,7 @@ def run_backtest(rows, tariff, min_history=WINDOW):
         "production_parametric_monte_carlo": summarize_backtest(parametric_pairs, "production_independent_lognormal"),
         "independent_empirical_paired_bootstrap": summarize_backtest(empirical_pairs, "historical_paired_bootstrap"),
         "walk_forward_shrunk_forecast": calibrated_summary,
+        "production_ensemble_forecast_validation": production_ensemble_forecast_validation(rows, tariff),
         "forecast_calibration": {
             "method": "bounded ridge-shrunk correction to persistence baseline, fitted only on earlier settled one-step forecasts",
             "minimum_prior_pairs_before_nonzero_correction": 24,
