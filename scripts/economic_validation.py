@@ -499,7 +499,8 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
         "minimum_pairs": 100,
         "minimum_mae_skill_vs_persistence": 0.05,
         "horizons": results,
-        "release_eligible": any(value["release_eligible"] for value in results.values()),
+        "required_horizons_hours": list(horizons_hours),
+        "release_eligible": bool(results) and all(value["release_eligible"] for value in results.values()),
         "warning": "Global market quotes and constant tariff; not realized payouts or site-specific investment validation.",
     }
 
