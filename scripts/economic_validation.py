@@ -280,21 +280,53 @@ def summarize_backtest(pairs, label):
     }
 
 
+def _candidate_stable_across_blocks(model_errors, baseline_errors, blocks=4):
+    n = min(len(model_errors), len(baseline_errors))
+    if n < blocks * 8:
+        return False
+    block_size = n // blocks
+    positive = 0
+    for block in range(blocks):
+        start = block * block_size
+        end = n if block == blocks - 1 else (block + 1) * block_size
+        model_mae = statistics.fmean(model_errors[start:end])
+        baseline_mae = statistics.fmean(baseline_errors[start:end])
+        if baseline_mae > 1e-12 and model_mae < baseline_mae:
+            positive += 1
+    return positive == blocks
+
+
 def corrected_forecast_weights(values, sample_steps=1):
     """Select a candidate using past-only outcomes at the exact forecast horizon."""
+    names = ("recent_mean", "last_value", "trend", "mean_24", "median_24",
+             "seasonal_24", "seasonal_168", "ewma_02", "ewma_05")
+    fallback = {name: (1.0 if name == "last_value" else 0.0) for name in names}
     if sample_steps < 1 or len(values) < sample_steps + 32:
-        return {"recent_mean": 0.0, "last_value": 1.0, "trend": 0.0}
-    errors = {"recent_mean": [], "last_value": [], "trend": []}
-    for origin in range(max(8, len(values) - sample_steps - 200), len(values) - sample_steps):
-        history = values[max(0, origin - 48):origin]
-        mean = statistics.fmean(history)
-        last = history[-1]
-        slope = (history[-1] - history[0]) / (len(history) - 1) if len(history) > 1 else 0.0
+        return fallback
+    errors = {name: [] for name in names}
+    for origin in range(max(168, len(values) - sample_steps - 100), len(values) - sample_steps):
+        history = values[max(0, origin - 168):origin]
+        recent = history[-48:]
+        last = recent[-1]
+        mean = statistics.fmean(recent)
+        mean24 = statistics.fmean(history[-24:])
+        median24 = statistics.median(history[-24:])
+        seasonal24 = history[-24] if len(history) >= 24 else last
+        seasonal168 = history[-168] if len(history) >= 168 else last
+        def ewma(series, alpha):
+            value = series[0]
+            for item in series[1:]:
+                value = alpha * item + (1.0 - alpha) * value
+            return value
+        slope = (recent[-1] - recent[0]) / (len(recent) - 1) if len(recent) > 1 else 0.0
         damped_steps = min(12.0, float(sample_steps)) * math.exp(
             -max(0.0, float(sample_steps) - 12.0) / 12.0)
         predictions = {
             "recent_mean": mean, "last_value": last,
-            "trend": last + slope * damped_steps,
+            "trend": last + slope * damped_steps, "mean_24": mean24,
+            "median_24": median24, "seasonal_24": seasonal24,
+            "seasonal_168": seasonal168, "ewma_02": ewma(recent, 0.2),
+            "ewma_05": ewma(recent, 0.5),
         }
         actual = values[origin + sample_steps]
         for name, prediction in predictions.items():
@@ -302,35 +334,63 @@ def corrected_forecast_weights(values, sample_steps=1):
     maes = {name: statistics.fmean(series) for name, series in errors.items()
             if len(series) >= 24}
     if "last_value" not in maes:
-        return {"recent_mean": 0.0, "last_value": 1.0, "trend": 0.0}
+        return fallback
     best = min(maes, key=maes.get)
-    if best == "last_value" or maes[best] >= maes["last_value"] * 0.95:
+    baseline_mae = maes["last_value"]
+    min_training_skill = 0.15
+    if baseline_mae <= 1e-12 or best == "last_value":
         best = "last_value"
-    return {name: (1.0 if name == best else 0.0)
-            for name in ("recent_mean", "last_value", "trend")}
+    else:
+        training_skill = 1.0 - maes[best] / baseline_mae
+        block_length = min(48, max(6, int(sample_steps)))
+        ci = _block_bootstrap_skill_ci(
+            errors[best], errors["last_value"], SEED + sample_steps,
+            block_length=block_length, replicates=50,
+        )
+        # A candidate must clear a stricter training margin and a positive
+        # block-bootstrap lower bound before it is allowed to displace persistence.
+        stable = _candidate_stable_across_blocks(errors[best], errors["last_value"], blocks=4)
+        if (training_skill < min_training_skill or ci["lower_95"] is None
+                or ci["lower_95"] <= 0.0 or not stable):
+            best = "last_value"
+    return {name: (1.0 if name == best else 0.0) for name in names}
 
 
 def corrected_forecast_value(values, weights, horizon_hours, interval_seconds):
-    """Forecast with production's 48-snapshot features and damped, unit-correct trend."""
-    history = values[-48:]
-    mean = statistics.fmean(history)
-    last = history[-1]
-    slope = (history[-1] - history[0]) / (len(history) - 1) if len(history) > 1 else 0.0
+    """Forecast with the same robust candidate features used in production."""
+    history = values[-168:]
+    recent = history[-48:]
+    mean = statistics.fmean(recent)
+    mean24 = statistics.fmean(history[-24:])
+    median24 = statistics.median(history[-24:])
+    last = recent[-1]
+    seasonal24 = history[-24] if len(history) >= 24 else last
+    seasonal168 = history[-168] if len(history) >= 168 else last
+    def ewma(series, alpha):
+        value = series[0]
+        for item in series[1:]:
+            value = alpha * item + (1.0 - alpha) * value
+        return value
+    slope = (recent[-1] - recent[0]) / (len(recent) - 1) if len(recent) > 1 else 0.0
     interval_seconds = interval_seconds if interval_seconds > 0 else 300.0
     sample_steps = horizon_hours * 3600.0 / interval_seconds
     damped_steps = min(12.0, sample_steps) * math.exp(-max(0.0, sample_steps - 12.0) / 12.0)
-    trend = last + slope * damped_steps
-    return max(0.0, weights["recent_mean"] * mean
-               + weights["last_value"] * last + weights["trend"] * trend)
+    predictions = {
+        "recent_mean": mean, "last_value": last, "trend": last + slope * damped_steps,
+        "mean_24": mean24, "median_24": median24, "seasonal_24": seasonal24,
+        "seasonal_168": seasonal168, "ewma_02": ewma(recent, 0.2),
+        "ewma_05": ewma(recent, 0.5),
+    }
+    return max(0.0, sum(weights[name] * predictions[name] for name in predictions))
 
 
-def _block_bootstrap_skill_ci(model_errors, baseline_errors, seed, block_length=6):
+def _block_bootstrap_skill_ci(model_errors, baseline_errors, seed, block_length=6, replicates=BOOTSTRAP_SAMPLES):
     n = min(len(model_errors), len(baseline_errors))
     if n < 30:
         return {"lower_95": None, "upper_95": None, "replicates": 0}
     rng = random.Random(seed)
     skills = []
-    for _ in range(BOOTSTRAP_SAMPLES):
+    for _ in range(replicates):
         indices = []
         while len(indices) < n:
             start = rng.randrange(n)
@@ -349,7 +409,7 @@ def _block_bootstrap_skill_ci(model_errors, baseline_errors, seed, block_length=
 
 
 def horizon_release_gate(horizons, required_horizons=(1, 6, 24, 72)):
-    """Require every advertised forecast horizon to meet the independent release bar."""
+    """Require every advertised horizon to meet the same independent release bar."""
     failed = [
         horizon for horizon in required_horizons
         if not isinstance(horizons.get(str(horizon)), dict)
@@ -365,13 +425,16 @@ def horizon_release_gate(horizons, required_horizons=(1, 6, 24, 72)):
 def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 24, 72)):
     """Validate the corrected production forecast at the API's actual hour horizons."""
     results = {}
+    all_gaps = [rows[j]["ts"] - rows[j - 1]["ts"] for j in range(1, len(rows))
+                if rows[j]["ts"] > rows[j - 1]["ts"]]
+    median_interval_seconds = statistics.median(all_gaps) if all_gaps else 3600.0
     for horizon in horizons_hours:
         strategy_errors = {"BTC Mining": [], "AI Compute": []}
         baseline_errors = {"BTC Mining": [], "AI Compute": []}
         combined_errors = []
         combined_baseline_errors = []
         skipped = 0
-        origin_stride = max(1, len(rows) // 500)
+        origin_stride = max(1, len(rows) // 200)
         for i in range(23, len(rows) - 1, origin_stride):
             decision = rows[i]
             expected_seconds = horizon * 3600.0
@@ -433,7 +496,15 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
                 "mae_skill_vs_persistence": round(1.0 - model_series_mae / baseline_series_mae, 6)
                 if model_series_mae is not None and baseline_series_mae and baseline_series_mae > 1e-12 else None,
             }
-        ci = _block_bootstrap_skill_ci(combined_errors, combined_baseline_errors, SEED + horizon)
+        all_gaps = [rows[j]["ts"] - rows[j - 1]["ts"] for j in range(1, len(rows))
+                    if rows[j]["ts"] > rows[j - 1]["ts"]]
+        median_interval = statistics.median(all_gaps) if all_gaps else 3600.0
+        block_length = min(48, max(6, math.ceil(
+            (horizon * 3600.0) / (median_interval * origin_stride))))
+        ci = _block_bootstrap_skill_ci(
+            combined_errors, combined_baseline_errors, SEED + horizon,
+            block_length=block_length,
+        )
         nonnegative = all(
             value["mae_skill_vs_persistence"] is not None
             and value["mae_skill_vs_persistence"] >= 0.0
@@ -447,6 +518,7 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
             "persistence_mae_eur_per_kwh": round(baseline_mae, 6) if baseline_mae is not None else None,
             "mae_skill_vs_persistence": round(skill, 6) if skill is not None else None,
             "mae_skill_confidence_interval_95": ci,
+            "bootstrap_block_length": block_length,
             "per_strategy": per_strategy,
             "release_eligible": bool(
                 pairs >= 100 and skill is not None and skill >= 0.05
