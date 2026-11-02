@@ -47,20 +47,21 @@ class ChronologicalForecastRegressionTests(unittest.TestCase):
         self.assertIn("first=max(8,len(y)-48)", source)
 
     def test_horizon_seasonality_uses_elapsed_hours_not_snapshot_count(self):
-        source = ast.get_source_segment(SOURCE, find_function("_adaptive_horizon_weights"))
+        source = ast.get_source_segment(SOURCE, find_function("_horizon_candidate_values"))
         self.assertIn("24.0*3600.0/interval", source)
         self.assertIn("168.0*3600.0/interval", source)
-        self.assertIn('"seasonal_24h":seasonal24', source)
-        self.assertIn('"seasonal_168h":seasonal168', source)
+        self.assertIn('"seasonal_24h":seasonal(period_24h)', source)
+        self.assertIn('"seasonal_168h":seasonal(period_168h)', source)
 
     def test_horizon_candidate_selection_has_a_separate_holdout(self):
         source = ast.get_source_segment(SOURCE, find_function("_adaptive_horizon_weights"))
-        self.assertIn("split=int(len(errors[\"last_value\"])*0.75)", source)
-        self.assertIn("validation_skill<0.05", source)
+        self.assertIn("split=int(count*0.75)", source)
+        self.assertIn("skill<0.05", source)
+        self.assertIn("valid_stable", source)
 
     def test_production_horizon_training_includes_the_current_origin(self):
         source = ast.get_source_segment(SOURCE, find_function("_adaptive_horizon_weights"))
-        self.assertIn("origin-167):origin+1", source)
+        self.assertIn("origin-lookback+1):origin+1", source)
         confidence = ast.get_source_segment(SOURCE, find_function("_ensemble_confidence"))
         self.assertIn("training=y[:origin+1]", confidence)
 
@@ -71,20 +72,32 @@ class ChronologicalForecastRegressionTests(unittest.TestCase):
         self.assertIn("validation_skill<0.05", source)
 
     def test_forecast_candidate_family_includes_seasonal_and_ewma_models(self):
-        source = ast.get_source_segment(SOURCE, find_function("_adaptive_horizon_weights"))
+        source = ast.get_source_segment(SOURCE, find_function("_horizon_candidate_values"))
         for name in ("seasonal_24h", "seasonal_168h", "ewma_02", "ewma_05", "median_24"):
             self.assertIn(name, source)
 
     def test_ensemble_forecast_uses_horizon_specific_weights_and_snapshot_cadence(self):
         source = ast.get_source_segment(SOURCE, find_function("_ensemble_forecast"))
-        self.assertIn("_eligible_market_rows(c,2000,include_ts=True,require_site_tariff=False)", source)
+        self.assertIn("_eligible_market_rows(c,10000,include_ts=True,require_site_tariff=False)", source)
         self.assertIn("sample_steps=max(1,round((h*3600.0)/interval_seconds))", source)
         self.assertIn("_adaptive_horizon_weights(y,sample_steps,interval_seconds)", source)
-        self.assertIn('"weights_by_horizon":horizon_weights', source)
+        self.assertIn('"weights_by_horizon":weights_by_horizon', source)
         self.assertIn("max(0.0,pred)", source)
 
 
 class DispatchSafetyRegressionTests(unittest.TestCase):
+    def test_forecast_history_uses_elapsed_time_windows_and_long_history(self):
+        features = ast.get_source_segment(SOURCE, find_function("_horizon_candidate_values"))
+        forecast = ast.get_source_segment(SOURCE, find_function("_ensemble_forecast"))
+        self.assertIn("168.0*3600.0/interval", features)
+        self.assertIn("24.0*3600.0/interval", features)
+        self.assertIn("_eligible_market_rows(c,10000", forecast)
+        self.assertIn("series_key==\"btc\"", forecast)
+
+    def test_btc_cost_amortization_includes_facility_overhead(self):
+        source = ast.get_source_segment(SOURCE, find_function("_economics"))
+        self.assertIn("(btc_device_power+btc_overhead)*8760", source)
+
     def test_forecast_plan_marks_input_fallback_as_unverified(self):
         source = ast.get_source_segment(SOURCE, find_function("forecast_plan"))
         self.assertIn('_market_snapshot_freshness(c)', source)
