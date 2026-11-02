@@ -19,6 +19,33 @@ class EconomicValidationTests(unittest.TestCase):
     def test_market_history_validation_requests_compact_extended_history(self):
         self.assertIn("limit=10000&compact=true", MODULE.MARKET_URL)
 
+    def test_history_parser_keeps_only_fresh_external_btc_price_and_hashrate(self):
+        payload = {
+            "btc_hashprice_usd_ph_day": 40,
+            "gpu_l40s_usd_hour": 1.1,
+            "eur_usd": 1.1,
+            "btc_price_usd": 60000,
+            "network_hashrate_eh": 500,
+            "btc_difficulty": 90,
+            "data_quality": {"fields": {
+                "btc_hashprice_usd_ph_day": external_field(10),
+                "gpu_l40s_usd_hour": external_field(10),
+                "eur_usd": external_field(10),
+                "btc_price_usd": external_field(10),
+                "network_hashrate_eh": external_field(10),
+                "btc_difficulty": external_field(10),
+            }},
+        }
+        rows, rejected = MODULE.observations_from_history([{"timestamp": 100, "data": payload}])
+        self.assertEqual(rejected, 0)
+        self.assertEqual(rows[0]["btc_price"], 60000.0)
+        self.assertEqual(rows[0]["network_hashrate"], 500.0)
+        stale = dict(payload)
+        stale["data_quality"] = {"fields": dict(payload["data_quality"]["fields"])}
+        stale["data_quality"]["fields"]["network_hashrate_eh"] = external_field(901)
+        rows, _ = MODULE.observations_from_history([{"timestamp": 101, "data": stale}])
+        self.assertIsNone(rows[0]["network_hashrate"])
+
     def test_rejects_malformed_quality_metadata(self):
         self.assertFalse(MODULE.market_ready({
             "btc_hashprice_usd_ph_day": 40,
