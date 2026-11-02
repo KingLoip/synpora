@@ -388,8 +388,9 @@ def corrected_forecast_weights(values, sample_steps=1, interval_seconds=300.0, l
         return fallback
     model_values = [math.log(max(float(v), 1e-12)) for v in values] if log_scale else [float(v) for v in values]
     errors = {name: [] for name in names}
-    first = max(weekly_steps, len(values) - sample_steps - 48)
-    for origin in range(first, len(values) - sample_steps):
+    origin_stride = max(1, sample_steps // 24)
+    first = max(weekly_steps, len(values) - sample_steps - 48 * origin_stride)
+    for origin in range(first, len(values) - sample_steps, origin_stride):
         candidates = _horizon_candidate_values(model_values, origin, sample_steps, interval)
         if log_scale:
             candidates = {name: math.exp(max(-50.0, min(50.0, value)))
