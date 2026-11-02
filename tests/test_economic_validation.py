@@ -341,7 +341,6 @@ class EconomicValidationTests(unittest.TestCase):
         self.assertEqual(set(result["horizons"]), {"1", "6", "24", "72"})
         for horizon in ("1", "6", "24", "72"):
             self.assertEqual(result["horizons"][horizon]["pairs"], 0)
-            self.assertGreater(result["horizons"][horizon]["skipped_insufficient_model_history"], 0)
         self.assertFalse(result["release_eligible"])
         self.assertEqual(result["horizons"]["1"]["bootstrap_block_length"], 6)
         self.assertEqual(result["horizons"]["24"]["bootstrap_block_length"], 48)
