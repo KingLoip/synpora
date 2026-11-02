@@ -82,9 +82,21 @@ def observations_from_history(raw):
             if value is None or value < lower or (upper is not None and value > upper):
                 return default
             return value
+        def optional_external(key):
+            field = fields.get(key) if isinstance(fields, dict) else None
+            value = finite(payload.get(key))
+            age = finite(field.get("age_seconds")) if isinstance(field, dict) else None
+            if (not isinstance(field, dict) or field.get("source") != "external"
+                    or field.get("available") is not True or value is None or value <= 0
+                    or age is None or age < -60 or age > 900):
+                return None
+            return value
         result.append({
             "ts": ts,
             "btc": float(payload["btc_hashprice_usd_ph_day"]),
+            "btc_price": optional_external("btc_price_usd"),
+            "network_hashrate": optional_external("network_hashrate_eh"),
+            "btc_difficulty": optional_external("btc_difficulty"),
             "gpu": float(payload["gpu_l40s_usd_hour"]),
             "fx": float(payload["eur_usd"]),
             "gpu_power": optional("gpu_l40s_power_kw", 0.35),
@@ -355,8 +367,6 @@ def _horizon_candidate_values(values, origin, sample_steps, interval_seconds):
         return value
 
     def seasonal(period):
-        # For multi-period horizons, move back by whole periods until the
-        # reference observation is at or before the forecast origin.
         lag = ((max(1, int(sample_steps)) + period - 1) // period) * period
         index = origin + int(sample_steps) - lag
         return float(values[index]) if 0 <= index <= origin else last
@@ -377,10 +387,50 @@ def _horizon_candidate_values(values, origin, sample_steps, interval_seconds):
     }
 
 
-def corrected_forecast_weights(values, sample_steps=1, interval_seconds=300.0, log_scale=False):
-    """Select a same-horizon candidate on past-only rolling origins plus a strict holdout."""
-    names = ("recent_mean", "last_value", "trend", "mean_24", "median_24",
-             "seasonal_24h", "seasonal_168h", "ewma_02", "ewma_05")
+def _btc_price_network_candidate(hashprice_values, price_values, network_values,
+                                 origin, sample_steps, interval_seconds):
+    """Structural hashprice candidate from BTC price and network hash rate/difficulty."""
+    interval = max(1.0, float(interval_seconds))
+    recent_steps = max(2, round(48.0 * 3600.0 / interval))
+    start = max(0, origin - recent_steps + 1)
+    price_history = price_values[start:origin + 1]
+    network_history = network_values[start:origin + 1]
+    if (len(price_history) < 2 or len(network_history) < 2
+            or any(v is None or not math.isfinite(float(v)) or float(v) <= 0 for v in price_history)
+            or any(v is None or not math.isfinite(float(v)) or float(v) <= 0 for v in network_history)):
+        return None
+    horizon_hours = max(0.0, float(sample_steps) * interval / 3600.0)
+    damped_hours = min(horizon_hours, 24.0) * 0.25
+
+    def damped(series):
+        logs = [math.log(float(v)) for v in series]
+        elapsed_hours = max(1e-9, (len(logs) - 1) * interval / 3600.0)
+        slope = (logs[-1] - logs[0]) / elapsed_hours
+        return math.exp(max(-50.0, min(50.0, logs[-1] + slope * damped_hours)))
+
+    predicted_price = damped(price_history)
+    predicted_network = damped(network_history)
+    current_price = float(price_values[origin])
+    current_network = float(network_values[origin])
+    current_hashprice = float(hashprice_values[origin])
+    if min(current_price, current_network, predicted_price, predicted_network) <= 0:
+        return None
+    return max(0.0, current_hashprice * (predicted_price / current_price)
+               * (current_network / predicted_network))
+
+
+def corrected_forecast_weights(values, sample_steps=1, interval_seconds=300.0, log_scale=False,
+                                btc_price_values=None, network_values=None):
+    """Select same-horizon candidates on horizon-spaced past-only origins and a strict holdout."""
+    direct_names = ("recent_mean", "last_value", "trend", "mean_24", "median_24",
+                    "seasonal_24h", "seasonal_168h", "ewma_02", "ewma_05")
+    exogenous_ready = (
+        btc_price_values is not None and network_values is not None
+        and len(btc_price_values) == len(values) and len(network_values) == len(values)
+        and all(v is not None and math.isfinite(float(v)) and float(v) > 0 for v in btc_price_values)
+        and all(v is not None and math.isfinite(float(v)) and float(v) > 0 for v in network_values)
+    )
+    names = direct_names + (("btc_price_network_structural",) if exogenous_ready else ())
     fallback = {name: (1.0 if name == "last_value" else 0.0) for name in names}
     interval = max(1.0, float(interval_seconds))
     weekly_steps = max(1, round(168.0 * 3600.0 / interval))
@@ -395,9 +445,15 @@ def corrected_forecast_weights(values, sample_steps=1, interval_seconds=300.0, l
         if log_scale:
             candidates = {name: math.exp(max(-50.0, min(50.0, value)))
                           for name, value in candidates.items()}
+        if exogenous_ready:
+            structural = _btc_price_network_candidate(
+                values, btc_price_values, network_values, origin, sample_steps, interval)
+            if structural is not None:
+                candidates["btc_price_network_structural"] = structural
         actual = float(values[origin + sample_steps])
-        for name, prediction in candidates.items():
-            errors[name].append(abs(actual - prediction))
+        for name in names:
+            if name in candidates:
+                errors[name].append(abs(actual - candidates[name]))
     count = len(errors["last_value"])
     split = int(count * 0.75)
     if split < 24 or count - split < 8:
@@ -429,8 +485,9 @@ def corrected_forecast_weights(values, sample_steps=1, interval_seconds=300.0, l
     return {name: (1.0 if name == best else 0.0) for name in names}
 
 
-def corrected_forecast_value(values, weights, horizon_hours, interval_seconds, log_scale=False):
-    """Apply the exact production feature family and invert the BTC log transform."""
+def corrected_forecast_value(values, weights, horizon_hours, interval_seconds, log_scale=False,
+                              btc_price_values=None, network_values=None):
+    """Apply the production candidate family and invert the BTC log transform."""
     interval = max(1.0, float(interval_seconds))
     sample_steps = max(1, round(horizon_hours * 3600.0 / interval))
     model_values = [math.log(max(float(v), 1e-12)) for v in values] if log_scale else [float(v) for v in values]
@@ -438,7 +495,12 @@ def corrected_forecast_value(values, weights, horizon_hours, interval_seconds, l
     if log_scale:
         candidates = {name: math.exp(max(-50.0, min(50.0, value)))
                       for name, value in candidates.items()}
-    return max(0.0, sum(weights[name] * candidates[name] for name in weights))
+    if "btc_price_network_structural" in weights and btc_price_values is not None and network_values is not None:
+        structural = _btc_price_network_candidate(
+            values, btc_price_values, network_values, len(values) - 1, sample_steps, interval)
+        if structural is not None:
+            candidates["btc_price_network_structural"] = structural
+    return max(0.0, sum(weights[name] * candidates.get(name, float(values[-1])) for name in weights))
 
 
 def _block_bootstrap_skill_ci(model_errors, baseline_errors, seed, block_length=6, replicates=BOOTSTRAP_SAMPLES):
@@ -526,12 +588,22 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
             if cached_forecast is None:
                 btc_values = [row["btc"] for row in history_rows]
                 gpu_values = [row["gpu"] for row in history_rows]
+                btc_price_values = [row.get("btc_price") for row in history_rows]
+                network_values = [row.get("network_hashrate") for row in history_rows]
+                if not all(v is not None and v > 0 for v in network_values):
+                    network_values = [row.get("btc_difficulty") for row in history_rows]
+                if not all(v is not None and v > 0 for v in network_values):
+                    network_values = None
+                if not all(v is not None and v > 0 for v in btc_price_values):
+                    btc_price_values = None
                 btc_weights = corrected_forecast_weights(
-                    btc_values, sample_steps, interval_seconds, log_scale=True)
+                    btc_values, sample_steps, interval_seconds, log_scale=True,
+                    btc_price_values=btc_price_values, network_values=network_values)
                 gpu_weights = corrected_forecast_weights(gpu_values, sample_steps, interval_seconds)
                 cached_forecast = (
                     corrected_forecast_value(
-                        btc_values, btc_weights, horizon, interval_seconds, log_scale=True),
+                        btc_values, btc_weights, horizon, interval_seconds, log_scale=True,
+                        btc_price_values=btc_price_values, network_values=network_values),
                     corrected_forecast_value(
                         gpu_values, gpu_weights, horizon, interval_seconds),
                 )
@@ -911,6 +983,9 @@ def main():
             "btc_device_power_kw": 3.5,
             "btc_facility_overhead_kw": 0.0,
             "btc_uptime": 0.98,
+            "btc_price_external_observations": sum(row.get("btc_price") is not None for row in rows),
+            "network_hashrate_external_observations": sum(row.get("network_hashrate") is not None for row in rows),
+            "difficulty_external_observations": sum(row.get("btc_difficulty") is not None for row in rows),
             "btc_pool_fee": 0.02,
             "gpu_capex_eur": 0.0,
             "btc_capex_eur": 0.0,
