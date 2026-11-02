@@ -57,7 +57,7 @@ class ChronologicalForecastRegressionTests(unittest.TestCase):
         source = ast.get_source_segment(SOURCE, find_function("_adaptive_horizon_weights"))
         self.assertIn("split=int(count*0.75)", source)
         self.assertIn("skill<0.05", source)
-        self.assertIn("valid_stable", source)
+        self.assertIn("stable", source)
 
     def test_production_horizon_training_includes_the_current_origin(self):
         source = ast.get_source_segment(SOURCE, find_function("_adaptive_horizon_weights"))
