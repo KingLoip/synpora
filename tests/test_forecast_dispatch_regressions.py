@@ -99,6 +99,16 @@ class DispatchSafetyRegressionTests(unittest.TestCase):
         source = ast.get_source_segment(SOURCE, find_function("_economics"))
         self.assertIn("(btc_device_power+btc_overhead)*8760", source)
 
+    def test_market_history_preserves_provenance_for_btc_exogenous_inputs(self):
+        source = ast.get_source_segment(SOURCE, find_function("market_history"))
+        self.assertIn('"btc_price_usd","btc_difficulty","network_hashrate_eh"', source)
+        self.assertIn("required+optional", source)
+        eligible = ast.get_source_segment(SOURCE, find_function("_eligible_market_rows"))
+        self.assertIn('_optional_external_market_value(payload,"btc_price_usd")', eligible)
+        forecast = ast.get_source_segment(SOURCE, find_function("_ensemble_forecast"))
+        self.assertIn("btc_price_network_structural", forecast)
+        self.assertIn("btc_exogenous_fields_used", forecast)
+
     def test_btc_mining_diagnostics_expose_break_even_and_unverified_settlement(self):
         source = ast.get_source_segment(SOURCE, find_function("_btc_mining_metrics"))
         self.assertIn("break_even_energy_cost_eur_kwh", source)
