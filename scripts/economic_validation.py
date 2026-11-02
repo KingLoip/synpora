@@ -796,6 +796,42 @@ def conservative_gpu_sensitivity(rows, tariff):
     return result
 
 
+def btc_mining_sensitivity(rows, tariff):
+    """Show BTC economics under explicit illustrative ASIC cost scenarios."""
+    cases = {
+        "production_reference_inputs": {},
+        "efficient_asic_17j_th": {"btc_asic_efficiency_j_th": 17.0},
+        "older_asic_25j_th": {"btc_asic_efficiency_j_th": 25.0},
+        "facility_overhead_0_15kw": {"btc_facility_overhead_kw": 0.15},
+        "costed_asic_5000_eur": {
+            "btc_capex": 5000.0, "btc_maintenance_eur_year": 300.0,
+            "btc_lifetime_years": 4.0, "btc_facility_overhead_kw": 0.15,
+            "btc_uptime": 0.95, "btc_pool_fee": 0.03,
+        },
+        "conservative_asic_8000_eur": {
+            "btc_capex": 8000.0, "btc_maintenance_eur_year": 500.0,
+            "btc_lifetime_years": 4.0, "btc_asic_efficiency_j_th": 25.0,
+            "btc_device_power_kw": 3.5, "btc_facility_overhead_kw": 0.25,
+            "btc_uptime": 0.95, "btc_pool_fee": 0.03,
+        },
+    }
+    result = {}
+    for name, assumptions in cases.items():
+        values = [economics(row, tariff, **assumptions)["BTC Mining"] for row in rows]
+        result[name] = {
+            "assumptions": assumptions,
+            "net_contribution_eur_per_available_site_kwh": distribution(values),
+            "positive_contribution_share": round(sum(value > 0 for value in values) / len(values), 4) if values else None,
+            "illustrative_only": name != "production_reference_inputs",
+            "realized_cashflow_validated": False,
+        }
+    return {
+        "method": "sensitivity_over_efficiency_overhead_uptime_pool_fee_capex_and_maintenance",
+        "cases": result,
+        "warning": "Illustrative ASIC purchase and maintenance assumptions are not user-confirmed quotes or verified pool settlements.",
+    }
+
+
 def investment_readiness():
     return {
         "status": "not_investment_validated",
@@ -901,6 +937,7 @@ def main():
             "latest_snapshot_capex_hurdles": capex_hurdles(latest, tariff),
             "historical_capex_hurdle_distribution": capex_hurdle_distribution(rows, tariff),
             "conservative_gpu_cost_sensitivity": conservative_gpu_sensitivity(rows, tariff),
+            "btc_mining_sensitivity": btc_mining_sensitivity(rows, tariff),
         }
     print(json.dumps(report, indent=2, sort_keys=True))
 
