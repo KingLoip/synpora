@@ -2003,7 +2003,7 @@ def install(app):
     @app.get("/api/v1/market/history")
     def market_history(limit:int=100, compact:bool=False):
         # Full payload history stays capped at 500. Compact, provenance-preserving
-        # market history can return 2,000 rows for longer-horizon validation.
+        # market history can return 10,000 rows for longer-horizon validation.
         bounded_limit=max(1,min(int(limit),10000 if compact else 500))
         c=init_db()
         try:
@@ -2413,7 +2413,9 @@ def install(app):
                     "sample_interval_seconds":round(interval_seconds,2),
                     "history_observations":len(y),"history_hours":round(len(y)*interval_seconds/3600.0,2),
                     "btc_log_scale":log_scale,
-                    "btc_exogenous_fields_used":bool(price_values is not None and network_values is not None),
+                    "btc_exogenous_fields_used":bool(price_values is not None and network_values is not None
+                        and all(v is not None and float(v)>0 for v in price_values)
+                        and all(v is not None and float(v)>0 for v in network_values)),
                     "weights_by_horizon":weights_by_horizon}
 
     def _model_select(c):
