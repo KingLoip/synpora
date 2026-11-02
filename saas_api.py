@@ -915,6 +915,55 @@ def install(app):
             "tax_rate":float(getattr(x,"tax_rate",0.0)),
             "warning":"Tax rate and cost assumptions are user supplied; not tax advice. Site/network limits and one-off installation costs are not modeled."}
 
+    def _btc_mining_metrics(x):
+        """Expose BTC miner economics on a consistent site-kWh and daily basis."""
+        import math
+        _validate_numeric_inputs(x)
+        device_power=max(0.01,float(getattr(x,"btc_device_power_kw",3.5)))
+        overhead=max(0.0,float(getattr(x,"btc_facility_overhead_kw",0.0)))+max(0.0,float(getattr(x,"facility_overhead_kw",0.0)))
+        site_power=device_power+overhead
+        efficiency=max(0.01,float(getattr(x,"asic_efficiency_j_th",20.0)))
+        pool_fee=max(0.0,min(0.99,float(getattr(x,"pool_fee",0.02))))
+        uptime=max(0.0,min(1.0,float(getattr(x,"btc_uptime",0.98))))
+        eur_usd=max(0.01,float(x.eur_usd))
+        hashprice=max(0.0,float(x.btc_hashprice_usd_ph_day))
+        hashrate_th_s=device_power*1000.0/efficiency
+        hashrate_ph_s=hashrate_th_s/1000.0
+        gross_daily_eur=hashprice*hashrate_ph_s/eur_usd
+        gross_site_kwh=(hashprice/eur_usd)/(efficiency*24.0)*(device_power/site_power)
+        net_revenue_site_kwh=gross_site_kwh*(1.0-pool_fee)
+        capex=max(0.0,float(getattr(x,"btc_capex_eur",0.0)))
+        life=max(0.01,float(getattr(x,"btc_lifetime_years",4.0)))
+        maintenance=max(0.0,float(getattr(x,"btc_maintenance_eur_year",0.0)))
+        annual_fixed=capex/life+maintenance
+        fixed_per_available_kwh=annual_fixed/(site_power*8760.0)
+        energy_cost=float(x.energy_cost_eur_kwh)
+        break_even_energy=(net_revenue_site_kwh-fixed_per_available_kwh/uptime
+                           if uptime>0 else None)
+        break_even_hashprice=((energy_cost+fixed_per_available_kwh/max(uptime,1e-12))
+            *eur_usd*efficiency*24.0*(site_power/device_power)/(1.0-pool_fee))
+        economics=_economics(x)
+        net_per_available_kwh=float(economics["BTC Mining"])
+        return {
+            "status":"modeled_not_settled",
+            "effective_hashrate_th_s":round(hashrate_th_s,3),
+            "asic_efficiency_j_th":round(efficiency,3),
+            "device_power_kw":round(device_power,4),
+            "facility_overhead_kw":round(overhead,4),
+            "total_site_power_kw":round(site_power,4),
+            "pool_fee":round(pool_fee,4),
+            "uptime":round(uptime,4),
+            "gross_revenue_eur_day_before_pool_fee":round(gross_daily_eur,4),
+            "net_revenue_eur_per_available_site_kwh_before_energy_and_fixed_costs":round(net_revenue_site_kwh,6),
+            "annualized_capex_and_maintenance_eur":round(annual_fixed,2),
+            "fixed_cost_eur_per_available_site_kwh":round(fixed_per_available_kwh,6),
+            "break_even_energy_cost_eur_kwh":round(break_even_energy,6) if break_even_energy is not None else None,
+            "break_even_hashprice_usd_ph_day":round(break_even_hashprice,4),
+            "modeled_net_eur_per_available_site_kwh":round(net_per_available_kwh,6),
+            "modeled_net_eur_day_at_full_site_capacity":round(net_per_available_kwh*site_power*24.0,4),
+            "realized_pool_payout_verified":False,
+        }
+
     def _market_feed_host_allowed(feed_url):
         # Require an exact operator-supplied hostname allowlist; HTTPS alone is not enough.
         try:
@@ -1642,6 +1691,7 @@ def install(app):
                 "note":"A scenario gate is a warning, not a guarantee; input assumptions and external data quality still matter."},
             "method":"deterministic_seeded_monte_carlo_lognormal_shocks_with_stress_tests",
             "cost_model":_economic_cost_model(x),
+            "btc_mining_analysis":_btc_mining_metrics(x),
             "recommendation_only":True,"hardware_write":False
         }
 
@@ -1689,6 +1739,7 @@ def install(app):
                 "explanation":"Risk-adjusted choice from current economics plus seeded Monte-Carlo market shocks; no hardware action is executed.",
                 "method":"unified_forecast_risk_regret_v1","cost_model":_economic_cost_model(x),
                 "confidence_status":"uncalibrated_heuristic",
+                "btc_mining_analysis":_btc_mining_metrics(x),
                 "confidence_note":"This score is a model heuristic, not a statistically calibrated probability. Calibration requires sufficient settled decisions with verified actual outcomes.",
                 "investment_gate":{"status":"not_investment_validated" if (float(getattr(x,"gpu_capex_eur",0.0))<=0 or float(getattr(x,"btc_capex_eur",0.0))<=0 or float(getattr(x,"gpu_maintenance_eur_year",0.0))<=0 or float(getattr(x,"btc_maintenance_eur_year",0.0))<=0) else "cost_inputs_present_but_realized_revenue_unverified",
                     "required":["hardware_capex","annual_maintenance","verified_realized_revenue","metered_all_in_energy_cost","uptime_and_utilization","tax_and_financing_costs"],
@@ -1989,6 +2040,12 @@ def install(app):
         gpu_platform_fee: float=0.15
         asic_efficiency_j_th: float=20.0
         btc_device_power_kw: float=3.5
+        btc_facility_overhead_kw: float=0.0
+        btc_uptime: float=0.98
+        pool_fee: float=0.02
+        btc_capex_eur: float=0.0
+        btc_lifetime_years: float=4.0
+        btc_maintenance_eur_year: float=0.0
 
     @app.post("/api/v1/farms/{farm_id}/portfolio-optimize")
     def portfolio_optimize(farm_id:str,x:PortfolioIn,authorization:str|None=Header(default=None)):
@@ -2002,14 +2059,27 @@ def install(app):
                 value=(x.gpu_hourly_usd/x.eur_usd)*x.gpu_utilization*(1-x.gpu_platform_fee)/power
                 candidates.append({"asset_id":a["id"],"asset":a["name"],"kind":"GPU","value_eur_kwh":value,"capacity_kwh":power*x.horizon_hours})
             elif kind=="BTC":
-                value=(x.btc_hashprice_usd_ph_day/x.eur_usd)/(x.asic_efficiency_j_th*24)*0.98*0.98
-                candidates.append({"asset_id":a["id"],"asset":a["name"],"kind":"BTC","value_eur_kwh":value,"capacity_kwh":power*x.horizon_hours})
-        candidates.sort(key=lambda z:z["value_eur_kwh"],reverse=True)
+                device_power=power
+                overhead=max(0.0,float(x.btc_facility_overhead_kw))
+                site_power=device_power+overhead
+                uptime=max(0.0,min(1.0,float(x.btc_uptime)))
+                pool_fee=max(0.0,min(0.99,float(x.pool_fee)))
+                efficiency=max(0.01,float(x.asic_efficiency_j_th))
+                value=((x.btc_hashprice_usd_ph_day/max(float(x.eur_usd),0.01))/(efficiency*24.0)
+                       *(device_power/site_power)*(1.0-pool_fee))
+                fixed=(max(0.0,float(x.btc_capex_eur))/max(0.01,float(x.btc_lifetime_years))
+                       +max(0.0,float(x.btc_maintenance_eur_year)))/(site_power*8760.0*max(uptime,0.01))
+                candidates.append({"asset_id":a["id"],"asset":a["name"],"kind":"BTC",
+                    "value_eur_kwh":value,"energy_cost_factor":uptime,
+                    "fixed_cost_eur_kwh":fixed,"capacity_kwh":site_power*x.horizon_hours*uptime,
+                    "effective_hashrate_th_s":device_power*1000.0/efficiency})
+        candidates.sort(key=lambda z:z["value_eur_kwh"]-x.energy_cost_eur_kwh*z.get("energy_cost_factor",1.0)-z.get("fixed_cost_eur_kwh",0.0),reverse=True)
         remaining=max(0,x.energy_kwh); allocation=[]
         for a in candidates:
             kwh=min(remaining,a["capacity_kwh"])
             if kwh>0:
-                allocation.append({**a,"allocated_kwh":round(kwh,3),"net_eur":round((a["value_eur_kwh"]-x.energy_cost_eur_kwh)*kwh,2)})
+                net_per_kwh=(a["value_eur_kwh"]-x.energy_cost_eur_kwh*a.get("energy_cost_factor",1.0)-a.get("fixed_cost_eur_kwh",0.0))
+                allocation.append({**a,"allocated_kwh":round(kwh,3),"net_eur":round(net_per_kwh*kwh,2)})
                 remaining-=kwh
         grid_value=0.055
         if remaining>0:
