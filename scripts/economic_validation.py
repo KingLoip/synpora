@@ -494,6 +494,7 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
         combined_errors = []
         combined_baseline_errors = []
         skipped = 0
+        insufficient_history_skipped = 0
         origin_stride = max(1, len(rows) // 200)
         for i in range(23, len(rows) - 1, origin_stride):
             decision = rows[i]
@@ -507,18 +508,24 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
             if abs(actual_gap - expected_seconds) > max(300.0, expected_seconds * 0.10):
                 skipped += 1
                 continue
+            history_rows = rows[:i + 1]
+            recent_rows = history_rows[-48:]
+            gaps = [recent_rows[j]["ts"] - recent_rows[j - 1]["ts"]
+                    for j in range(1, len(recent_rows))
+                    if recent_rows[j]["ts"] > recent_rows[j - 1]["ts"]]
+            interval_seconds = statistics.median(gaps) if gaps else median_interval_seconds
+            sample_steps = max(1, round(horizon * 3600.0 / interval_seconds))
+            weekly_steps = max(1, round(168.0 * 3600.0 / interval_seconds))
+            # Persistence fallback is safe operationally, but is not evidence
+            # that the learned horizon model is validated.
+            if len(history_rows) < weekly_steps + sample_steps + 32:
+                insufficient_history_skipped += 1
+                continue
             cache_key = (id(rows), int(horizon), int(i))
             cached_forecast = _PRODUCTION_FORECAST_CACHE.get(cache_key)
             if cached_forecast is None:
-                history_rows = rows[:i + 1]
-                recent_rows = history_rows[-48:]
-                gaps = [recent_rows[j]["ts"] - recent_rows[j - 1]["ts"]
-                        for j in range(1, len(recent_rows))
-                        if recent_rows[j]["ts"] > recent_rows[j - 1]["ts"]]
-                interval_seconds = statistics.median(gaps) if gaps else 300.0
                 btc_values = [row["btc"] for row in history_rows]
                 gpu_values = [row["gpu"] for row in history_rows]
-                sample_steps = max(1, round(horizon * 3600.0 / interval_seconds))
                 btc_weights = corrected_forecast_weights(
                     btc_values, sample_steps, interval_seconds, log_scale=True)
                 gpu_weights = corrected_forecast_weights(gpu_values, sample_steps, interval_seconds)
@@ -584,6 +591,8 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
             "horizon_hours": horizon,
             "pairs": pairs,
             "skipped_nonmatching_horizon": skipped,
+            "skipped_insufficient_model_history": insufficient_history_skipped,
+            "model_history_required_observations": max(1, round(168.0 * 3600.0 / median_interval_seconds)) + max(1, round(horizon * 3600.0 / median_interval_seconds)) + 32,
             "mae_eur_per_kwh": round(model_mae, 6) if model_mae is not None else None,
             "persistence_mae_eur_per_kwh": round(baseline_mae, 6) if baseline_mae is not None else None,
             "mae_skill_vs_persistence": round(skill, 6) if skill is not None else None,
