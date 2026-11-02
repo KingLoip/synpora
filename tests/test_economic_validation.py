@@ -192,6 +192,26 @@ class EconomicValidationTests(unittest.TestCase):
             candidates["seasonal_168h"],
             values[origin + 72 * 3600 // interval - period_week], places=10)
 
+    def test_btc_structural_candidate_uses_external_price_and_network_series(self):
+        interval = 300
+        values = []
+        prices = []
+        network = []
+        for i in range(4000):
+            price = 60000.0 * math.exp(0.0001 * i + 0.01 * math.sin(i / 25.0))
+            hashrate = 500.0 * math.exp(0.00001 * i)
+            prices.append(price)
+            network.append(hashrate)
+            values.append(12.0 * price / 60000.0 / (hashrate / 500.0))
+        weights = MODULE.corrected_forecast_weights(
+            values, sample_steps=72 * 3600 // interval, interval_seconds=interval,
+            log_scale=True, btc_price_values=prices, network_values=network)
+        self.assertIn("btc_price_network_structural", weights)
+        prediction = MODULE.corrected_forecast_value(
+            values, weights, 72, interval, log_scale=True,
+            btc_price_values=prices, network_values=network)
+        self.assertGreater(prediction, 0.0)
+
     def test_btc_log_scale_forecast_remains_positive(self):
         values = [30.0 * math.exp(0.0002 * i + 0.02 * math.sin(i / 20.0)) for i in range(4000)]
         weights = MODULE.corrected_forecast_weights(
