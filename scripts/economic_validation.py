@@ -388,7 +388,7 @@ def corrected_forecast_weights(values, sample_steps=1, interval_seconds=300.0, l
         return fallback
     model_values = [math.log(max(float(v), 1e-12)) for v in values] if log_scale else [float(v) for v in values]
     errors = {name: [] for name in names}
-    first = max(weekly_steps, len(values) - sample_steps - 200)
+    first = max(weekly_steps, len(values) - sample_steps - 48)
     for origin in range(first, len(values) - sample_steps):
         candidates = _horizon_candidate_values(model_values, origin, sample_steps, interval)
         if log_scale:
@@ -478,6 +478,9 @@ def horizon_release_gate(horizons, required_horizons=(1, 6, 24, 72)):
     }
 
 
+_PRODUCTION_FORECAST_CACHE = {}
+
+
 def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 24, 72)):
     """Validate the corrected production forecast at the API's actual hour horizons."""
     results = {}
@@ -503,22 +506,32 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
             if abs(actual_gap - expected_seconds) > max(300.0, expected_seconds * 0.10):
                 skipped += 1
                 continue
-            history_rows = rows[:i + 1]
-            recent_rows = history_rows[-48:]
-            gaps = [recent_rows[j]["ts"] - recent_rows[j - 1]["ts"]
-                    for j in range(1, len(recent_rows))
-                    if recent_rows[j]["ts"] > recent_rows[j - 1]["ts"]]
-            interval_seconds = statistics.median(gaps) if gaps else 300.0
-            btc_values = [row["btc"] for row in history_rows]
-            gpu_values = [row["gpu"] for row in history_rows]
-            sample_steps = max(1, round(horizon * 3600.0 / interval_seconds))
-            btc_weights = corrected_forecast_weights(btc_values, sample_steps, interval_seconds, log_scale=True)
-            gpu_weights = corrected_forecast_weights(gpu_values, sample_steps, interval_seconds)
+            cache_key = (id(rows), int(horizon), int(i))
+            cached_forecast = _PRODUCTION_FORECAST_CACHE.get(cache_key)
+            if cached_forecast is None:
+                history_rows = rows[:i + 1]
+                recent_rows = history_rows[-48:]
+                gaps = [recent_rows[j]["ts"] - recent_rows[j - 1]["ts"]
+                        for j in range(1, len(recent_rows))
+                        if recent_rows[j]["ts"] > recent_rows[j - 1]["ts"]]
+                interval_seconds = statistics.median(gaps) if gaps else 300.0
+                btc_values = [row["btc"] for row in history_rows]
+                gpu_values = [row["gpu"] for row in history_rows]
+                sample_steps = max(1, round(horizon * 3600.0 / interval_seconds))
+                btc_weights = corrected_forecast_weights(
+                    btc_values, sample_steps, interval_seconds, log_scale=True)
+                gpu_weights = corrected_forecast_weights(gpu_values, sample_steps, interval_seconds)
+                cached_forecast = (
+                    corrected_forecast_value(
+                        btc_values, btc_weights, horizon, interval_seconds, log_scale=True),
+                    corrected_forecast_value(
+                        gpu_values, gpu_weights, horizon, interval_seconds),
+                )
+                _PRODUCTION_FORECAST_CACHE[cache_key] = cached_forecast
             predicted = dict(decision)
-            predicted["btc"] = corrected_forecast_value(
-                btc_values, btc_weights, horizon, interval_seconds, log_scale=True)
-            predicted["gpu"] = corrected_forecast_value(
-                gpu_values, gpu_weights, horizon, interval_seconds)
+            predicted["btc"], predicted["gpu"] = cached_forecast
+            # Market-price forecasts are independent of the site tariff, so reuse
+            # them across tariff scenarios without re-fitting the same models.
             # The live API holds the supplied EUR/USD input constant across the forecast.
             actual_values = economics(target, tariff)
             predicted_values = economics(predicted, tariff)
@@ -597,6 +610,10 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
 
 
 def run_backtest(rows, tariff, min_history=WINDOW):
+    forecast_history_rows = rows
+    # Keep one-step risk/regret work bounded to the latest 2,000 snapshots;
+    # long-horizon validation still receives the full 10,000-row history.
+    rows = rows[-2000:]
     empirical_pairs = []
     calibrated_pairs = []
     calibration_history = {name: [] for name in ("AI Compute", "BTC Mining", "Battery", "Grid")}
@@ -713,7 +730,7 @@ def run_backtest(rows, tariff, min_history=WINDOW):
         "reason": "Forecasts must beat persistence by at least 5% on 100+ out-of-sample pairs; current evidence does not meet this bar."
     }
     return {
-        "production_corrected_horizon_validation": production_corrected_horizon_validation(rows, tariff),
+        "production_corrected_horizon_validation": production_corrected_horizon_validation(forecast_history_rows, tariff),
         "forecast_quality_gate": forecast_gate,
         "production_parametric_monte_carlo": summarize_backtest(parametric_pairs, "production_independent_lognormal"),
         "independent_empirical_paired_bootstrap": summarize_backtest(empirical_pairs, "historical_paired_bootstrap"),
@@ -819,7 +836,7 @@ def capex_hurdle_distribution(rows, tariff):
 def main():
     request = urllib.request.Request(MARKET_URL, headers={"User-Agent": "SYNPORA-Economic-Validation/1.0"})
     with urllib.request.urlopen(request, timeout=25) as response:
-        raw = json.loads(response.read(5_000_001).decode("utf-8"))
+        raw = json.loads(response.read(20_000_001).decode("utf-8"))
     rows, rejected = observations_from_history(raw)
     if len(rows) < WINDOW + 2:
         raise SystemExit(f"Not enough provenance-verified market history: {len(rows)} usable, {rejected} rejected.")
