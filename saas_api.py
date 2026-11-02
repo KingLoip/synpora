@@ -2162,7 +2162,7 @@ def install(app):
             return fallback
         model_values=[math.log(max(float(v),1e-12)) for v in values] if log_scale else [float(v) for v in values]
         errors={name:[] for name in names}
-        first=max(weekly_steps,len(values)-sample_steps-200)
+        first=max(weekly_steps,len(values)-sample_steps-120)
         for origin in range(first,len(values)-sample_steps):
             candidates=_horizon_candidate_values(model_values,origin,sample_steps,interval)
             if not candidates:
