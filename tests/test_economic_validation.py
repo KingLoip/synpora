@@ -218,7 +218,7 @@ class EconomicValidationTests(unittest.TestCase):
         self.assertEqual(sum(weights.values()), 1.0)
 
     def test_training_window_includes_the_forecast_origin_observation(self):
-        source = inspect.getsource(MODULE.corrected_forecast_weights)
+        source = inspect.getsource(MODULE._horizon_candidate_values)
         self.assertIn("period_168h = max(1, round(168.0 * 3600.0 / interval))", source)
 
     def test_corrected_forecast_guard_selects_trend_only_when_holdout_proves_gain(self):
