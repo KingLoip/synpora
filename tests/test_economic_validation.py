@@ -17,7 +17,7 @@ def external_field(age):
 
 class EconomicValidationTests(unittest.TestCase):
     def test_market_history_validation_requests_compact_extended_history(self):
-        self.assertIn("limit=2000&compact=true", MODULE.MARKET_URL)
+        self.assertIn("limit=10000&compact=true", MODULE.MARKET_URL)
 
     def test_rejects_malformed_quality_metadata(self):
         self.assertFalse(MODULE.market_ready({
@@ -154,6 +154,41 @@ class EconomicValidationTests(unittest.TestCase):
 
 
 
+    def test_btc_facility_overhead_efficiency_and_fixed_costs_reduce_margin(self):
+        row = {"btc": 40, "gpu": 1.1, "fx": 1.1, "gpu_power": 0.35,
+               "gpu_util": 0.7, "gpu_fee": 0.15}
+        base = MODULE.economics(row, 0.05)["BTC Mining"]
+        overhead = MODULE.economics(row, 0.05, btc_facility_overhead_kw=0.5)["BTC Mining"]
+        inefficient = MODULE.economics(row, 0.05, btc_asic_efficiency_j_th=25.0)["BTC Mining"]
+        costed = MODULE.economics(
+            row, 0.05, btc_capex=5000, btc_maintenance_eur_year=300,
+            btc_lifetime_years=4.0)["BTC Mining"]
+        self.assertLess(overhead, base)
+        self.assertLess(inefficient, base)
+        self.assertLess(costed, base)
+
+    def test_72h_forecast_uses_true_daily_and_weekly_elapsed_time_lags(self):
+        interval = 300
+        period_day = 24 * 3600 // interval
+        period_week = 168 * 3600 // interval
+        values = [20.0 + math.sin(2.0 * math.pi * i / period_day) for i in range(4000)]
+        origin = len(values) - 1
+        candidates = MODULE._horizon_candidate_values(values, origin, 72 * 3600 // interval, interval)
+        self.assertAlmostEqual(candidates["mean_24"],
+                               sum(values[-period_day:]) / period_day, places=10)
+        self.assertAlmostEqual(candidates["seasonal_24h"], values[origin], places=10)
+        self.assertAlmostEqual(
+            candidates["seasonal_168h"],
+            values[origin + 72 * 3600 // interval - period_week], places=10)
+
+    def test_btc_log_scale_forecast_remains_positive(self):
+        values = [30.0 * math.exp(0.0002 * i + 0.02 * math.sin(i / 20.0)) for i in range(4000)]
+        weights = MODULE.corrected_forecast_weights(
+            values, sample_steps=12, interval_seconds=300, log_scale=True)
+        forecast = MODULE.corrected_forecast_value(
+            values, weights, 1, 300, log_scale=True)
+        self.assertGreater(forecast, 0.0)
+
     def test_candidate_selection_rejects_regime_shift_that_fails_untouched_holdout(self):
         baseline = [1.0] * 100
         model = [0.5] * 75 + [1.5] * 25
@@ -184,11 +219,11 @@ class EconomicValidationTests(unittest.TestCase):
 
     def test_training_window_includes_the_forecast_origin_observation(self):
         source = inspect.getsource(MODULE.corrected_forecast_weights)
-        self.assertIn("origin - 167):origin + 1", source)
+        self.assertIn("period_168h = max(1, round(168.0 * 3600.0 / interval))", source)
 
     def test_corrected_forecast_guard_selects_trend_only_when_holdout_proves_gain(self):
         rising = [10.0 + i * 0.1 for i in range(300)]
-        weights = MODULE.corrected_forecast_weights(rising)
+        weights = MODULE.corrected_forecast_weights(rising, interval_seconds=3600)
         self.assertEqual(weights["trend"], 1.0)
         self.assertEqual(sum(weights.values()), 1.0)
 
