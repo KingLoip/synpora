@@ -81,7 +81,7 @@ class ChronologicalForecastRegressionTests(unittest.TestCase):
         source = ast.get_source_segment(SOURCE, find_function("_ensemble_forecast"))
         self.assertIn("_eligible_market_rows(c,10000,include_ts=True,require_site_tariff=False)", source)
         self.assertIn("sample_steps=max(1,round((h*3600.0)/interval_seconds))", source)
-        self.assertIn("_adaptive_horizon_weights(y,sample_steps,interval_seconds,log_scale=log_scale)", source)
+        self.assertIn("_adaptive_horizon_weights(y,sample_steps,interval_seconds,log_scale=log_scale,", source)
         self.assertIn('"weights_by_horizon":weights_by_horizon', source)
         self.assertIn("max(0.0,pred)", source)
 
