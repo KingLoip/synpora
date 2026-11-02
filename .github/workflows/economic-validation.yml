@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   empirical-economic-validation:
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
+    if: github.head_ref != 'btc-history-export-readonly' && (github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

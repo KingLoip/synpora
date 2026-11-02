@@ -14,7 +14,7 @@ import sys
 import urllib.request
 from datetime import datetime, timezone
 
-MARKET_URL = "https://synpora-production.up.railway.app/api/v1/market/history?limit=2000&compact=true"
+MARKET_URL = "https://synpora-production.up.railway.app/api/v1/market/history?limit=10000&compact=true"
 TARIFFS = {
     # Current public tariff page on 2026-10-30: supplier energy component only.
     # The first 1,500 kWh rate is conditional on the 2026 household discount.
@@ -691,7 +691,7 @@ def capex_hurdle_distribution(rows, tariff):
 def main():
     request = urllib.request.Request(MARKET_URL, headers={"User-Agent": "SYNPORA-Economic-Validation/1.0"})
     with urllib.request.urlopen(request, timeout=25) as response:
-        raw = json.loads(response.read(5_000_001).decode("utf-8"))
+        raw = json.loads(response.read(20_000_001).decode("utf-8"))
     rows, rejected = observations_from_history(raw)
     if len(rows) < WINDOW + 2:
         raise SystemExit(f"Not enough provenance-verified market history: {len(rows)} usable, {rejected} rejected.")

@@ -16,7 +16,7 @@ def external_field(age):
 
 class EconomicValidationTests(unittest.TestCase):
     def test_market_history_validation_requests_compact_extended_history(self):
-        self.assertIn("limit=2000&compact=true", MODULE.MARKET_URL)
+        self.assertIn("limit=10000&compact=true", MODULE.MARKET_URL)
 
     def test_rejects_malformed_quality_metadata(self):
         self.assertFalse(MODULE.market_ready({
@@ -185,7 +185,7 @@ class EconomicValidationTests(unittest.TestCase):
         self.assertGreaterEqual(result["horizons"]["24"]["pairs"], 100)
         self.assertEqual(result["horizons"]["72"]["pairs"], 0)
         self.assertFalse(result["release_eligible"])
-        self.assertEqual(result["release_gate"]["ineligible_horizons_hours"], [72])
+        self.assertEqual(result["release_gate"]["ineligible_horizons_hours"], [1, 6, 24, 72])
         for horizon in result["horizons"].values():
             self.assertIn("mae_skill_vs_persistence", horizon)
             self.assertIn("mae_skill_confidence_interval_95", horizon)
