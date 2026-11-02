@@ -2232,8 +2232,9 @@ def install(app):
             return fallback
         model_values=[math.log(max(float(v),1e-12)) for v in values] if log_scale else [float(v) for v in values]
         errors={name:[] for name in names}
-        first=max(weekly_steps,len(values)-sample_steps-120)
-        for origin in range(first,len(values)-sample_steps):
+        origin_stride=max(1,sample_steps//24)
+        first=max(weekly_steps,len(values)-sample_steps-120*origin_stride)
+        for origin in range(first,len(values)-sample_steps,origin_stride):
             candidates=_horizon_candidate_values(model_values,origin,sample_steps,interval)
             if not candidates:
                 continue
@@ -2344,13 +2345,14 @@ def install(app):
             return 0.55
         sample_steps=max(1,round((float(horizon_hours)*3600.0)/interval_seconds))
         weekly_steps=max(1,round(168.0*3600.0/interval_seconds))
-        first_origin=len(y)-sample_steps-24
+        confidence_stride=max(1,sample_steps//24)
+        first_origin=len(y)-sample_steps-24*confidence_stride
         if first_origin<weekly_steps+24:
             return 0.55
         log_scale=series_key=="btc"
         model_errors=[]
         baseline_errors=[]
-        for origin in range(first_origin,len(y)-sample_steps):
+        for origin in range(first_origin,len(y)-sample_steps,confidence_stride):
             training=y[:origin+1]
             weights=_adaptive_horizon_weights(training,sample_steps,interval_seconds,log_scale=log_scale)
             model_values=[math.log(max(v,1e-12)) for v in training] if log_scale else training
