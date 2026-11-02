@@ -41,8 +41,10 @@ class ChronologicalForecastRegressionTests(unittest.TestCase):
     def test_market_history_supports_compact_extended_provenance_data(self):
         source = ast.get_source_segment(SOURCE, find_function("market_history"))
         self.assertIn("compact:bool=False", source)
-        self.assertIn("2000 if compact else 500", source)
+        self.assertIn("10000 if compact else 500", source)
         self.assertIn('compact_payload["data_quality"]', source)
+        self.assertIn('"btc_price_usd","btc_difficulty","network_hashrate_eh"', source)
+        self.assertIn("required+optional", source)
 
 
 class DispatchSafetyRegressionTests(unittest.TestCase):
