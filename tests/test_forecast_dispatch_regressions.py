@@ -29,7 +29,7 @@ class ChronologicalForecastRegressionTests(unittest.TestCase):
     def test_market_history_supports_compact_extended_provenance_data(self):
         source = ast.get_source_segment(SOURCE, find_function("market_history"))
         self.assertIn("compact:bool=False", source)
-        self.assertIn("2000 if compact else 500", source)
+        self.assertIn("10000 if compact else 500", source)
         self.assertIn('compact_payload["data_quality"]', source)
 
     def test_adaptive_weights_use_rolling_origin_errors_on_inference_window(self):
@@ -61,15 +61,15 @@ class ChronologicalForecastRegressionTests(unittest.TestCase):
 
     def test_production_horizon_training_includes_the_current_origin(self):
         source = ast.get_source_segment(SOURCE, find_function("_adaptive_horizon_weights"))
-        self.assertIn("origin-lookback+1):origin+1", source)
+        self.assertIn("origin-lookback+1):origin+1", ast.get_source_segment(SOURCE, find_function("_horizon_candidate_values")))
         confidence = ast.get_source_segment(SOURCE, find_function("_ensemble_confidence"))
         self.assertIn("training=y[:origin+1]", confidence)
 
     def test_horizon_weights_are_selected_from_same_horizon_outcomes(self):
         source = ast.get_source_segment(SOURCE, find_function("_adaptive_horizon_weights"))
         self.assertIn("values[origin+sample_steps]", source)
-        self.assertIn("len(values) < sample_steps + 32", source)
-        self.assertIn("validation_skill<0.05", source)
+        self.assertIn("len(values)<weekly_steps+sample_steps+32", source)
+        self.assertIn("skill<0.05", source)
 
     def test_forecast_candidate_family_includes_seasonal_and_ewma_models(self):
         source = ast.get_source_segment(SOURCE, find_function("_horizon_candidate_values"))
@@ -80,7 +80,7 @@ class ChronologicalForecastRegressionTests(unittest.TestCase):
         source = ast.get_source_segment(SOURCE, find_function("_ensemble_forecast"))
         self.assertIn("_eligible_market_rows(c,10000,include_ts=True,require_site_tariff=False)", source)
         self.assertIn("sample_steps=max(1,round((h*3600.0)/interval_seconds))", source)
-        self.assertIn("_adaptive_horizon_weights(y,sample_steps,interval_seconds)", source)
+        self.assertIn("_adaptive_horizon_weights(y,sample_steps,interval_seconds,log_scale=log_scale)", source)
         self.assertIn('"weights_by_horizon":weights_by_horizon', source)
         self.assertIn("max(0.0,pred)", source)
 
