@@ -2012,7 +2012,7 @@ def install(app):
             rows=[]
         result=[]
         required=("btc_hashprice_usd_ph_day","gpu_l40s_usd_hour","eur_usd")
-        optional=("gpu_l40s_power_kw","gpu_utilization","gpu_platform_fee")
+        optional=("gpu_l40s_power_kw","gpu_utilization","gpu_platform_fee","btc_price_usd","btc_difficulty","network_hashrate_eh")
         for row in rows:
             try:
                 payload=json.loads(row[1]) if row[1] else None
@@ -2023,7 +2023,7 @@ def install(app):
                 fields=quality.get("fields",{}) if isinstance(quality,dict) else {}
                 compact_payload={key:payload.get(key) for key in required+optional}
                 compact_payload["data_quality"]={"fields":{
-                    key:fields.get(key) for key in required
+                    key:fields.get(key) for key in required+optional
                 } if isinstance(fields,dict) else {}}
                 payload=compact_payload
             result.append({"timestamp":row[0],"data":payload,"payload_valid":isinstance(payload,dict)})
@@ -2116,6 +2116,21 @@ def install(app):
         gpu_facility_overhead_kw: float=0.0
         facility_overhead_kw: float=0.0
 
+    def _optional_external_market_value(payload,key):
+        try:
+            quality=payload.get("data_quality",{})
+            fields=quality.get("fields",{}) if isinstance(quality,dict) else {}
+            field=fields.get(key,{}) if isinstance(fields,dict) else {}
+            value=float(payload.get(key))
+            age=float(field.get("age_seconds"))
+            if (not math.isfinite(value) or value<=0 or not isinstance(field,dict)
+                    or field.get("source")!="external" or field.get("available") is not True
+                    or not math.isfinite(age) or age < -60 or age > 900):
+                return None
+            return value
+        except (TypeError,ValueError,OverflowError):
+            return None
+
     def _eligible_market_rows(c, limit=168, include_ts=False, require_site_tariff=True):
         # Site tariffs are required for realized economic labels, but not for
         # forecasting globally sourced BTC hashprice and GPU marketplace prices.
@@ -2138,7 +2153,10 @@ def install(app):
             except (KeyError,TypeError,ValueError):
                 if require_site_tariff:
                     continue
-            values=(row[0],row[2],row[3],site_energy)
+            values=(row[0],row[2],row[3],site_energy,
+                    _optional_external_market_value(payload,"btc_price_usd"),
+                    _optional_external_market_value(payload,"network_hashrate_eh"),
+                    _optional_external_market_value(payload,"btc_difficulty"))
             rows.append(values if include_ts else values[1:])
         # SQL fetches the newest bounded window; restore chronological order before
         # fitting or evaluating any forward-looking model.
@@ -2220,11 +2238,88 @@ def install(app):
             "ewma_05":ewma(recent,0.5),
         }
 
-    def _adaptive_horizon_weights(values, sample_steps, interval_seconds=300.0, log_scale=False):
+    def _horizon_candidate_values(values, origin, sample_steps, interval_seconds):
+        """Build forecast features from elapsed-time windows, never raw row counts."""
         import math
         import statistics
-        names=("recent_mean","last_value","trend","mean_24","median_24",
-               "seasonal_24h","seasonal_168h","ewma_02","ewma_05")
+        if not values or origin < 0 or origin >= len(values):
+            return {}
+        interval=max(1.0,float(interval_seconds))
+        period_24h=max(1,int(round(24.0*3600.0/interval)))
+        period_168h=max(1,int(round(168.0*3600.0/interval)))
+        recent_steps=max(2,int(round(48.0*3600.0/interval)))
+        daily_steps=max(2,period_24h)
+        lookback=max(period_168h,recent_steps,daily_steps)
+        history=values[max(0,origin-lookback+1):origin+1]
+        if not history:
+            return {}
+        recent=history[-min(len(history),recent_steps):]
+        daily=history[-min(len(history),daily_steps):]
+        last=float(values[origin])
+        def ewma(series,alpha):
+            value=float(series[0])
+            for item in series[1:]:
+                value=alpha*float(item)+(1.0-alpha)*value
+            return value
+        def seasonal(period):
+            lag=((max(1,int(sample_steps))+period-1)//period)*period
+            index=origin+int(sample_steps)-lag
+            return float(values[index]) if 0<=index<=origin else last
+        slope=(float(recent[-1])-float(recent[0]))/(len(recent)-1) if len(recent)>1 else 0.0
+        decay_steps=max(1.0,6.0*3600.0/interval)
+        damped_steps=decay_steps*(1.0-math.exp(-max(1.0,float(sample_steps))/decay_steps))
+        return {
+            "recent_mean":statistics.fmean(float(v) for v in recent),
+            "last_value":last,
+            "trend":last+slope*damped_steps,
+            "mean_24":statistics.fmean(float(v) for v in daily),
+            "median_24":statistics.median(float(v) for v in daily),
+            "seasonal_24h":seasonal(period_24h),
+            "seasonal_168h":seasonal(period_168h),
+            "ewma_02":ewma(recent,0.2),
+            "ewma_05":ewma(recent,0.5),
+        }
+
+    def _btc_price_network_candidate(hashprice_values, price_values, network_values,
+                                      origin, sample_steps, interval_seconds):
+        """Structural hashprice candidate from BTC price and network difficulty/hashrate."""
+        import math
+        interval=max(1.0,float(interval_seconds))
+        recent_steps=max(2,int(round(48.0*3600.0/interval)))
+        start=max(0,origin-recent_steps+1)
+        price_history=price_values[start:origin+1]
+        network_history=network_values[start:origin+1]
+        if (len(price_history)<2 or len(network_history)<2
+                or any(v is None or not math.isfinite(float(v)) or float(v)<=0 for v in price_history)
+                or any(v is None or not math.isfinite(float(v)) or float(v)<=0 for v in network_history)):
+            return None
+        horizon_hours=max(0.0,float(sample_steps)*interval/3600.0)
+        damped_hours=min(horizon_hours,24.0)*0.25
+        def damped(series):
+            logs=[math.log(float(v)) for v in series]
+            elapsed_hours=max(1e-9,(len(logs)-1)*interval/3600.0)
+            slope=(logs[-1]-logs[0])/elapsed_hours
+            return math.exp(max(-50.0,min(50.0,logs[-1]+slope*damped_hours)))
+        predicted_price=damped(price_history)
+        predicted_network=damped(network_history)
+        current_price=float(price_values[origin])
+        current_network=float(network_values[origin])
+        current_hashprice=float(hashprice_values[origin])
+        if min(current_price,current_network,predicted_price,predicted_network)<=0:
+            return None
+        return max(0.0,current_hashprice*(predicted_price/current_price)*(current_network/predicted_network))
+
+    def _adaptive_horizon_weights(values, sample_steps, interval_seconds=300.0,
+                                  log_scale=False, btc_price_values=None, network_values=None):
+        import math
+        import statistics
+        direct_names=("recent_mean","last_value","trend","mean_24","median_24",
+                      "seasonal_24h","seasonal_168h","ewma_02","ewma_05")
+        exogenous_ready=(btc_price_values is not None and network_values is not None
+            and len(btc_price_values)==len(values) and len(network_values)==len(values)
+            and all(v is not None and math.isfinite(float(v)) and float(v)>0 for v in btc_price_values)
+            and all(v is not None and math.isfinite(float(v)) and float(v)>0 for v in network_values))
+        names=direct_names+(("btc_price_network_structural",) if exogenous_ready else ())
         fallback={name:(1.0 if name=="last_value" else 0.0) for name in names}
         interval=max(1.0,float(interval_seconds))
         weekly_steps=max(1,int(round(168.0*3600.0/interval)))
@@ -2236,13 +2331,17 @@ def install(app):
         first=max(weekly_steps,len(values)-sample_steps-120*origin_stride)
         for origin in range(first,len(values)-sample_steps,origin_stride):
             candidates=_horizon_candidate_values(model_values,origin,sample_steps,interval)
-            if not candidates:
-                continue
             if log_scale:
                 candidates={name:math.exp(max(-50.0,min(50.0,value))) for name,value in candidates.items()}
+            if exogenous_ready:
+                structural=_btc_price_network_candidate(
+                    values,btc_price_values,network_values,origin,sample_steps,interval)
+                if structural is not None:
+                    candidates["btc_price_network_structural"]=structural
             actual=float(values[origin+sample_steps])
-            for name,prediction in candidates.items():
-                errors[name].append(abs(actual-prediction))
+            for name in names:
+                if name in candidates:
+                    errors[name].append(abs(actual-candidates[name]))
         count=len(errors["last_value"])
         split=int(count*0.75)
         if split<24 or count-split<8:
@@ -2255,7 +2354,6 @@ def install(app):
             baseline_mae=statistics.fmean(baseline)
             candidate_mae=statistics.fmean(candidate)
             skill=1.0-candidate_mae/baseline_mae if baseline_mae>1e-12 else None
-            # Require the untouched holdout to improve in every chronological block.
             block_size=max(1,len(candidate)//4)
             stable=True
             for block in range(4):
@@ -2284,22 +2382,39 @@ def install(app):
         if interval_seconds<=0:
             interval_seconds=300.0
         log_scale=series_key=="btc"
+        price_values=[r[4] for r in valid] if series_key=="btc" else None
+        network_values=None
+        if series_key=="btc":
+            hashrate=[r[5] for r in valid]
+            difficulty=[r[6] for r in valid]
+            if all(v is not None and float(v)>0 for v in hashrate):
+                network_values=hashrate
+            elif all(v is not None and float(v)>0 for v in difficulty):
+                network_values=difficulty
         model_values=[math.log(max(v,1e-12)) for v in y] if log_scale else y
         weights_by_horizon={}
         out=[]
         for h in range(1,horizon+1):
             sample_steps=max(1,round((h*3600.0)/interval_seconds))
-            weights=_adaptive_horizon_weights(y,sample_steps,interval_seconds,log_scale=log_scale)
+            weights=_adaptive_horizon_weights(y,sample_steps,interval_seconds,log_scale=log_scale,
+                btc_price_values=price_values,network_values=network_values)
             candidates=_horizon_candidate_values(model_values,len(y)-1,sample_steps,interval_seconds)
             if log_scale:
                 candidates={name:math.exp(max(-50.0,min(50.0,value))) for name,value in candidates.items()}
+            if price_values is not None and network_values is not None:
+                structural=_btc_price_network_candidate(y,price_values,network_values,
+                    len(y)-1,sample_steps,interval_seconds)
+                if structural is not None:
+                    candidates["btc_price_network_structural"]=structural
             pred=sum(weights[name]*candidates.get(name,y[-1]) for name in weights)
             out.append(max(0.0,pred))
             weights_by_horizon[str(h)]=weights
         return out,{"method":"elapsed_time_horizon_specific_rolling_origin",
                     "sample_interval_seconds":round(interval_seconds,2),
                     "history_observations":len(y),"history_hours":round(len(y)*interval_seconds/3600.0,2),
-                    "btc_log_scale":log_scale,"weights_by_horizon":weights_by_horizon}
+                    "btc_log_scale":log_scale,
+                    "btc_exogenous_fields_used":bool(price_values is not None and network_values is not None),
+                    "weights_by_horizon":weights_by_horizon}
 
     def _model_select(c):
         rows=_eligible_market_rows(c,168,include_ts=True,require_site_tariff=False)
@@ -2350,15 +2465,32 @@ def install(app):
         if first_origin<weekly_steps+24:
             return 0.55
         log_scale=series_key=="btc"
+        price_values=[r[4] for r in valid] if series_key=="btc" else None
+        network_values=None
+        if series_key=="btc":
+            hashrate=[r[5] for r in valid]
+            difficulty=[r[6] for r in valid]
+            if all(v is not None and float(v)>0 for v in hashrate):
+                network_values=hashrate
+            elif all(v is not None and float(v)>0 for v in difficulty):
+                network_values=difficulty
         model_errors=[]
         baseline_errors=[]
         for origin in range(first_origin,len(y)-sample_steps,confidence_stride):
             training=y[:origin+1]
-            weights=_adaptive_horizon_weights(training,sample_steps,interval_seconds,log_scale=log_scale)
+            prices=price_values[:origin+1] if price_values is not None else None
+            networks=network_values[:origin+1] if network_values is not None else None
+            weights=_adaptive_horizon_weights(training,sample_steps,interval_seconds,log_scale=log_scale,
+                btc_price_values=prices,network_values=networks)
             model_values=[math.log(max(v,1e-12)) for v in training] if log_scale else training
             candidates=_horizon_candidate_values(model_values,len(training)-1,sample_steps,interval_seconds)
             if log_scale:
                 candidates={name:math.exp(max(-50.0,min(50.0,value))) for name,value in candidates.items()}
+            if prices is not None and networks is not None:
+                structural=_btc_price_network_candidate(training,prices,networks,
+                    len(training)-1,sample_steps,interval_seconds)
+                if structural is not None:
+                    candidates["btc_price_network_structural"]=structural
             predicted=sum(weights[name]*candidates.get(name,training[-1]) for name in weights)
             actual=y[origin+sample_steps]
             model_errors.append(abs(actual-predicted))
@@ -2369,7 +2501,6 @@ def install(app):
         if baseline_mae<=1e-12:
             return 0.55
         skill=1.0-statistics.fmean(model_errors)/baseline_mae
-        # This is a conservative quality heuristic, not a calibrated probability.
         confidence=0.55+0.40*max(0.0,min(1.0,skill))
         return round(max(0.55,min(0.95,confidence)),3)
 
