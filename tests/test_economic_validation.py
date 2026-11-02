@@ -17,7 +17,7 @@ def external_field(age):
 
 class EconomicValidationTests(unittest.TestCase):
     def test_market_history_validation_requests_compact_extended_history(self):
-        self.assertIn("limit=10000&compact=true", MODULE.MARKET_URL)
+        self.assertIn("limit=10000&compact=false", MODULE.MARKET_URL)
 
     def test_history_parser_keeps_only_fresh_external_btc_price_and_hashrate(self):
         payload = {
