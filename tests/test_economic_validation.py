@@ -228,6 +228,11 @@ class EconomicValidationTests(unittest.TestCase):
         self.assertEqual(weights["last_value"], 1.0)
         self.assertEqual(sum(weights.values()), 1.0)
 
+    def test_72h_model_selection_spaces_origins_by_horizon(self):
+        source = inspect.getsource(MODULE.corrected_forecast_weights)
+        self.assertIn("origin_stride = max(1, sample_steps // 24)", source)
+        self.assertIn("48 * origin_stride", source)
+
     def test_training_window_includes_the_forecast_origin_observation(self):
         source = inspect.getsource(MODULE._horizon_candidate_values)
         self.assertIn("period_168h = max(1, round(168.0 * 3600.0 / interval))", source)
