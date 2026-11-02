@@ -16,7 +16,7 @@ def external_field(age):
 
 class EconomicValidationTests(unittest.TestCase):
     def test_market_history_validation_requests_compact_extended_history(self):
-        self.assertIn("limit=2000&compact=true", MODULE.MARKET_URL)
+        self.assertIn("limit=10000&compact=true", MODULE.MARKET_URL)
 
     def test_rejects_malformed_quality_metadata(self):
         self.assertFalse(MODULE.market_ready({
