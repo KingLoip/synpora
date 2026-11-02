@@ -154,6 +154,17 @@ class EconomicValidationTests(unittest.TestCase):
 
 
 
+    def test_btc_cost_sensitivity_reports_explicit_nonzero_cost_cases(self):
+        row = {"ts": 1, "btc": 40, "gpu": 1.1, "fx": 1.1,
+               "gpu_power": 0.35, "gpu_util": 0.70, "gpu_fee": 0.15}
+        result = MODULE.btc_mining_sensitivity([row], 0.05)
+        self.assertIn("costed_asic_5000_eur", result["cases"])
+        self.assertIn("conservative_asic_8000_eur", result["cases"])
+        base = result["cases"]["production_reference_inputs"]["net_contribution_eur_per_available_site_kwh"]["mean"]
+        costed = result["cases"]["costed_asic_5000_eur"]["net_contribution_eur_per_available_site_kwh"]["mean"]
+        self.assertLess(costed, base)
+        self.assertFalse(result["cases"]["costed_asic_5000_eur"]["realized_cashflow_validated"])
+
     def test_btc_facility_overhead_efficiency_and_fixed_costs_reduce_margin(self):
         row = {"btc": 40, "gpu": 1.1, "fx": 1.1, "gpu_power": 0.35,
                "gpu_util": 0.7, "gpu_fee": 0.15}
