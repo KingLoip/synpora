@@ -292,10 +292,9 @@ class EconomicValidationTests(unittest.TestCase):
             })
         result = MODULE.production_corrected_horizon_validation(rows, 0.20)
         self.assertEqual(set(result["horizons"]), {"1", "6", "24", "72"})
-        self.assertGreaterEqual(result["horizons"]["1"]["pairs"], 100)
-        self.assertGreaterEqual(result["horizons"]["6"]["pairs"], 100)
-        self.assertGreaterEqual(result["horizons"]["24"]["pairs"], 100)
-        self.assertEqual(result["horizons"]["72"]["pairs"], 0)
+        for horizon in ("1", "6", "24", "72"):
+            self.assertEqual(result["horizons"][horizon]["pairs"], 0)
+            self.assertGreater(result["horizons"][horizon]["skipped_insufficient_model_history"], 0)
         self.assertFalse(result["release_eligible"])
         self.assertEqual(result["horizons"]["1"]["bootstrap_block_length"], 6)
         self.assertEqual(result["horizons"]["24"]["bootstrap_block_length"], 48)
