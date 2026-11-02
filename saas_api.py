@@ -879,7 +879,7 @@ def install(app):
         gpu_life=max(0.01,float(getattr(x,"gpu_lifetime_years",5.0)))
         btc_maintenance=max(0.0,float(getattr(x,"btc_maintenance_eur_year",0.0)))
         gpu_maintenance=max(0.0,float(getattr(x,"gpu_maintenance_eur_year",0.0)))
-        btc_fixed=(btc_capex/btc_life+btc_maintenance)/(btc_device_power*8760)
+        btc_fixed=(btc_capex/btc_life+btc_maintenance)/((btc_device_power+btc_overhead)*8760)
         gpu_fixed=(gpu_capex/gpu_life+gpu_maintenance)/(gpu_power*8760)
         btc_pre_tax=btc_uptime*(btc_active_value-energy_cost)-btc_fixed
         gpu_pre_tax=gpu_uptime*(gpu_active_value-energy_cost)-gpu_fixed
@@ -911,7 +911,7 @@ def install(app):
                 "maintenance_eur_year":float(getattr(x,"btc_maintenance_eur_year",0.0)),
                 "uptime":float(getattr(x,"btc_uptime",0.98)),
                 "pool_fee":float(getattr(x,"pool_fee",0.02)),
-                "depreciation_and_maintenance_eur_kwh":round((float(getattr(x,"btc_capex_eur",0.0))/float(getattr(x,"btc_lifetime_years",4.0))+float(getattr(x,"btc_maintenance_eur_year",0.0)))/(float(getattr(x,"btc_device_power_kw",3.5))*8760),6)},
+                "depreciation_and_maintenance_eur_kwh":round((float(getattr(x,"btc_capex_eur",0.0))/float(getattr(x,"btc_lifetime_years",4.0))+float(getattr(x,"btc_maintenance_eur_year",0.0)))/((float(getattr(x,"btc_device_power_kw",3.5))+max(0.0,float(getattr(x,"btc_facility_overhead_kw",0.0)))+max(0.0,float(getattr(x,"facility_overhead_kw",0.0))))*8760),6)},
             "tax_rate":float(getattr(x,"tax_rate",0.0)),
             "warning":"Tax rate and cost assumptions are user supplied; not tax advice. Site/network limits and one-off installation costs are not modeled."}
 
@@ -1953,7 +1953,7 @@ def install(app):
     def market_history(limit:int=100, compact:bool=False):
         # Full payload history stays capped at 500. Compact, provenance-preserving
         # market history can return 2,000 rows for longer-horizon validation.
-        bounded_limit=max(1,min(int(limit),2000 if compact else 500))
+        bounded_limit=max(1,min(int(limit),10000 if compact else 500))
         c=init_db()
         try:
             rows=c.execute("SELECT ts,payload FROM market_snapshots ORDER BY ts DESC LIMIT ?",(bounded_limit,)).fetchall()
@@ -2106,114 +2106,129 @@ def install(app):
         return {name:(1.0 if name==best else 0.0)
                 for name in ("recent_mean","last_value","trend")}
 
-    def _adaptive_horizon_weights(values, sample_steps, interval_seconds=300.0):
+    def _horizon_candidate_values(values, origin, sample_steps, interval_seconds):
+        """Build forecast features from elapsed-time windows, never raw row counts."""
+        import math
+        import statistics
+        if not values or origin < 0 or origin >= len(values):
+            return {}
+        interval=max(1.0,float(interval_seconds))
+        period_24h=max(1,int(round(24.0*3600.0/interval)))
+        period_168h=max(1,int(round(168.0*3600.0/interval)))
+        recent_steps=max(2,int(round(48.0*3600.0/interval)))
+        daily_steps=max(2,period_24h)
+        lookback=max(period_168h,recent_steps,daily_steps)
+        history=values[max(0,origin-lookback+1):origin+1]
+        if not history:
+            return {}
+        recent=history[-min(len(history),recent_steps):]
+        daily=history[-min(len(history),daily_steps):]
+        last=float(values[origin])
+        def ewma(series,alpha):
+            value=float(series[0])
+            for item in series[1:]:
+                value=alpha*float(item)+(1.0-alpha)*value
+            return value
+        def seasonal(period):
+            # Use the most recent prior occurrence at the same phase. For horizons
+            # longer than one period, subtract enough whole periods to stay <= origin.
+            lag=((max(1,int(sample_steps))+period-1)//period)*period
+            index=origin+int(sample_steps)-lag
+            return float(values[index]) if 0<=index<=origin else last
+        slope=(float(recent[-1])-float(recent[0]))/(len(recent)-1) if len(recent)>1 else 0.0
+        decay_steps=max(1.0,6.0*3600.0/interval)
+        damped_steps=decay_steps*(1.0-math.exp(-max(1.0,float(sample_steps))/decay_steps))
+        return {
+            "recent_mean":statistics.fmean(float(v) for v in recent),
+            "last_value":last,
+            "trend":last+slope*damped_steps,
+            "mean_24":statistics.fmean(float(v) for v in daily),
+            "median_24":statistics.median(float(v) for v in daily),
+            "seasonal_24h":seasonal(period_24h),
+            "seasonal_168h":seasonal(period_168h),
+            "ewma_02":ewma(recent,0.2),
+            "ewma_05":ewma(recent,0.5),
+        }
+
+    def _adaptive_horizon_weights(values, sample_steps, interval_seconds=300.0, log_scale=False):
         import math
         import statistics
         names=("recent_mean","last_value","trend","mean_24","median_24",
                "seasonal_24h","seasonal_168h","ewma_02","ewma_05")
         fallback={name:(1.0 if name=="last_value" else 0.0) for name in names}
-        # Select a model using only historical outcomes at this same forecast
-        # horizon. A one-step winner is not assumed to be a six- or 24-hour winner.
-        if sample_steps < 1 or len(values) < sample_steps + 32:
+        interval=max(1.0,float(interval_seconds))
+        weekly_steps=max(1,int(round(168.0*3600.0/interval)))
+        if sample_steps<1 or len(values)<weekly_steps+sample_steps+32:
             return fallback
+        model_values=[math.log(max(float(v),1e-12)) for v in values] if log_scale else [float(v) for v in values]
         errors={name:[] for name in names}
-        for origin in range(max(168,len(values)-sample_steps-200),len(values)-sample_steps):
-            history=values[max(0,origin-167):origin+1]
-            recent=history[-48:]
-            last=recent[-1]
-            mean=sum(recent)/len(recent)
-            mean24=sum(history[-24:])/min(24,len(history))
-            median24=statistics.median(history[-24:])
-            interval=max(1.0,float(interval_seconds))
-            target_index=origin+sample_steps
-            period_24h=max(1,round(24.0*3600.0/interval))
-            period_168h=max(1,round(168.0*3600.0/interval))
-            seasonal24_index=target_index-period_24h
-            seasonal168_index=target_index-period_168h
-            seasonal24=(values[seasonal24_index] if 0<=seasonal24_index<=origin else last)
-            seasonal168=(values[seasonal168_index] if 0<=seasonal168_index<=origin else last)
-            def ewma(series,alpha):
-                value=series[0]
-                for item in series[1:]:
-                    value=alpha*item+(1.0-alpha)*value
-                return value
-            slope=(recent[-1]-recent[0])/(len(recent)-1) if len(recent)>1 else 0.0
-            damped_steps=min(12.0,float(sample_steps))*math.exp(
-                -max(0.0,float(sample_steps)-12.0)/12.0)
-            predictions={"recent_mean":mean,"last_value":last,
-                "trend":last+slope*damped_steps,"mean_24":mean24,
-                "median_24":median24,"seasonal_24h":seasonal24,
-                "seasonal_168h":seasonal168,"ewma_02":ewma(recent,0.2),
-                "ewma_05":ewma(recent,0.5)}
-            actual=values[origin+sample_steps]
-            for name,prediction in predictions.items():
+        first=max(weekly_steps,len(values)-sample_steps-200)
+        for origin in range(first,len(values)-sample_steps):
+            candidates=_horizon_candidate_values(model_values,origin,sample_steps,interval)
+            if not candidates:
+                continue
+            if log_scale:
+                candidates={name:math.exp(max(-50.0,min(50.0,value))) for name,value in candidates.items()}
+            actual=float(values[origin+sample_steps])
+            for name,prediction in candidates.items():
                 errors[name].append(abs(actual-prediction))
-        split=int(len(errors["last_value"])*0.75)
-        maes={name:sum(series[:split])/len(series[:split])
-              for name,series in errors.items() if split>=24}
-        if "last_value" not in maes:
+        count=len(errors["last_value"])
+        split=int(count*0.75)
+        if split<24 or count-split<8:
             return fallback
-        best=min(maes,key=maes.get)
+        train_maes={name:statistics.fmean(series[:split]) for name,series in errors.items()}
+        best=min(train_maes,key=train_maes.get)
         if best!="last_value":
-            validation_baseline=statistics.fmean(errors["last_value"][split:])
-            validation_model=statistics.fmean(errors[best][split:])
-            validation_skill=(1.0-validation_model/validation_baseline
-                              if validation_baseline>1e-12 else None)
-            if validation_skill is None or validation_skill<0.05:
+            baseline=errors["last_value"][split:]
+            candidate=errors[best][split:]
+            baseline_mae=statistics.fmean(baseline)
+            candidate_mae=statistics.fmean(candidate)
+            skill=1.0-candidate_mae/baseline_mae if baseline_mae>1e-12 else None
+            # Require the untouched holdout to improve in every chronological block.
+            block_size=max(1,len(candidate)//4)
+            stable=True
+            for block in range(4):
+                start=block*block_size
+                end=len(candidate) if block==3 else min(len(candidate),(block+1)*block_size)
+                if end<=start or statistics.fmean(candidate[start:end])>=statistics.fmean(baseline[start:end]):
+                    stable=False
+                    break
+            if skill is None or skill<0.05 or not stable:
                 best="last_value"
         return {name:(1.0 if name==best else 0.0) for name in names}
 
     def _ensemble_forecast(c, series_key, horizon, fallback):
         import math
         import statistics
-        rows=_eligible_market_rows(c,2000,include_ts=True,require_site_tariff=False)
+        rows=_eligible_market_rows(c,10000,include_ts=True,require_site_tariff=False)
         idx={"btc":1,"gpu":2,"energy":3}[series_key]
         valid=[r for r in rows if r[idx] is not None]
         y=[float(r[idx]) for r in valid]
-        if not y: return [fallback]*horizon,{"method":"unverified_fallback"}
+        if not y:
+            return [fallback]*horizon,{"method":"unverified_fallback"}
         timestamps=[float(r[0]) for r in valid]
         gaps=[timestamps[i]-timestamps[i-1] for i in range(1,len(timestamps))
               if timestamps[i]>timestamps[i-1]]
-        interval_seconds=sorted(gaps)[len(gaps)//2] if gaps else 300.0
+        interval_seconds=statistics.median(gaps) if gaps else 300.0
         if interval_seconds<=0:
             interval_seconds=300.0
-        history=y[-168:]
-        recent=history[-48:]
-        mean=sum(recent)/len(recent)
-        mean24=sum(history[-24:])/min(24,len(history))
-        median24=statistics.median(history[-24:])
-        last=recent[-1]
-        def ewma(series,alpha):
-            value=series[0]
-            for item in series[1:]:
-                value=alpha*item+(1.0-alpha)*value
-            return value
-        slope=(recent[-1]-recent[0])/(len(recent)-1) if len(recent)>1 else 0.0
+        log_scale=series_key=="btc"
+        model_values=[math.log(max(v,1e-12)) for v in y] if log_scale else y
+        weights_by_horizon={}
         out=[]
-        horizon_weights={}
         for h in range(1,horizon+1):
             sample_steps=max(1,round((h*3600.0)/interval_seconds))
-            target_index=len(y)-1+sample_steps
-            period_24h=max(1,round(24.0*3600.0/interval_seconds))
-            period_168h=max(1,round(168.0*3600.0/interval_seconds))
-            seasonal24_index=target_index-period_24h
-            seasonal168_index=target_index-period_168h
-            seasonal24=(y[seasonal24_index] if 0<=seasonal24_index<len(y) else last)
-            seasonal168=(y[seasonal168_index] if 0<=seasonal168_index<len(y) else last)
-            weights=_adaptive_horizon_weights(y,sample_steps,interval_seconds)
-            damped_steps=min(12.0,float(sample_steps))*math.exp(
-                -max(0.0,float(sample_steps)-12.0)/12.0)
-            predictions={"recent_mean":mean,"last_value":last,
-                "trend":last+slope*damped_steps,"mean_24":mean24,
-                "median_24":median24,"seasonal_24h":seasonal24,
-                "seasonal_168h":seasonal168,"ewma_02":ewma(recent,0.2),
-                "ewma_05":ewma(recent,0.5)}
-            pred=sum(weights[name]*predictions[name] for name in predictions)
+            weights=_adaptive_horizon_weights(y,sample_steps,interval_seconds,log_scale=log_scale)
+            candidates=_horizon_candidate_values(model_values,len(y)-1,sample_steps,interval_seconds)
+            if log_scale:
+                candidates={name:math.exp(max(-50.0,min(50.0,value))) for name,value in candidates.items()}
+            pred=sum(weights[name]*candidates.get(name,y[-1]) for name in weights)
             out.append(max(0.0,pred))
-            horizon_weights[str(h)] = weights
-        return out,{"method":"horizon_specific_rolling_origin",
+            weights_by_horizon[str(h)]=weights
+        return out,{"method":"elapsed_time_horizon_specific_rolling_origin",
                     "sample_interval_seconds":round(interval_seconds,2),
-                    "weights_by_horizon":horizon_weights}
+                    "history_observations":len(y),"history_hours":round(len(y)*interval_seconds/3600.0,2),
+                    "btc_log_scale":log_scale,"weights_by_horizon":weights_by_horizon}
 
     def _model_select(c):
         rows=_eligible_market_rows(c,168,include_ts=True,require_site_tariff=False)
@@ -2245,10 +2260,7 @@ def install(app):
     def _ensemble_confidence(c, series_key, horizon_hours=1):
         import math
         import statistics
-        # Confidence must be measured at the requested horizon, not inferred from
-        # one-step model weights. Hold out the latest 24 origins and train each
-        # replay strictly on observations available before that origin.
-        rows=_eligible_market_rows(c,2000,include_ts=True,require_site_tariff=False)
+        rows=_eligible_market_rows(c,10000,include_ts=True,require_site_tariff=False)
         idx={"btc":1,"gpu":2,"energy":3}[series_key]
         valid=[r for r in rows if r[idx] is not None]
         y=[float(r[idx]) for r in valid]
@@ -2261,41 +2273,21 @@ def install(app):
         if interval_seconds<=0:
             return 0.55
         sample_steps=max(1,round((float(horizon_hours)*3600.0)/interval_seconds))
+        weekly_steps=max(1,round(168.0*3600.0/interval_seconds))
         first_origin=len(y)-sample_steps-24
-        if first_origin < sample_steps+192:
+        if first_origin<weekly_steps+24:
             return 0.55
+        log_scale=series_key=="btc"
         model_errors=[]
         baseline_errors=[]
         for origin in range(first_origin,len(y)-sample_steps):
             training=y[:origin+1]
-            weights=_adaptive_horizon_weights(training,sample_steps,interval_seconds)
-            history=training[-168:]
-            recent=history[-48:]
-            mean=sum(recent)/len(recent)
-            last=recent[-1]
-            mean24=sum(history[-24:])/min(24,len(history))
-            median24=statistics.median(history[-24:])
-            target_index=len(training)-1+sample_steps
-            period_24h=max(1,round(24.0*3600.0/interval_seconds))
-            period_168h=max(1,round(168.0*3600.0/interval_seconds))
-            seasonal24_index=target_index-period_24h
-            seasonal168_index=target_index-period_168h
-            seasonal24=(training[seasonal24_index] if 0<=seasonal24_index<len(training) else last)
-            seasonal168=(training[seasonal168_index] if 0<=seasonal168_index<len(training) else last)
-            def ewma(series,alpha):
-                value=series[0]
-                for item in series[1:]:
-                    value=alpha*item+(1.0-alpha)*value
-                return value
-            slope=(recent[-1]-recent[0])/(len(recent)-1) if len(recent)>1 else 0.0
-            damped_steps=min(12.0,float(sample_steps))*math.exp(
-                -max(0.0,float(sample_steps)-12.0)/12.0)
-            candidates={"recent_mean":mean,"last_value":last,
-                "trend":last+slope*damped_steps,"mean_24":mean24,
-                "median_24":median24,"seasonal_24h":seasonal24,
-                "seasonal_168h":seasonal168,"ewma_02":ewma(recent,0.2),
-                "ewma_05":ewma(recent,0.5)}
-            predicted=sum(weights[name]*candidates[name] for name in candidates)
+            weights=_adaptive_horizon_weights(training,sample_steps,interval_seconds,log_scale=log_scale)
+            model_values=[math.log(max(v,1e-12)) for v in training] if log_scale else training
+            candidates=_horizon_candidate_values(model_values,len(training)-1,sample_steps,interval_seconds)
+            if log_scale:
+                candidates={name:math.exp(max(-50.0,min(50.0,value))) for name,value in candidates.items()}
+            predicted=sum(weights[name]*candidates.get(name,training[-1]) for name in weights)
             actual=y[origin+sample_steps]
             model_errors.append(abs(actual-predicted))
             baseline_errors.append(abs(actual-y[origin]))
