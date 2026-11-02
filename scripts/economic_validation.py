@@ -77,6 +77,8 @@ def observations_from_history(raw):
         if ts is None or not market_ready(payload):
             rejected += 1
             continue
+        quality = payload.get("data_quality", {})
+        fields = quality.get("fields", {}) if isinstance(quality, dict) else {}
         def optional(key, default, lower=0.000001, upper=None):
             value = finite(payload.get(key))
             if value is None or value < lower or (upper is not None and value > upper):
