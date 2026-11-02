@@ -65,6 +65,7 @@ jobs:
           if not gates:
               blocked["missing_economic_scenarios"] = {"status": "missing"}
           investment = report.get("investment_readiness", {})
+          assumptions = report.get("assumptions", {})
           lines = [
               "# SYNPORA empirical economic validation",
               "",
@@ -73,6 +74,9 @@ jobs:
               f"- Required MAE skill over persistence: 5%",
               f"- Required forecast horizons: 1h, 6h, 24h and 72h must all pass independently",
               f"- Investment validation: **{investment.get('status', 'unknown')}**",
+              f"- BTC price external observations: {assumptions.get('btc_price_external_observations', 0)}",
+              f"- BTC network-hashrate external observations: {assumptions.get('network_hashrate_external_observations', 0)}",
+              f"- BTC difficulty external observations: {assumptions.get('difficulty_external_observations', 0)}",
               "",
               "| Tariff scenario | Horizon gate | 1h pairs | 1h MAE skill | Legacy diagnostic |",
               "|---|---:|---:|---:|---:|",
