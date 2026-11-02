@@ -1952,8 +1952,8 @@ def install(app):
     @app.get("/api/v1/market/history")
     def market_history(limit:int=100, compact:bool=False):
         # Full payload history stays capped at 500. Compact, provenance-preserving
-        # market history can return 2,000 rows for longer-horizon validation.
-        bounded_limit=max(1,min(int(limit),2000 if compact else 500))
+        # market history can return 10,000 rows for longer-horizon validation.
+        bounded_limit=max(1,min(int(limit),10000 if compact else 500))
         c=init_db()
         try:
             rows=c.execute("SELECT ts,payload FROM market_snapshots ORDER BY ts DESC LIMIT ?",(bounded_limit,)).fetchall()
@@ -1961,7 +1961,7 @@ def install(app):
             rows=[]
         result=[]
         required=("btc_hashprice_usd_ph_day","gpu_l40s_usd_hour","eur_usd")
-        optional=("gpu_l40s_power_kw","gpu_utilization","gpu_platform_fee")
+        optional=("gpu_l40s_power_kw","gpu_utilization","gpu_platform_fee","btc_price_usd","btc_difficulty","network_hashrate_eh")
         for row in rows:
             try:
                 payload=json.loads(row[1]) if row[1] else None
@@ -1972,7 +1972,7 @@ def install(app):
                 fields=quality.get("fields",{}) if isinstance(quality,dict) else {}
                 compact_payload={key:payload.get(key) for key in required+optional}
                 compact_payload["data_quality"]={"fields":{
-                    key:fields.get(key) for key in required
+                    key:fields.get(key) for key in required+optional
                 } if isinstance(fields,dict) else {}}
                 payload=compact_payload
             result.append({"timestamp":row[0],"data":payload,"payload_valid":isinstance(payload,dict)})
