@@ -98,6 +98,22 @@ class DispatchSafetyRegressionTests(unittest.TestCase):
         source = ast.get_source_segment(SOURCE, find_function("_economics"))
         self.assertIn("(btc_device_power+btc_overhead)*8760", source)
 
+    def test_btc_mining_diagnostics_expose_break_even_and_unverified_settlement(self):
+        source = ast.get_source_segment(SOURCE, find_function("_btc_mining_metrics"))
+        self.assertIn("break_even_energy_cost_eur_kwh", source)
+        self.assertIn("break_even_hashprice_usd_ph_day", source)
+        self.assertIn('"realized_pool_payout_verified":False', source)
+        risk = ast.get_source_segment(SOURCE, find_function("risk_analysis"))
+        decision = ast.get_source_segment(SOURCE, find_function("decision_engine"))
+        self.assertIn('"btc_mining_analysis":_btc_mining_metrics(x)', risk)
+        self.assertIn('"btc_mining_analysis":_btc_mining_metrics(x)', decision)
+
+    def test_portfolio_btc_allocation_accounts_for_site_overhead_uptime_and_fixed_costs(self):
+        source = ast.get_source_segment(SOURCE, find_function("portfolio_optimize"))
+        for term in ("btc_facility_overhead_kw", "btc_uptime", "pool_fee",
+                     "btc_capex_eur", "energy_cost_factor", "fixed_cost_eur_kwh"):
+            self.assertIn(term, source)
+
     def test_forecast_plan_marks_input_fallback_as_unverified(self):
         source = ast.get_source_segment(SOURCE, find_function("forecast_plan"))
         self.assertIn('_market_snapshot_freshness(c)', source)
