@@ -57,7 +57,7 @@ class ChronologicalForecastRegressionTests(unittest.TestCase):
         source = ast.get_source_segment(SOURCE, find_function("_adaptive_horizon_weights"))
         self.assertIn("split=int(count*0.75)", source)
         self.assertIn("skill<0.05", source)
-        self.assertIn("origin_stride=max(1,sample_steps//24)", source)
+        self.assertIn("origin_stride=max(1,sample_steps//8)", source)
         self.assertIn("stable", source)
 
     def test_production_horizon_training_includes_the_current_origin(self):
@@ -138,7 +138,7 @@ class DispatchSafetyRegressionTests(unittest.TestCase):
         self.assertIn("horizon_hours=1", source)
         self.assertIn("sample_steps=max(1,round((float(horizon_hours)*3600.0)/interval_seconds))", source)
         self.assertIn("first_origin=len(y)-sample_steps-24*confidence_stride", source)
-        self.assertIn("confidence_stride=max(1,sample_steps//24)", source)
+        self.assertIn("confidence_stride=max(1,sample_steps//8)", source)
         plan = ast.get_source_segment(SOURCE, find_function("forecast_plan"))
         self.assertIn('_ensemble_confidence(c,"btc",hours)', plan)
         self.assertIn('"confidence_is_probability"]=False', plan)
