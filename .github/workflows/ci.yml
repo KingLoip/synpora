@@ -416,7 +416,10 @@ jobs:
           external_forecast=c.post(f"/api/v1/farms/{farm}/forecast-plan",headers=h,json={"horizon_hours":3})
           assert external_forecast.status_code==200, external_forecast.text
           external_models=external_forecast.json()["models"]
-          assert external_models["btc"]["samples"]>=1 and external_models["gpu"]["samples"]>=1, external_models
+          # One valid observation can settle a learning label, but cannot train a forecast model.
+          assert external_models["btc"]["samples"]==0 and external_models["gpu"]["samples"]==0, external_models
+          assert not external_models["btc"]["ready"] and not external_models["gpu"]["ready"], external_models
+          assert external_forecast.json()["forecast_quality"]["status"]=="degraded", external_forecast.json()["forecast_quality"]
           assert external_models["energy"]["model"]=="user_supplied_constant", external_models
           assert external_models["energy"]["forecasted"] is False, external_models
           settled=c.post(f"/api/v1/farms/{farm}/learning/update",headers=h)
