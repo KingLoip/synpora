@@ -30,6 +30,7 @@ jobs:
       - name: Run independent empirical economic validation and enforce forecast gate
         env:
           GITHUB_EVENT_NAME: ${{ github.event_name }}
+          SYNPORA_SAVE_RAW_MARKET_HISTORY: "1"
         shell: bash
         run: |
           set -euo pipefail
@@ -128,3 +129,13 @@ jobs:
               print("Forecast quality gate is blocked; do not promote SYNPORA as a validated forecasting product.", file=sys.stderr)
               sys.exit(1)
           PY
+      - name: Upload short-lived economic validation diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synpora-economic-validation-${{ github.run_id }}
+          path: |
+            /tmp/synpora-economic-validation.json
+            /tmp/synpora-market-observations.json
+          if-no-files-found: warn
+          retention-days: 2
