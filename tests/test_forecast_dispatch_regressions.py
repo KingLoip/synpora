@@ -162,6 +162,11 @@ class DispatchSafetyRegressionTests(unittest.TestCase):
         self.assertIn('"status":"unvalidated" if forecast_source=="adaptive_market_with_site_tariff_input" else "degraded"', source)
         self.assertIn('"empirical_forecast_release_gate":{"status":"blocked"', source)
 
+    def test_single_strategy_dominance_is_not_reported_as_validated_regret(self):
+        source = ast.get_source_segment(SOURCE, find_function("decision_quality"))
+        self.assertIn("low_information_single_strategy_dominance", source)
+        self.assertIn('"distinct_strategies_selected":len(chosen_strategies)', source)
+
     def test_regret_simulation_uses_mean_preserving_lognormal_shocks(self):
         source = ast.get_source_segment(SOURCE, find_function("regret_analysis"))
         self.assertIn("rng.lognormvariate(-0.5*.18**2,.18)", source)
