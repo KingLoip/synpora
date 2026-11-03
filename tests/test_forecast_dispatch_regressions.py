@@ -167,6 +167,7 @@ class DispatchSafetyRegressionTests(unittest.TestCase):
     def test_single_strategy_dominance_is_not_reported_as_validated_regret(self):
         source = ast.get_source_segment(SOURCE, find_function("decision_quality"))
         self.assertIn("low_information_single_strategy_dominance", source)
+        self.assertIn('len(chosen_strategies)<2 else "validated"', source)
         self.assertIn('"distinct_strategies_selected":len(chosen_strategies)', source)
 
     def test_regret_simulation_uses_mean_preserving_lognormal_shocks(self):
