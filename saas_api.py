@@ -2327,7 +2327,7 @@ def install(app):
             return fallback
         model_values=[math.log(max(float(v),1e-12)) for v in values] if log_scale else [float(v) for v in values]
         errors={name:[] for name in names}
-        origin_stride=max(1,sample_steps//24)
+        origin_stride=max(1,sample_steps//8)  # limit training overlap to at most eight windows per horizon
         first=max(weekly_steps,len(values)-sample_steps-120*origin_stride)
         for origin in range(first,len(values)-sample_steps,origin_stride):
             candidates=_horizon_candidate_values(model_values,origin,sample_steps,interval)
@@ -2462,7 +2462,7 @@ def install(app):
             return 0.55
         sample_steps=max(1,round((float(horizon_hours)*3600.0)/interval_seconds))
         weekly_steps=max(1,round(168.0*3600.0/interval_seconds))
-        confidence_stride=max(1,sample_steps//24)
+        confidence_stride=max(1,sample_steps//8)
         first_origin=len(y)-sample_steps-24*confidence_stride
         if first_origin<weekly_steps+24:
             return 0.55
