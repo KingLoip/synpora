@@ -286,7 +286,8 @@ def summarize_backtest(pairs, label):
     baseline_mae = statistics.fmean(baseline_errors)
     return {
         "model": label,
-        "status": "evaluated" if len(pairs) >= 24 else "insufficient_data",
+        "status": ("insufficient_data" if len(pairs) < 24 else
+                   ("low_information_single_strategy_dominance" if dominant_share >= 0.95 else "evaluated")),
         "pairs": len(pairs),
         "mean_prediction_error_eur_per_kwh": round(mae, 6),
         "p90_prediction_error_eur_per_kwh": round(quantile(errors, 0.90), 6),
