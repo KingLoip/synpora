@@ -3267,7 +3267,7 @@ def install(app):
         import random
         n=max(100,min(5000,int(x.samples))); rng=random.Random(int(x.seed)); strategies=list(_economics(x).keys()); regret={k:[] for k in strategies}; winners={k:0 for k in strategies}
         for _ in range(n):
-            s=x.model_copy(update={"btc_hashprice_usd_ph_day":x.btc_hashprice_usd_ph_day*rng.lognormvariate(-0.5*.18**2,.18),"gpu_hourly_usd":x.gpu_hourly_usd*rng.lognormvariate(-0.5*.15**2,.15),"energy_cost_eur_kwh":x.energy_cost_eur_kwh*rng.lognormvariate(-0.5*.20**2,.20)})
+            s=x.model_copy(update={"btc_hashprice_usd_ph_day":x.btc_hashprice_usd_ph_day*rng.lognormvariate(-0.5*.20**2,.20),"gpu_hourly_usd":x.gpu_hourly_usd*rng.lognormvariate(-0.5*.20**2,.20),"energy_cost_eur_kwh":x.energy_cost_eur_kwh*rng.lognormvariate(-0.5*.13**2,.13)})
             vals=_economics(s); optimum=max(vals.values())
             for k in strategies: regret[k].append(max(0,optimum-vals[k]))
             winners[max(vals,key=vals.get)]+=1
