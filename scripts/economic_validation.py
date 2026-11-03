@@ -961,6 +961,12 @@ def main():
     with urllib.request.urlopen(request, timeout=25) as response:
         raw = json.loads(response.read(20_000_001).decode("utf-8"))
     rows, rejected = observations_from_history(raw)
+    # Optional short-lived CI artifact for model diagnostics; contains only
+    # public, provenance-filtered market observations (no user or farm data).
+    import os
+    if os.environ.get("SYNPORA_SAVE_RAW_MARKET_HISTORY") == "1":
+        with open("/tmp/synpora-market-observations.json", "w", encoding="utf-8") as handle:
+            json.dump(rows, handle, separators=(",", ":"))
     if len(rows) < WINDOW + 2:
         raise SystemExit(f"Not enough provenance-verified market history: {len(rows)} usable, {rejected} rejected.")
     gaps = [(rows[i]["ts"] - rows[i - 1]["ts"]) / 60.0 for i in range(1, len(rows))]
