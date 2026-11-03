@@ -285,7 +285,16 @@ class EconomicValidationTests(unittest.TestCase):
     def test_72h_model_selection_spaces_origins_by_horizon(self):
         source = inspect.getsource(MODULE.corrected_forecast_weights)
         self.assertIn("origin_stride = max(1, sample_steps // 8)", source)
+        self.assertIn("minimum_training_origins = 32", source)
+        self.assertIn("minimum_training_origins * origin_stride", source)
         self.assertIn("120 * origin_stride", source)
+
+    def test_72h_falls_back_until_32_separated_training_origins_exist(self):
+        values = [100.0 + 0.001 * i for i in range(2637)]
+        weights = MODULE.corrected_forecast_weights(
+            values, sample_steps=360, interval_seconds=722.0, log_scale=True)
+        self.assertEqual(weights["last_value"], 1.0)
+        self.assertEqual(sum(weights.values()), 1.0)
 
     def test_training_window_includes_the_forecast_origin_observation(self):
         source = inspect.getsource(MODULE._horizon_candidate_values)
