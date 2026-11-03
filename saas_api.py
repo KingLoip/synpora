@@ -1479,8 +1479,8 @@ def install(app):
         if any(float(v)<0.60 for v in confidence.values()): warnings.append("At least one forecast series has low confidence.")
         return {"valid":valid,"historical_models_ready":ready_count,"model_readiness":readiness,
                 "confidence_by_series":confidence,"horizon_hours":hours,
-                "status":"validated" if valid and ready_count==3 else ("degraded" if valid else "invalid"),
-                "warnings":warnings}
+                "status":"data_ready_unvalidated" if valid and ready_count==3 else ("degraded" if valid else "invalid"),
+                "warnings":warnings+["Data freshness and sample readiness do not establish empirical forecast skill; independent 1h/6h/24h/72h out-of-sample release validation is required."]}
 
     def _ensure_market_table(c):
         if c.is_postgres:
@@ -3213,7 +3213,9 @@ def install(app):
         summary["net_value_eur"]=round(summary["total_value_eur"],2)
         summary["battery_degradation_cost_eur"]=round(summary["battery_discharge_kwh"]*max(0.0,x.battery_degradation_eur_kwh),3)
         summary["net_value_eur"]=round(summary["net_value_eur"]-summary["battery_degradation_cost_eur"],2)
-        dispatch_quality={"status":"validated" if forecast_source=="adaptive_market_with_site_tariff_input" else "degraded",
+        dispatch_quality={"status":"unvalidated" if forecast_source=="adaptive_market_with_site_tariff_input" else "degraded",
+                          "empirical_forecast_release_gate":{"status":"blocked","reason":"No independently validated all-horizon release result is persisted for this production model revision."},
+                          "market_data_status":"fresh_and_provenance_verified" if forecast_source=="adaptive_market_with_site_tariff_input" else "fallback_unverified",
                           "market_snapshot_freshness":snapshot_freshness,
                           "pv_profile_method":"flat_allocation_of_user_supplied_horizon_total",
                           "warnings":forecast_warnings+["Hourly PV distribution is a flat allocation of the supplied horizon total; it is not a site-specific PV forecast."]}
@@ -3257,7 +3259,7 @@ def install(app):
         import random
         n=max(100,min(5000,int(x.samples))); rng=random.Random(int(x.seed)); strategies=list(_economics(x).keys()); regret={k:[] for k in strategies}; winners={k:0 for k in strategies}
         for _ in range(n):
-            s=x.model_copy(update={"btc_hashprice_usd_ph_day":x.btc_hashprice_usd_ph_day*rng.lognormvariate(0,.18),"gpu_hourly_usd":x.gpu_hourly_usd*rng.lognormvariate(0,.15),"energy_cost_eur_kwh":x.energy_cost_eur_kwh*rng.lognormvariate(0,.20)})
+            s=x.model_copy(update={"btc_hashprice_usd_ph_day":x.btc_hashprice_usd_ph_day*rng.lognormvariate(-0.5*.18**2,.18),"gpu_hourly_usd":x.gpu_hourly_usd*rng.lognormvariate(-0.5*.15**2,.15),"energy_cost_eur_kwh":x.energy_cost_eur_kwh*rng.lognormvariate(-0.5*.20**2,.20)})
             vals=_economics(s); optimum=max(vals.values())
             for k in strategies: regret[k].append(max(0,optimum-vals[k]))
             winners[max(vals,key=vals.get)]+=1
