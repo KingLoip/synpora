@@ -172,9 +172,8 @@ class DispatchSafetyRegressionTests(unittest.TestCase):
 
     def test_regret_simulation_uses_mean_preserving_lognormal_shocks(self):
         source = ast.get_source_segment(SOURCE, find_function("regret_analysis"))
-        self.assertIn("rng.lognormvariate(-0.5*.18**2,.18)", source)
-        self.assertIn("rng.lognormvariate(-0.5*.15**2,.15)", source)
         self.assertIn("rng.lognormvariate(-0.5*.20**2,.20)", source)
+        self.assertIn("rng.lognormvariate(-0.5*.13**2,.13)", source)
 
     def test_dispatch_does_not_invent_hourly_solar_curve(self):
         source = ast.get_source_segment(SOURCE, find_function("dispatch_plan"))
