@@ -3111,6 +3111,8 @@ def install(app):
             gpu_fc=[float(x.gpu_hourly_usd)]*hours
             btc_w={"method":"unverified_user_input_fallback","weights":{}}
             gpu_w={"method":"unverified_user_input_fallback","weights":{}}
+            models["btc"]={"model":"unverified_user_input_fallback","samples":0,"ready":False}
+            models["gpu"]={"model":"unverified_user_input_fallback","samples":0,"ready":False}
             conf={"btc":0.0,"gpu":0.0,"energy":0.0}
             forecast_method="user_input_fallback_unverified"
             forecast_source="unverified_user_input"
