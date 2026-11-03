@@ -2330,11 +2330,12 @@ def install(app):
         fallback={name:(1.0 if name=="last_value" else 0.0) for name in names}
         interval=max(1.0,float(interval_seconds))
         weekly_steps=max(1,int(round(168.0*3600.0/interval)))
-        if sample_steps<1 or len(values)<weekly_steps+sample_steps+32:
+        origin_stride=max(1,sample_steps//8)  # limit training overlap to at most eight windows per horizon
+        minimum_training_origins=32  # 24 fit origins plus 8 chronological holdout origins
+        if sample_steps<1 or len(values)<weekly_steps+sample_steps+minimum_training_origins*origin_stride:
             return fallback
         model_values=[math.log(max(float(v),1e-12)) for v in values] if log_scale else [float(v) for v in values]
         errors={name:[] for name in names}
-        origin_stride=max(1,sample_steps//8)  # limit training overlap to at most eight windows per horizon
         first=max(weekly_steps,len(values)-sample_steps-120*origin_stride)
         for origin in range(first,len(values)-sample_steps,origin_stride):
             candidates=_horizon_candidate_values(model_values,origin,sample_steps,interval)
