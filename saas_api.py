@@ -1470,6 +1470,8 @@ def install(app):
         energy_in_range=all(-1.0<=v<=10.0 for v in energy_values)
         valid=finite and market_nonnegative and energy_in_range
         readiness={k:bool(v.get("ready")) for k,v in models.items()}
+        readiness_by_horizon={k:v.get("ready_by_horizon",{}) for k,v in models.items()
+                              if isinstance(v,dict) and v.get("ready_by_horizon")}
         ready_count=sum(readiness.values())
         warnings=[]
         if not finite: warnings.append("Forecast contains non-finite values.")
@@ -1478,6 +1480,7 @@ def install(app):
         if ready_count<3: warnings.append("Insufficient historical samples for fully validated forecasts.")
         if any(float(v)<0.60 for v in confidence.values()): warnings.append("At least one forecast series has low confidence.")
         return {"valid":valid,"historical_models_ready":ready_count,"model_readiness":readiness,
+                "model_readiness_by_horizon":readiness_by_horizon,
                 "confidence_by_series":confidence,"horizon_hours":hours,
                 "status":"data_ready_unvalidated" if valid and ready_count==3 else ("degraded" if valid else "invalid"),
                 "warnings":warnings+["Data freshness and sample readiness do not establish empirical forecast skill; independent 1h/6h/24h/72h out-of-sample release validation is required."]}
@@ -2401,9 +2404,14 @@ def install(app):
                 network_values=difficulty
         model_values=[math.log(max(v,1e-12)) for v in y] if log_scale else y
         weights_by_horizon={}
+        training_ready_by_horizon={}
         out=[]
+        weekly_steps=max(1,round(168.0*3600.0/interval_seconds))
         for h in range(1,horizon+1):
             sample_steps=max(1,round((h*3600.0)/interval_seconds))
+            minimum_training_origins=32
+            minimum_history=weekly_steps+sample_steps+minimum_training_origins*max(1,sample_steps//8)
+            training_ready_by_horizon[str(h)]=len(y)>=minimum_history
             weights=_adaptive_horizon_weights(y,sample_steps,interval_seconds,log_scale=log_scale,
                 btc_price_values=price_values,network_values=network_values)
             candidates=_horizon_candidate_values(model_values,len(y)-1,sample_steps,interval_seconds)
@@ -2420,6 +2428,8 @@ def install(app):
         return out,{"method":"elapsed_time_horizon_specific_rolling_origin",
                     "sample_interval_seconds":round(interval_seconds,2),
                     "history_observations":len(y),"history_hours":round(len(y)*interval_seconds/3600.0,2),
+                     "training_ready_by_horizon":training_ready_by_horizon,
+                     "minimum_training_origins":32,
                     "btc_log_scale":log_scale,
                     "btc_exogenous_fields_used":bool(price_values is not None and network_values is not None
                         and all(v is not None and float(v)>0 for v in price_values)
@@ -3086,6 +3096,12 @@ def install(app):
         if adaptive_ready:
             btc_fc,btc_w=_ensemble_forecast(c,"btc",hours,x.btc_hashprice_usd_ph_day)
             gpu_fc,gpu_w=_ensemble_forecast(c,"gpu",hours,x.gpu_hourly_usd)
+            for name,meta in (("btc",btc_w),("gpu",gpu_w)):
+                ready_by_horizon=meta.get("training_ready_by_horizon",{})
+                models[name]={"model":"horizon_specific_adaptive","mae":None,
+                              "samples":meta.get("history_observations",0),
+                              "ready":bool(ready_by_horizon) and all(ready_by_horizon.values()),
+                              "ready_by_horizon":ready_by_horizon}
             conf={"btc":_ensemble_confidence(c,"btc",hours),"gpu":_ensemble_confidence(c,"gpu",hours),"energy":1.0}
             forecast_method="historical_adaptive_model_selection"
             forecast_source="fresh_external_market_data"
