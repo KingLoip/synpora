@@ -154,7 +154,14 @@ class DispatchSafetyRegressionTests(unittest.TestCase):
         self.assertIn('_market_snapshot_freshness(c)', source)
         self.assertIn('_eligible_market_rows(c,24,require_site_tariff=False)', source)
         self.assertIn('forecast_source="input_fallback_unverified"', source)
-        self.assertIn('else "degraded"', source)
+        self.assertIn('"status":"unvalidated" if forecast_source=="adaptive_market_with_site_tariff_input" else "degraded"', source)
+        self.assertIn('"empirical_forecast_release_gate":{"status":"blocked"', source)
+
+    def test_regret_simulation_uses_mean_preserving_lognormal_shocks(self):
+        source = ast.get_source_segment(SOURCE, find_function("regret_analysis"))
+        self.assertIn("rng.lognormvariate(-0.5*.18**2,.18)", source)
+        self.assertIn("rng.lognormvariate(-0.5*.15**2,.15)", source)
+        self.assertIn("rng.lognormvariate(-0.5*.20**2,.20)", source)
 
     def test_dispatch_does_not_invent_hourly_solar_curve(self):
         source = ast.get_source_segment(SOURCE, find_function("dispatch_plan"))
