@@ -1971,11 +1971,18 @@ def install(app):
         confidence_gap=None
         pairs=[(float(r[5]),1.0 if (r[3] is not None and abs(float(r[2])-float(r[3]))<=1e-9) else 0.0) for r in rows if r[5] is not None and r[3] is not None]
         if pairs: confidence_gap=sum(a-b for a,b in pairs)/len(pairs)
+        chosen_strategies={str(r[0]) for r in rows if r[0] is not None}
+        selection_information=("low_information_single_strategy_dominance"
+                               if len(chosen_strategies)<2 else "multi_strategy_observations")
+        status=("learning" if len(rows)<24 else
+                ("low_information_single_strategy_dominance" if len(chosen_strategies)<2 else "validated"))
         return {"farm_id":farm_id,"samples":len(rows),"winner_accuracy":round(winner,3),
                 "avg_regret_eur_kwh":round(sum(regrets)/len(regrets),6) if regrets else 0.0,
                 "p90_regret_eur_kwh":round(p90,6) if p90 is not None else 0.0,
                 "confidence_calibration_gap":round(confidence_gap,3) if confidence_gap is not None else None,
-                "status":"validated" if len(rows)>=24 else "learning",
+                "distinct_strategies_selected":len(chosen_strategies),
+                "selection_information":selection_information,
+                "status":status,
                 "recommendation_only":True}
     
     @app.get("/api/v1/farms/{farm_id}/model-score")
