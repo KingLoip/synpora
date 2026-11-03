@@ -437,11 +437,12 @@ def corrected_forecast_weights(values, sample_steps=1, interval_seconds=300.0, l
     fallback = {name: (1.0 if name == "last_value" else 0.0) for name in names}
     interval = max(1.0, float(interval_seconds))
     weekly_steps = max(1, round(168.0 * 3600.0 / interval))
-    if sample_steps < 1 or len(values) < weekly_steps + sample_steps + 32:
+    origin_stride = max(1, sample_steps // 8)
+    minimum_training_origins = 32  # 24 fit origins plus 8 chronological holdout origins
+    if sample_steps < 1 or len(values) < weekly_steps + sample_steps + minimum_training_origins * origin_stride:
         return fallback
     model_values = [math.log(max(float(v), 1e-12)) for v in values] if log_scale else [float(v) for v in values]
     errors = {name: [] for name in names}
-    origin_stride = max(1, sample_steps // 8)
     first = max(weekly_steps, len(values) - sample_steps - 120 * origin_stride)
     for origin in range(first, len(values) - sample_steps, origin_stride):
         candidates = _horizon_candidate_values(model_values, origin, sample_steps, interval)
@@ -670,7 +671,11 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
             "pairs": pairs,
             "skipped_nonmatching_horizon": skipped,
             "skipped_insufficient_model_history": insufficient_history_skipped,
-            "model_history_required_observations": max(1, round(168.0 * 3600.0 / median_interval_seconds)) + max(1, round(horizon * 3600.0 / median_interval_seconds)) + 32,
+            "model_history_required_observations": (
+                max(1, round(168.0 * 3600.0 / median_interval_seconds))
+                + max(1, round(horizon * 3600.0 / median_interval_seconds))
+                + 32 * max(1, round(horizon * 3600.0 / median_interval_seconds) // 8)
+            ),
             "mae_eur_per_kwh": round(model_mae, 6) if model_mae is not None else None,
             "persistence_mae_eur_per_kwh": round(baseline_mae, 6) if baseline_mae is not None else None,
             "mae_skill_vs_persistence": round(skill, 6) if skill is not None else None,
