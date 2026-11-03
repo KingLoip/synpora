@@ -151,6 +151,16 @@ class DispatchSafetyRegressionTests(unittest.TestCase):
         self.assertIn('"forecasted":False', source)
         self.assertIn('"energy":1.0', source)
 
+    def test_forecast_readiness_uses_actual_horizon_training_requirements(self):
+        source = ast.get_source_segment(SOURCE, find_function("_ensemble_forecast"))
+        self.assertIn("training_ready_by_horizon[str(h)]=len(y)>=minimum_history", source)
+        self.assertIn("minimum_training_origins=32", source)
+        plan = ast.get_source_segment(SOURCE, find_function("forecast_plan"))
+        self.assertIn('ready":bool(ready_by_horizon) and all(ready_by_horizon.values())', plan)
+        self.assertIn('models["btc"]={"model":"unverified_user_input_fallback"', plan)
+        quality = ast.get_source_segment(SOURCE, find_function("_forecast_quality"))
+        self.assertIn('"model_readiness_by_horizon":readiness_by_horizon', quality)
+
     def test_fresh_market_data_is_not_misreported_as_empirical_forecast_validation(self):
         source = ast.get_source_segment(SOURCE, find_function("_forecast_quality"))
         self.assertIn('"status":"data_ready_unvalidated"', source)
