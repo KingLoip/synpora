@@ -71,7 +71,7 @@ jobs:
           ]
           for name, gate in blocked.items():
               lines.append(f"| {name} | {gate.get('status', 'blocked')} | {gate.get('ineligible_horizons_hours', [])} |")
-          summary = "\\n".join(lines) + "\\n"
+          summary = "\n".join(lines) + "\n"
           print(summary)
           with open(__import__("os").environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
               handle.write(summary)
