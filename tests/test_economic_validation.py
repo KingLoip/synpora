@@ -278,7 +278,7 @@ class EconomicValidationTests(unittest.TestCase):
     def test_72h_model_selection_spaces_origins_by_horizon(self):
         source = inspect.getsource(MODULE.corrected_forecast_weights)
         self.assertIn("origin_stride = max(1, sample_steps // 24)", source)
-        self.assertIn("48 * origin_stride", source)
+        self.assertIn("120 * origin_stride", source)
 
     def test_training_window_includes_the_forecast_origin_observation(self):
         source = inspect.getsource(MODULE._horizon_candidate_values)
