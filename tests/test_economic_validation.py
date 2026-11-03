@@ -275,6 +275,13 @@ class EconomicValidationTests(unittest.TestCase):
         self.assertEqual(weights["last_value"], 1.0)
         self.assertEqual(sum(weights.values()), 1.0)
 
+    def test_validator_model_selection_matches_production_holdout_gate(self):
+        source = inspect.getsource(MODULE.corrected_forecast_weights)
+        self.assertIn("valid_model = errors[best][split:]", source)
+        self.assertIn("valid_base = errors[\"last_value\"][split:]", source)
+        self.assertIn("holdout_skill < 0.05 or not stable", source)
+        self.assertNotIn("ci[\"lower_95\"] <= 0.0", source)
+
     def test_72h_model_selection_spaces_origins_by_horizon(self):
         source = inspect.getsource(MODULE.corrected_forecast_weights)
         self.assertIn("origin_stride = max(1, sample_steps // 24)", source)
