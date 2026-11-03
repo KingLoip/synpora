@@ -149,6 +149,11 @@ class DispatchSafetyRegressionTests(unittest.TestCase):
         self.assertIn('"forecasted":False', source)
         self.assertIn('"energy":1.0', source)
 
+    def test_fresh_market_data_is_not_misreported_as_empirical_forecast_validation(self):
+        source = ast.get_source_segment(SOURCE, find_function("_forecast_quality"))
+        self.assertIn('"status":"data_ready_unvalidated"', source)
+        self.assertIn("independent 1h/6h/24h/72h out-of-sample release validation is required", source)
+
     def test_dispatch_requires_fresh_provenance_verified_market_data(self):
         source = ast.get_source_segment(SOURCE, find_function("dispatch_plan"))
         self.assertIn('_market_snapshot_freshness(c)', source)
