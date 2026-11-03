@@ -71,7 +71,8 @@ class ChronologicalForecastRegressionTests(unittest.TestCase):
     def test_horizon_weights_are_selected_from_same_horizon_outcomes(self):
         source = ast.get_source_segment(SOURCE, find_function("_adaptive_horizon_weights"))
         self.assertIn("values[origin+sample_steps]", source)
-        self.assertIn("len(values)<weekly_steps+sample_steps+32", source)
+        self.assertIn("minimum_training_origins=32", source)
+        self.assertIn("minimum_training_origins*origin_stride", source)
         self.assertIn("skill<0.05", source)
 
     def test_forecast_candidate_family_includes_seasonal_and_ewma_models(self):
@@ -177,7 +178,8 @@ class DispatchSafetyRegressionTests(unittest.TestCase):
         self.assertIn('_market_snapshot_freshness(c)', source)
         self.assertIn('_eligible_market_rows(c,24,require_site_tariff=False)', source)
         self.assertIn('forecast_source="input_fallback_unverified"', source)
-        self.assertIn('"status":"unvalidated" if forecast_source=="adaptive_market_with_site_tariff_input" else "degraded"', source)
+        self.assertIn('and forecast_training_ready else "degraded"', source)
+        self.assertIn('"forecast_training_ready":forecast_training_ready', source)
         self.assertIn('"empirical_forecast_release_gate":{"status":"blocked"', source)
 
     def test_single_strategy_dominance_is_not_reported_as_validated_regret(self):
