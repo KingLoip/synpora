@@ -440,7 +440,7 @@ def corrected_forecast_weights(values, sample_steps=1, interval_seconds=300.0, l
         return fallback
     model_values = [math.log(max(float(v), 1e-12)) for v in values] if log_scale else [float(v) for v in values]
     errors = {name: [] for name in names}
-    origin_stride = max(1, sample_steps // 24)
+    origin_stride = max(1, sample_steps // 8)
     first = max(weekly_steps, len(values) - sample_steps - 120 * origin_stride)
     for origin in range(first, len(values) - sample_steps, origin_stride):
         candidates = _horizon_candidate_values(model_values, origin, sample_steps, interval)
@@ -464,7 +464,7 @@ def corrected_forecast_weights(values, sample_steps=1, interval_seconds=300.0, l
     best = min(train_maes, key=train_maes.get)
     if best != "last_value":
         # Match the production selector exactly: model choice is trained on the
-        # first 75% of the same 120 horizon-spaced origins, then retained only
+        # first 75% of the up to 120 horizon-spaced origins with no more than eight overlapping windows per horizon, then retained only
         # when the untouched final 25% improves persistence by >=5% in all
         # four chronological holdout blocks. Confidence intervals are computed
         # separately on the final outer backtest, never used to alter this
