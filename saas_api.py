@@ -3160,13 +3160,21 @@ def install(app):
             latest_eligible=len(_eligible_market_rows(c,24,require_site_tariff=False))>=24
             if snapshot_freshness.get("status")!="fresh" or not latest_eligible:
                 raise ValueError("No fresh provenance-verified market snapshot")
-            btc_fc,_=_ensemble_forecast(c,"btc",hours,x.btc_hashprice_usd_ph_day)
-            gpu_fc,_=_ensemble_forecast(c,"gpu",hours,x.gpu_hourly_usd)
+            btc_fc,btc_meta=_ensemble_forecast(c,"btc",hours,x.btc_hashprice_usd_ph_day)
+            gpu_fc,gpu_meta=_ensemble_forecast(c,"gpu",hours,x.gpu_hourly_usd)
+            forecast_training_ready_by_horizon={
+                "btc":btc_meta.get("training_ready_by_horizon",{}),
+                "gpu":gpu_meta.get("training_ready_by_horizon",{}),
+            }
+            forecast_training_ready=all(
+                bool(v) and all(v.values()) for v in forecast_training_ready_by_horizon.values())
             forecast_source="adaptive_market_with_site_tariff_input"
             forecast_warnings=[]
         except Exception:
             btc_fc=[x.btc_hashprice_usd_ph_day]*hours
             gpu_fc=[x.gpu_hourly_usd]*hours
+            forecast_training_ready_by_horizon={"btc":{},"gpu":{}}
+            forecast_training_ready=False
             forecast_source="input_fallback_unverified"
             forecast_warnings=["Market forecast unavailable or not fresh/provenance-verified; supplied input values are used as unverified fallbacks."]
         # Never apply an Austrian or cross-user energy forecast to this farm.
@@ -3239,9 +3247,11 @@ def install(app):
         summary["net_value_eur"]=round(summary["total_value_eur"],2)
         summary["battery_degradation_cost_eur"]=round(summary["battery_discharge_kwh"]*max(0.0,x.battery_degradation_eur_kwh),3)
         summary["net_value_eur"]=round(summary["net_value_eur"]-summary["battery_degradation_cost_eur"],2)
-        dispatch_quality={"status":"unvalidated" if forecast_source=="adaptive_market_with_site_tariff_input" else "degraded",
+        dispatch_quality={"status":"unvalidated" if forecast_source=="adaptive_market_with_site_tariff_input" and forecast_training_ready else "degraded",
                           "empirical_forecast_release_gate":{"status":"blocked","reason":"No independently validated all-horizon release result is persisted for this production model revision."},
                           "market_data_status":"fresh_and_provenance_verified" if forecast_source=="adaptive_market_with_site_tariff_input" else "fallback_unverified",
+                          "forecast_training_ready":forecast_training_ready,
+                          "training_ready_by_horizon":forecast_training_ready_by_horizon,
                           "market_snapshot_freshness":snapshot_freshness,
                           "pv_profile_method":"flat_allocation_of_user_supplied_horizon_total",
                           "warnings":forecast_warnings+["Hourly PV distribution is a flat allocation of the supplied horizon total; it is not a site-specific PV forecast."]}
