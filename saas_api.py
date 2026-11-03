@@ -1477,7 +1477,7 @@ def install(app):
         if not finite: warnings.append("Forecast contains non-finite values.")
         if not market_nonnegative: warnings.append("Forecast contains negative market revenue values.")
         if not energy_in_range: warnings.append("Forecast energy tariff is outside the supported range [-1, 10] EUR/kWh.")
-        if ready_count<3: warnings.append("Insufficient historical samples for fully validated forecasts.")
+        if ready_count<3: warnings.append("Insufficient separated horizon-specific training origins; persistence or unverified fallback is used.")
         if any(float(v)<0.60 for v in confidence.values()): warnings.append("At least one forecast series has low confidence.")
         return {"valid":valid,"historical_models_ready":ready_count,"model_readiness":readiness,
                 "model_readiness_by_horizon":readiness_by_horizon,
