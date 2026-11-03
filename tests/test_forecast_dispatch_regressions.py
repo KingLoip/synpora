@@ -151,6 +151,12 @@ class DispatchSafetyRegressionTests(unittest.TestCase):
         self.assertIn('"forecasted":False', source)
         self.assertIn('"energy":1.0', source)
 
+    def test_dispatch_degrades_when_any_horizon_lacks_training_history(self):
+        source = ast.get_source_segment(SOURCE, find_function("dispatch_plan"))
+        self.assertIn("forecast_training_ready=all(", source)
+        self.assertIn('and forecast_training_ready else "degraded"', source)
+        self.assertIn('"training_ready_by_horizon":forecast_training_ready_by_horizon', source)
+
     def test_forecast_readiness_uses_actual_horizon_training_requirements(self):
         source = ast.get_source_segment(SOURCE, find_function("_ensemble_forecast"))
         self.assertIn("training_ready_by_horizon[str(h)]=len(y)>=minimum_history", source)
