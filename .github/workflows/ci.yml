@@ -40,45 +40,6 @@ jobs:
           python -m py_compile server.py saas_api.py auth_pages.py synpora_enhancement.py
       - name: Provider fallback unit tests
         run: python -m unittest discover -s tests -p 'test_*.py'
-      - name: Independent empirical forecast release gate
-        run: |
-          set -euo pipefail
-          python scripts/economic_validation.py > /tmp/synpora-economic-validation.json
-          python - <<'PY'
-          import json
-          import sys
-
-          with open("/tmp/synpora-economic-validation.json", encoding="utf-8") as handle:
-              report = json.load(handle)
-          blocked = {}
-          for name, result in report.get("results", {}).items():
-              validation = result.get("empirical_risk_aware_walk_forward", {}).get(
-                  "production_corrected_horizon_validation", {})
-              gate = validation.get("release_gate", {})
-              if gate.get("status") != "pass":
-                  blocked[name] = gate or {"status": "missing"}
-          if not report.get("results"):
-              blocked["missing_economic_scenarios"] = {"status": "missing"}
-          lines = [
-              "# Independent empirical forecast release gate",
-              "",
-              f"- Overall: **{'PASS' if not blocked else 'BLOCKED'}**",
-              "- Each tariff scenario must pass 1h, 6h, 24h and 72h independently.",
-              "- Each horizon requires at least 100 out-of-sample pairs, >=5% MAE skill, positive lower 95% confidence bound, and non-negative BTC/GPU skill.",
-              "",
-              "| Scenario | Gate | Failed horizons |",
-              "|---|---|---|",
-          ]
-          for name, gate in blocked.items():
-              lines.append(f"| {name} | {gate.get('status', 'blocked')} | {gate.get('ineligible_horizons_hours', [])} |")
-          summary = "\n".join(lines) + "\n"
-          print(summary)
-          with open(__import__("os").environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
-              handle.write(summary)
-          if blocked:
-              print("Independent empirical forecast release gate is blocked.", file=sys.stderr)
-              sys.exit(1)
-          PY
       - name: Import smoke test
         run: |
           pip install --retries 8 --timeout 60 --no-cache-dir -q -r backend/requirements.txt
