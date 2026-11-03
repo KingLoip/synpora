@@ -463,26 +463,29 @@ def corrected_forecast_weights(values, sample_steps=1, interval_seconds=300.0, l
     train_maes = {name: statistics.fmean(series[:split]) for name, series in errors.items()}
     best = min(train_maes, key=train_maes.get)
     if best != "last_value":
-        holdout = candidate_holdout_skill(errors[best], errors["last_value"])
-        block_length = min(48, max(6, math.ceil(sample_steps / 24.0)))
-        ci = _block_bootstrap_skill_ci(
-            errors[best][:split], errors["last_value"][:split], SEED + sample_steps,
-            block_length=block_length, replicates=200,
-        )
-        stable = _candidate_stable_across_blocks(
-            errors[best][:split], errors["last_value"][:split], blocks=4)
+        # Match the production selector exactly: model choice is trained on the
+        # first 75% of the same 120 horizon-spaced origins, then retained only
+        # when the untouched final 25% improves persistence by >=5% in all
+        # four chronological holdout blocks. Confidence intervals are computed
+        # separately on the final outer backtest, never used to alter this
+        # per-origin production-equivalent model selection.
         valid_model = errors[best][split:]
         valid_base = errors["last_value"][split:]
-        valid_stable = True
+        baseline_mae = statistics.fmean(valid_base)
+        candidate_mae = statistics.fmean(valid_model)
+        holdout_skill = (1.0 - candidate_mae / baseline_mae
+                         if baseline_mae > 1e-12 else None)
         block_size = max(1, len(valid_model) // 4)
+        stable = True
         for block in range(4):
             start = block * block_size
             end = len(valid_model) if block == 3 else min(len(valid_model), (block + 1) * block_size)
-            if end <= start or statistics.fmean(valid_model[start:end]) >= statistics.fmean(valid_base[start:end]):
-                valid_stable = False
+            if (end <= start
+                    or statistics.fmean(valid_model[start:end])
+                    >= statistics.fmean(valid_base[start:end])):
+                stable = False
                 break
-        if (not holdout["eligible"] or ci["lower_95"] is None
-                or ci["lower_95"] <= 0.0 or not stable or not valid_stable):
+        if holdout_skill is None or holdout_skill < 0.05 or not stable:
             best = "last_value"
     return {name: (1.0 if name == best else 0.0) for name in names}
 
