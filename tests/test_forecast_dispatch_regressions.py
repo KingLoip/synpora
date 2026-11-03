@@ -58,6 +58,8 @@ class ChronologicalForecastRegressionTests(unittest.TestCase):
         self.assertIn("split=int(count*0.75)", source)
         self.assertIn("skill<0.05", source)
         self.assertIn("origin_stride=max(1,sample_steps//8)", source)
+        self.assertIn("minimum_training_origins=32", source)
+        self.assertIn("minimum_training_origins*origin_stride", source)
         self.assertIn("stable", source)
 
     def test_production_horizon_training_includes_the_current_origin(self):
