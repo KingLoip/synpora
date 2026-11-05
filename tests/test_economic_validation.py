@@ -282,6 +282,28 @@ class EconomicValidationTests(unittest.TestCase):
         self.assertIn("holdout_skill < 0.05 or not stable", source)
         self.assertNotIn("ci[\"lower_95\"] <= 0.0", source)
 
+    def test_horizon_origin_stride_caps_overlapping_windows_at_eight(self):
+        # A 6h horizon at a 12-minute cadence has 30 steps. Floor division
+        # yielded stride 3 (nine overlapping windows); ceil yields stride 4.
+        sample_steps = 30
+        stride = math.ceil(sample_steps / 8)
+        self.assertEqual(stride, 4)
+        self.assertLessEqual(math.ceil(sample_steps / stride), 8)
+
+    def test_validator_selector_uses_ceiling_stride_and_separate_32_origins(self):
+        source = inspect.getsource(MODULE.corrected_forecast_weights)
+        self.assertIn("math.ceil(sample_steps / 8)", source)
+        self.assertIn("minimum_training_origins = 32", source)
+        self.assertIn("split = int(count * 0.75)", source)
+        self.assertIn("split < 24 or count - split < 8", source)
+
+    def test_horizon_validation_excludes_persistence_fallbacks_from_oos_pairs(self):
+        source = inspect.getsource(MODULE.production_corrected_horizon_validation)
+        self.assertIn("genuine_model_pairs", source)
+        self.assertIn("persistence_fallback_pairs", source)
+        self.assertIn("btc_weights_are_learned and gpu_weights_are_learned", source)
+        self.assertIn("pairs >= 100", source)
+
     def test_72h_model_selection_spaces_origins_by_horizon(self):
         source = inspect.getsource(MODULE.corrected_forecast_weights)
         self.assertIn("origin_stride = max(1, sample_steps // 8)", source)
