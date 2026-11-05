@@ -314,6 +314,9 @@ class EconomicValidationTests(unittest.TestCase):
         source = inspect.getsource(MODULE.production_corrected_horizon_validation)
         self.assertIn("genuine_model_pairs", source)
         self.assertIn("persistence_fallback_pairs", source)
+        self.assertIn("selector_rejection_fallback_pairs", source)
+        self.assertIn("btc_persistence_selector_fallbacks", source)
+        self.assertIn("gpu_persistence_selector_fallbacks", source)
         self.assertIn("btc_weights_are_learned and gpu_weights_are_learned", source)
         self.assertIn("pairs >= 100", source)
 
