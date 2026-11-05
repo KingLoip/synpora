@@ -437,7 +437,7 @@ def corrected_forecast_weights(values, sample_steps=1, interval_seconds=300.0, l
     fallback = {name: (1.0 if name == "last_value" else 0.0) for name in names}
     interval = max(1.0, float(interval_seconds))
     weekly_steps = max(1, round(168.0 * 3600.0 / interval))
-    origin_stride = max(1, sample_steps // 8)
+    origin_stride = max(1, math.ceil(sample_steps / 8))
     minimum_training_origins = 32  # 24 fit origins plus 8 chronological holdout origins
     if sample_steps < 1 or len(values) < weekly_steps + sample_steps + minimum_training_origins * origin_stride:
         return fallback
@@ -565,6 +565,8 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
         skipped = 0
         insufficient_history_skipped = 0
         insufficient_separated_origin_fallbacks = 0
+        total_horizon_matched_origins = 0
+        persistence_fallback_pairs = 0
         origin_stride = max(1, len(rows) // 200)
         for i in range(23, len(rows) - 1, origin_stride):
             decision = rows[i]
@@ -578,6 +580,7 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
             if abs(actual_gap - expected_seconds) > max(300.0, expected_seconds * 0.10):
                 skipped += 1
                 continue
+            total_horizon_matched_origins += 1
             history_rows = rows[:i + 1]
             recent_rows = history_rows[-48:]
             gaps = [recent_rows[j]["ts"] - recent_rows[j - 1]["ts"]
@@ -587,15 +590,18 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
             sample_steps = max(1, round(horizon * 3600.0 / interval_seconds))
             weekly_steps = max(1, round(168.0 * 3600.0 / interval_seconds))
             minimum_training_origins = 32
-            training_origin_stride = max(1, sample_steps // 8)
+            training_origin_stride = max(1, math.ceil(sample_steps / 8))
             selector_minimum_history = weekly_steps + sample_steps + minimum_training_origins * training_origin_stride
             # Persistence fallback is safe operationally, but is not evidence
             # that the learned horizon model is validated.
             if len(history_rows) < weekly_steps + sample_steps + 32:
                 insufficient_history_skipped += 1
+                persistence_fallback_pairs += 1
                 continue
             if len(history_rows) < selector_minimum_history:
                 insufficient_separated_origin_fallbacks += 1
+                persistence_fallback_pairs += 1
+                continue
             cache_key = (id(rows), int(horizon), int(i))
             cached_forecast = _PRODUCTION_FORECAST_CACHE.get(cache_key)
             if cached_forecast is None:
@@ -621,6 +627,16 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
                         gpu_values, gpu_weights, horizon, interval_seconds),
                 )
                 _PRODUCTION_FORECAST_CACHE[cache_key] = cached_forecast
+            btc_weights_are_learned = any(name != "last_value" and weight > 1e-12
+                                          for name, weight in btc_weights.items())
+            gpu_weights_are_learned = any(name != "last_value" and weight > 1e-12
+                                          for name, weight in gpu_weights.items())
+            # A persistence-selected series means the combined economic forecast
+            # is not a genuine learned-model OOS pair. Keep it in fallback counts,
+            # never in the empirical release sample or its confidence interval.
+            if not (btc_weights_are_learned and gpu_weights_are_learned):
+                persistence_fallback_pairs += 1
+                continue
             predicted = dict(decision)
             predicted["btc"], predicted["gpu"] = cached_forecast
             # Market-price forecasts are independent of the site tariff, so reuse
@@ -675,6 +691,10 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
         results[str(horizon)] = {
             "horizon_hours": horizon,
             "pairs": pairs,
+            "genuine_model_pairs": pairs,
+            "total_horizon_matched_origins": total_horizon_matched_origins,
+            "persistence_fallback_pairs": persistence_fallback_pairs,
+            "minimum_genuine_oos_pairs": 100,
             "skipped_nonmatching_horizon": skipped,
             "skipped_insufficient_model_history": insufficient_history_skipped,
             "persistence_fallback_due_insufficient_separated_origins": insufficient_separated_origin_fallbacks,
