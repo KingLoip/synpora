@@ -551,6 +551,22 @@ def horizon_release_gate(horizons, required_horizons=(1, 6, 24, 72)):
 _PRODUCTION_FORECAST_CACHE = {}
 
 
+
+def horizon_history_requirements(horizon_hours, interval_seconds):
+    """Match production's ceil-spaced selector when reporting minimum history."""
+    interval = max(1.0, float(interval_seconds))
+    sample_steps = max(1, round(float(horizon_hours) * 3600.0 / interval))
+    weekly_steps = max(1, round(168.0 * 3600.0 / interval))
+    origin_stride = max(1, math.ceil(sample_steps / 8))
+    return {
+        "sample_steps": sample_steps,
+        "weekly_steps": weekly_steps,
+        "training_origin_stride": origin_stride,
+        "model_history_required_observations": weekly_steps + sample_steps + 32 * origin_stride,
+        "minimum_total_observations_for_horizon_validation": weekly_steps + 2 * sample_steps + 32 * origin_stride,
+    }
+
+
 def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 24, 72)):
     """Validate the corrected production forecast at the API's actual hour horizons."""
     results = {}
@@ -691,6 +707,7 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
             and value["mae_skill_vs_persistence"] >= 0.0
             for value in per_strategy.values()
         )
+        history_requirements = horizon_history_requirements(horizon, median_interval_seconds)
         results[str(horizon)] = {
             "horizon_hours": horizon,
             "pairs": pairs,
@@ -701,16 +718,7 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
             "skipped_nonmatching_horizon": skipped,
             "skipped_insufficient_model_history": insufficient_history_skipped,
             "persistence_fallback_due_insufficient_separated_origins": insufficient_separated_origin_fallbacks,
-            "model_history_required_observations": (
-                max(1, round(168.0 * 3600.0 / median_interval_seconds))
-                + max(1, round(horizon * 3600.0 / median_interval_seconds))
-                + 32 * max(1, round(horizon * 3600.0 / median_interval_seconds) // 8)
-            ),
-            "minimum_total_observations_for_horizon_validation": (
-                max(1, round(168.0 * 3600.0 / median_interval_seconds))
-                + 2 * max(1, round(horizon * 3600.0 / median_interval_seconds))
-                + 32 * max(1, round(horizon * 3600.0 / median_interval_seconds) // 8)
-            ),
+            **history_requirements,
             "mae_eur_per_kwh": round(model_mae, 6) if model_mae is not None else None,
             "persistence_mae_eur_per_kwh": round(baseline_mae, 6) if baseline_mae is not None else None,
             "mae_skill_vs_persistence": round(skill, 6) if skill is not None else None,
