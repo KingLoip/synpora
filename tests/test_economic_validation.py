@@ -306,7 +306,7 @@ class EconomicValidationTests(unittest.TestCase):
 
     def test_72h_model_selection_spaces_origins_by_horizon(self):
         source = inspect.getsource(MODULE.corrected_forecast_weights)
-        self.assertIn("origin_stride = max(1, sample_steps // 8)", source)
+        self.assertIn("origin_stride = max(1, math.ceil(sample_steps / 8))", source)
         self.assertIn("minimum_training_origins = 32", source)
         self.assertIn("minimum_training_origins * origin_stride", source)
         self.assertIn("120 * origin_stride", source)
