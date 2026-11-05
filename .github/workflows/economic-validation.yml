@@ -93,8 +93,8 @@ jobs:
               "",
               "## Horizon-aware production forecast validation",
               "",
-              "| Tariff scenario | Horizon | Genuine OOS pairs | Fallbacks | Selector rejects | BTC persistence | GPU persistence | Total origins | History required | MAE skill | 95% CI low | BTC skill | GPU skill | Eligible |",
-              "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+              "| Tariff scenario | Horizon | Genuine OOS pairs | Fallbacks | History/separation fallbacks | Selector rejects | BTC persistence | GPU persistence | Total origins | History required | MAE skill | 95% CI low | BTC skill | GPU skill | Eligible |",
+              "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
           ]
           for name, result in corrected.items():
               backtest = result.get("empirical_risk_aware_walk_forward", {})
@@ -112,6 +112,8 @@ jobs:
                   lines.append(
                       f"| {name} | {horizon}h | {metrics.get('genuine_model_pairs', metrics.get('pairs', 0))} | "
                       f"{metrics.get('persistence_fallback_pairs', 0)} | "
+                      f"{metrics.get('skipped_insufficient_model_history', 0)}/"
+                      f"{metrics.get('persistence_fallback_due_insufficient_separated_origins', 0)} | "
                       f"{metrics.get('selector_rejection_fallback_pairs', 0)} | "
                       f"{metrics.get('btc_persistence_selector_fallbacks', 0)} | "
                       f"{metrics.get('gpu_persistence_selector_fallbacks', 0)} | "
