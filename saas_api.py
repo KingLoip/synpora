@@ -2333,7 +2333,7 @@ def install(app):
         fallback={name:(1.0 if name=="last_value" else 0.0) for name in names}
         interval=max(1.0,float(interval_seconds))
         weekly_steps=max(1,int(round(168.0*3600.0/interval)))
-        origin_stride=max(1,sample_steps//8)  # limit training overlap to at most eight windows per horizon
+        origin_stride=max(1,math.ceil(sample_steps/8))  # at most eight overlapping forecast windows per horizon
         minimum_training_origins=32  # 24 fit origins plus 8 chronological holdout origins
         if sample_steps<1 or len(values)<weekly_steps+sample_steps+minimum_training_origins*origin_stride:
             return fallback
@@ -2410,7 +2410,7 @@ def install(app):
         for h in range(1,horizon+1):
             sample_steps=max(1,round((h*3600.0)/interval_seconds))
             minimum_training_origins=32
-            minimum_history=weekly_steps+sample_steps+minimum_training_origins*max(1,sample_steps//8)
+            minimum_history=weekly_steps+sample_steps+minimum_training_origins*max(1,math.ceil(sample_steps/8))
             training_ready_by_horizon[str(h)]=len(y)>=minimum_history
             weights=_adaptive_horizon_weights(y,sample_steps,interval_seconds,log_scale=log_scale,
                 btc_price_values=price_values,network_values=network_values)
@@ -2480,7 +2480,7 @@ def install(app):
             return 0.55
         sample_steps=max(1,round((float(horizon_hours)*3600.0)/interval_seconds))
         weekly_steps=max(1,round(168.0*3600.0/interval_seconds))
-        confidence_stride=max(1,sample_steps//8)
+        confidence_stride=max(1,math.ceil(sample_steps/8))
         first_origin=len(y)-sample_steps-24*confidence_stride
         if first_origin<weekly_steps+24:
             return 0.55
