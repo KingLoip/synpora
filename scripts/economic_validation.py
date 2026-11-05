@@ -583,6 +583,9 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
         insufficient_separated_origin_fallbacks = 0
         total_horizon_matched_origins = 0
         persistence_fallback_pairs = 0
+        selector_rejection_fallback_pairs = 0
+        btc_persistence_selector_fallbacks = 0
+        gpu_persistence_selector_fallbacks = 0
         origin_stride = max(1, len(rows) // 200)
         for i in range(23, len(rows) - 1, origin_stride):
             decision = rows[i]
@@ -653,7 +656,12 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
             # A persistence-selected series means the combined economic forecast
             # is not a genuine learned-model OOS pair. Keep it in fallback counts,
             # never in the empirical release sample or its confidence interval.
+            if not btc_weights_are_learned:
+                btc_persistence_selector_fallbacks += 1
+            if not gpu_weights_are_learned:
+                gpu_persistence_selector_fallbacks += 1
             if not (btc_weights_are_learned and gpu_weights_are_learned):
+                selector_rejection_fallback_pairs += 1
                 persistence_fallback_pairs += 1
                 continue
             predicted = dict(decision)
@@ -714,6 +722,9 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
             "genuine_model_pairs": pairs,
             "total_horizon_matched_origins": total_horizon_matched_origins,
             "persistence_fallback_pairs": persistence_fallback_pairs,
+            "selector_rejection_fallback_pairs": selector_rejection_fallback_pairs,
+            "btc_persistence_selector_fallbacks": btc_persistence_selector_fallbacks,
+            "gpu_persistence_selector_fallbacks": gpu_persistence_selector_fallbacks,
             "minimum_genuine_oos_pairs": 100,
             "skipped_nonmatching_horizon": skipped,
             "skipped_insufficient_model_history": insufficient_history_skipped,
