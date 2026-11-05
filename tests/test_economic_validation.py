@@ -296,6 +296,10 @@ class EconomicValidationTests(unittest.TestCase):
         self.assertIn("minimum_training_origins = 32", source)
         self.assertIn("split = int(count * 0.75)", source)
         self.assertIn("split < 24 or count - split < 8", source)
+        production_source = (Path(__file__).resolve().parents[1] / "saas_api.py").read_text(encoding="utf-8")
+        self.assertIn("origin_stride=max(1,math.ceil(sample_steps/8))", production_source)
+        self.assertIn("minimum_history=weekly_steps+sample_steps+minimum_training_origins*max(1,math.ceil(sample_steps/8))", production_source)
+        self.assertIn("confidence_stride=max(1,math.ceil(sample_steps/8))", production_source)
 
     def test_horizon_validation_excludes_persistence_fallbacks_from_oos_pairs(self):
         source = inspect.getsource(MODULE.production_corrected_horizon_validation)
