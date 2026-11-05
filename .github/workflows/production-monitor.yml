@@ -47,17 +47,17 @@ jobs:
             -H "Authorization: Bearer ${GH_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            "${api}/actions/runs/${GITHUB_RUN_ID}" --output /tmp/current-run.json
+            "${api}/actions/runs/${GITHUB_RUN_ID}" --output /tmp/current-run.json || { echo "::warning title=Schedule diagnostics unavailable::GitHub run metadata could not be read; Railway independent monitoring remains authoritative."; exit 0; }
           curl --silent --show-error --fail --connect-timeout 5 --max-time 10 \
             -H "Authorization: Bearer ${GH_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "${api}/actions/workflows/production-monitor.yml/runs?branch=main&event=schedule&per_page=100" \
-            --output /tmp/schedule-runs.json
+            --output /tmp/schedule-runs.json || { echo "::warning title=Schedule diagnostics unavailable::GitHub schedule history could not be read; Railway independent monitoring remains authoritative."; exit 0; }
           current_started="$(jq -r '.created_at // empty' /tmp/current-run.json)"
           if [[ -z "${current_started}" ]]; then
-            echo "::error title=Missing schedule evidence::Current schedule timestamp is unavailable."
-            exit 1
+            echo "::warning title=Missing schedule evidence::Current schedule timestamp is unavailable; cadence is diagnostic only."
+            exit 0
           fi
           mapfile -t previous_times < <(jq -r --arg current "${GITHUB_RUN_ID}" '
             [.workflow_runs[]
@@ -69,8 +69,8 @@ jobs:
             | .[]
           ' /tmp/schedule-runs.json)
           if (( ${#previous_times[@]} < 3 )); then
-            echo "::error title=Insufficient schedule evidence::Three previous main-branch schedule events are required."
-            exit 1
+            echo "::warning title=Insufficient schedule evidence::Fewer than three previous main-branch schedule events are available; cadence is diagnostic only."
+            exit 0
           fi
           schedule_times=("${previous_times[@]}" "${current_started}")
           for ((i=1; i<${#schedule_times[@]}; i++)); do
@@ -79,11 +79,10 @@ jobs:
             gap_seconds=$((current_epoch - previous_epoch))
             echo "Schedule interval ${i}: ${gap_seconds}s (${schedule_times[i-1]} -> ${schedule_times[i]})"
             if (( gap_seconds > 1200 )); then
-              echo "::error title=GitHub Actions schedule gap::One of the last three intervals was ${gap_seconds}s; maximum allowed is 1200s."
-              exit 1
+              echo "::warning title=GitHub Actions schedule delay::Interval ${i} was ${gap_seconds}s (>1200s). GitHub scheduled events are best-effort; Railway independent five-minute monitoring is the production watchdog."
             fi
           done
-          echo "Three consecutive GitHub Actions schedule intervals: PASS"
+          echo "GitHub schedule cadence diagnostics completed; production health is independently monitored by Railway."
 
   live-market-health:
     # Never gate a pull request on production state from code that has not been deployed yet.
