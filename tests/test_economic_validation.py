@@ -282,6 +282,15 @@ class EconomicValidationTests(unittest.TestCase):
         self.assertIn("holdout_skill < 0.05 or not stable", source)
         self.assertNotIn("ci[\"lower_95\"] <= 0.0", source)
 
+    def test_history_requirement_report_uses_same_ceiling_stride_as_selector(self):
+        # At a 12-minute cadence, 6h is 30 samples: ceil(30/8) = 4,
+        # not floor(30/8) = 3. The report must match production's requirement.
+        result = MODULE.horizon_history_requirements(6, 720)
+        self.assertEqual(result["sample_steps"], 30)
+        self.assertEqual(result["training_origin_stride"], 4)
+        self.assertEqual(result["model_history_required_observations"], 840 + 30 + 32 * 4)
+        self.assertEqual(result["minimum_total_observations_for_horizon_validation"], 840 + 60 + 32 * 4)
+
     def test_horizon_origin_stride_caps_overlapping_windows_at_eight(self):
         # A 6h horizon at a 12-minute cadence has 30 steps. Floor division
         # yielded stride 3 (nine overlapping windows); ceil yields stride 4.
