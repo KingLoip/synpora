@@ -327,8 +327,10 @@ class EconomicValidationTests(unittest.TestCase):
     def test_report_exposes_long_horizon_persistence_fallback_and_total_history_need(self):
         source = inspect.getsource(MODULE.production_corrected_horizon_validation)
         self.assertIn("persistence_fallback_due_insufficient_separated_origins", source)
-        self.assertIn("minimum_total_observations_for_horizon_validation", source)
         self.assertIn("selector_minimum_history", source)
+        requirements = inspect.getsource(MODULE.horizon_history_requirements)
+        self.assertIn("minimum_total_observations_for_horizon_validation", requirements)
+        self.assertIn("math.ceil(sample_steps / 8)", requirements)
 
     def test_72h_falls_back_until_32_separated_training_origins_exist(self):
         values = [100.0 + 0.001 * i for i in range(2637)]
