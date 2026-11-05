@@ -625,8 +625,11 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
                         btc_price_values=btc_price_values, network_values=network_values),
                     corrected_forecast_value(
                         gpu_values, gpu_weights, horizon, interval_seconds),
+                    btc_weights,
+                    gpu_weights,
                 )
                 _PRODUCTION_FORECAST_CACHE[cache_key] = cached_forecast
+            btc_forecast, gpu_forecast, btc_weights, gpu_weights = cached_forecast
             btc_weights_are_learned = any(name != "last_value" and weight > 1e-12
                                           for name, weight in btc_weights.items())
             gpu_weights_are_learned = any(name != "last_value" and weight > 1e-12
@@ -638,7 +641,7 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
                 persistence_fallback_pairs += 1
                 continue
             predicted = dict(decision)
-            predicted["btc"], predicted["gpu"] = cached_forecast
+            predicted["btc"], predicted["gpu"] = btc_forecast, gpu_forecast
             # Market-price forecasts are independent of the site tariff, so reuse
             # them across tariff scenarios without re-fitting the same models.
             # The live API holds the supplied EUR/USD input constant across the forecast.
