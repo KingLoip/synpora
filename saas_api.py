@@ -2349,7 +2349,7 @@ def install(app):
         }
 
     def _btc_price_network_candidate(hashprice_values, price_values, network_values,
-                                      origin, sample_steps, interval_seconds):
+                                      origin, sample_steps, interval_seconds, network_damping=0.25):
         """Structural hashprice candidate from BTC price and network difficulty/hashrate."""
         import math
         interval=max(1.0,float(interval_seconds))
@@ -2362,14 +2362,15 @@ def install(app):
                 or any(v is None or not math.isfinite(float(v)) or float(v)<=0 for v in network_history)):
             return None
         horizon_hours=max(0.0,float(sample_steps)*interval/3600.0)
-        damped_hours=min(horizon_hours,24.0)*0.25
-        def damped(series):
+        price_damped_hours=min(horizon_hours,24.0)*0.25
+        network_damped_hours=min(horizon_hours,24.0)*max(0.0,min(1.0,float(network_damping)))
+        def damped(series,damped_hours):
             logs=[math.log(float(v)) for v in series]
             elapsed_hours=max(1e-9,(len(logs)-1)*interval/3600.0)
             slope=(logs[-1]-logs[0])/elapsed_hours
             return math.exp(max(-50.0,min(50.0,logs[-1]+slope*damped_hours)))
-        predicted_price=damped(price_history)
-        predicted_network=damped(network_history)
+        predicted_price=damped(price_history,price_damped_hours)
+        predicted_network=damped(network_history,network_damped_hours)
         current_price=float(price_values[origin])
         current_network=float(network_values[origin])
         current_hashprice=float(hashprice_values[origin])
@@ -2387,7 +2388,8 @@ def install(app):
             and len(btc_price_values)==len(values) and len(network_values)==len(values)
             and all(v is not None and math.isfinite(float(v)) and float(v)>0 for v in btc_price_values)
             and all(v is not None and math.isfinite(float(v)) and float(v)>0 for v in network_values))
-        names=direct_names+(("btc_price_network_structural",) if exogenous_ready else ())
+        structural_names=("btc_price_network_structural","btc_price_trend_network_hold")
+        names=direct_names+(structural_names if exogenous_ready else ())
         fallback={name:(1.0 if name=="last_value" else 0.0) for name in names}
         interval=max(1.0,float(interval_seconds))
         weekly_steps=max(1,int(round(168.0*3600.0/interval)))
@@ -2404,9 +2406,15 @@ def install(app):
                 candidates={name:math.exp(max(-50.0,min(50.0,value))) for name,value in candidates.items()}
             if exogenous_ready:
                 structural=_btc_price_network_candidate(
-                    values,btc_price_values,network_values,origin,sample_steps,interval)
+                    values,btc_price_values,network_values,origin,sample_steps,interval,
+                    network_damping=0.25)
+                network_hold=_btc_price_network_candidate(
+                    values,btc_price_values,network_values,origin,sample_steps,interval,
+                    network_damping=0.0)
                 if structural is not None:
                     candidates["btc_price_network_structural"]=structural
+                if network_hold is not None:
+                    candidates["btc_price_trend_network_hold"]=network_hold
             actual=float(values[origin+sample_steps])
             for name in names:
                 if name in candidates:
@@ -2477,9 +2485,13 @@ def install(app):
                 candidates={name:math.exp(max(-50.0,min(50.0,value))) for name,value in candidates.items()}
             if price_values is not None and network_values is not None:
                 structural=_btc_price_network_candidate(y,price_values,network_values,
-                    len(y)-1,sample_steps,interval_seconds)
+                    len(y)-1,sample_steps,interval_seconds,network_damping=0.25)
+                network_hold=_btc_price_network_candidate(y,price_values,network_values,
+                    len(y)-1,sample_steps,interval_seconds,network_damping=0.0)
                 if structural is not None:
                     candidates["btc_price_network_structural"]=structural
+                if network_hold is not None:
+                    candidates["btc_price_trend_network_hold"]=network_hold
             pred=sum(weights[name]*candidates.get(name,y[-1]) for name in weights)
             out.append(max(0.0,pred))
             weights_by_horizon[str(h)]=weights
@@ -2566,9 +2578,13 @@ def install(app):
                 candidates={name:math.exp(max(-50.0,min(50.0,value))) for name,value in candidates.items()}
             if prices is not None and networks is not None:
                 structural=_btc_price_network_candidate(training,prices,networks,
-                    len(training)-1,sample_steps,interval_seconds)
+                    len(training)-1,sample_steps,interval_seconds,network_damping=0.25)
+                network_hold=_btc_price_network_candidate(training,prices,networks,
+                    len(training)-1,sample_steps,interval_seconds,network_damping=0.0)
                 if structural is not None:
                     candidates["btc_price_network_structural"]=structural
+                if network_hold is not None:
+                    candidates["btc_price_trend_network_hold"]=network_hold
             predicted=sum(weights[name]*candidates.get(name,training[-1]) for name in weights)
             actual=y[origin+sample_steps]
             model_errors.append(abs(actual-predicted))
