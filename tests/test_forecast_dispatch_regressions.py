@@ -42,6 +42,7 @@ class ChronologicalForecastRegressionTests(unittest.TestCase):
         adapter = ast.get_source_segment(SOURCE, find_function("_fetch_builtin_market_sources"))
         self.assertIn("https://mempool.space/api/v1/mining/hashrate/1m", adapter)
         self.assertIn('ttl_seconds=300, timeout=3, attempts=1', adapter)
+        self.assertIn('_provider_json_cache_at.get(mempool_url, now)', adapter)
         self.assertIn('"Mempool.space live network hashrate API"', source)
         isolated = ast.Module(body=[node], type_ignores=[])
         namespace = {}
