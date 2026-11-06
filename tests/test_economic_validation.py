@@ -234,6 +234,14 @@ class EconomicValidationTests(unittest.TestCase):
             values, sample_steps=72 * 3600 // interval, interval_seconds=interval,
             log_scale=True, btc_price_values=prices, network_values=network)
         self.assertIn("btc_price_network_structural", weights)
+        self.assertIn("btc_price_trend_network_hold", weights)
+        structural = MODULE._btc_price_network_candidate(
+            values, prices, network, len(values) - 1, 72 * 3600 // interval,
+            interval, network_damping=0.25)
+        network_hold = MODULE._btc_price_network_candidate(
+            values, prices, network, len(values) - 1, 72 * 3600 // interval,
+            interval, network_damping=0.0)
+        self.assertNotAlmostEqual(structural, network_hold)
         prediction = MODULE.corrected_forecast_value(
             values, weights, 72, interval, log_scale=True,
             btc_price_values=prices, network_values=network)
