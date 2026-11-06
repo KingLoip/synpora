@@ -32,6 +32,13 @@ class ChronologicalForecastRegressionTests(unittest.TestCase):
         self.assertIn("10000 if compact else 500", source)
         self.assertIn('compact_payload["data_quality"]', source)
 
+    def test_btc_network_data_provider_is_visible_in_market_provenance(self):
+        live = ast.get_source_segment(SOURCE, find_function("live_market"))
+        collect = ast.get_source_segment(SOURCE, find_function("collect_market"))
+        for field in ("btc_price_usd", "btc_hashprice_usd_ph_day", "btc_difficulty", "network_hashrate_eh"):
+            self.assertIn(field, live)
+            self.assertIn(field, collect)
+
     def test_mempool_live_hashrate_adapter_validates_units_and_provenance(self):
         node = find_function("_mempool_network_observation")
         source = ast.get_source_segment(SOURCE, node)
