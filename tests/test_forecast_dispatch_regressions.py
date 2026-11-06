@@ -33,7 +33,8 @@ class ChronologicalForecastRegressionTests(unittest.TestCase):
         self.assertIn('compact_payload["data_quality"]', source)
 
     def test_mempool_live_hashrate_adapter_validates_units_and_provenance(self):
-        source = ast.get_source_segment(SOURCE, find_function("_mempool_network_observation"))
+        node = find_function("_mempool_network_observation")
+        source = ast.get_source_segment(SOURCE, node)
         self.assertIn('raw.get("currentHashrate")', source)
         self.assertIn("hashrate_hs / 1e18", source)
         self.assertIn('raw.get("currentDifficulty")', source)
@@ -42,6 +43,15 @@ class ChronologicalForecastRegressionTests(unittest.TestCase):
         self.assertIn("https://mempool.space/api/v1/mining/hashrate/1m", adapter)
         self.assertIn('ttl_seconds=300, timeout=3, attempts=1', adapter)
         self.assertIn('"Mempool.space live network hashrate API"', source)
+        isolated = ast.Module(body=[node], type_ignores=[])
+        namespace = {}
+        exec(compile(ast.fix_missing_locations(isolated), "<mempool-adapter-test>", "exec"), namespace)
+        observe = namespace["_mempool_network_observation"]
+        result = observe({"currentHashrate": 1.02e21, "currentDifficulty": 148e12}, 1794000000.0)
+        self.assertAlmostEqual(result["networkHashrate"]["value"], 1020.0)
+        self.assertEqual(result["difficulty"]["value"], 148e12)
+        self.assertEqual(result["networkHashrate"]["observed_at"], 1794000000.0)
+        self.assertEqual(observe({"currentHashrate": -1, "currentDifficulty": "bad"}, 1.0), {})
 
     def test_adaptive_weights_use_rolling_origin_errors_on_inference_window(self):
         source = ast.get_source_segment(SOURCE, find_function("_adaptive_model_weights"))
