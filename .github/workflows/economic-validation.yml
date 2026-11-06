@@ -93,7 +93,7 @@ jobs:
               "",
               "## Horizon-aware production forecast validation",
               "",
-              "| Tariff scenario | Horizon | Genuine OOS pairs | Fallbacks | History/separation fallbacks | Selector rejects | BTC persistence | GPU persistence | Total origins | History required | MAE skill | 95% CI low | BTC skill | GPU skill | Eligible |",
+              "| Tariff scenario | Horizon | Genuine OOS pairs | Fallbacks | History/separation fallbacks | Selector rejects | BTC persistence | GPU persistence | BTC selector diagnostics | GPU selector diagnostics | Total origins | History required | MAE skill | 95% CI low | BTC skill | GPU skill | Eligible |",
               "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
           ]
           for name, result in corrected.items():
@@ -109,6 +109,9 @@ jobs:
                   gpu = per.get("AI Compute", {}).get("mae_skill_vs_persistence")
                   btc_text = "n/a" if btc is None else f"{btc:.3%}"
                   gpu_text = "n/a" if gpu is None else f"{gpu:.3%}"
+                  selector_diagnostics = metrics.get("selector_diagnostics", {})
+                  btc_diagnostics = json.dumps(selector_diagnostics.get("BTC", {}), sort_keys=True, separators=(",", ":"))
+                  gpu_diagnostics = json.dumps(selector_diagnostics.get("GPU", {}), sort_keys=True, separators=(",", ":"))
                   lines.append(
                       f"| {name} | {horizon}h | {metrics.get('genuine_model_pairs', metrics.get('pairs', 0))} | "
                       f"{metrics.get('persistence_fallback_pairs', 0)} | "
@@ -117,6 +120,7 @@ jobs:
                       f"{metrics.get('selector_rejection_fallback_pairs', 0)} | "
                       f"{metrics.get('btc_persistence_selector_fallbacks', 0)} | "
                       f"{metrics.get('gpu_persistence_selector_fallbacks', 0)} | "
+                      f"`{btc_diagnostics}` | `{gpu_diagnostics}` | "
                       f"{metrics.get('total_horizon_matched_origins', 0)} | "
                       f"{metrics.get('minimum_total_observations_for_horizon_validation', 'n/a')} | "
                       f"{skill_text} | {ci_text} | {btc_text} | {gpu_text} | "
