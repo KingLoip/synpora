@@ -705,16 +705,6 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
                     candidate_metrics["holdout_positive_blocks"] += int(
                         diagnostic.get("holdout_positive_blocks", 0))
                     candidate_metrics["holdout_blocks"] += int(diagnostic.get("holdout_blocks", 0))
-            for counters in selector_diagnostics.values():
-                for candidate_metrics in counters.get("best_candidate_metrics", {}).values():
-                    candidate_metrics["mean_training_skill"] = round(
-                        candidate_metrics["training_skill_sum"] / candidate_metrics["count"], 6)
-                    candidate_metrics["mean_holdout_skill"] = (
-                        round(candidate_metrics["holdout_skill_sum"] / candidate_metrics["holdout_skill_count"], 6)
-                        if candidate_metrics["holdout_skill_count"] else None)
-                    candidate_metrics.pop("training_skill_sum", None)
-                    candidate_metrics.pop("holdout_skill_sum", None)
-                    candidate_metrics.pop("holdout_skill_count", None)
             btc_weights_are_learned = any(name != "last_value" and weight > 1e-12
                                           for name, weight in btc_weights.items())
             gpu_weights_are_learned = any(name != "last_value" and weight > 1e-12
@@ -749,6 +739,16 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
                 pair_baseline.append(baseline_errors[strategy][-1])
             combined_errors.append(statistics.fmean(pair_model))
             combined_baseline_errors.append(statistics.fmean(pair_baseline))
+        for counters in selector_diagnostics.values():
+            for candidate_metrics in counters.get("best_candidate_metrics", {}).values():
+                candidate_metrics["mean_training_skill"] = round(
+                    candidate_metrics["training_skill_sum"] / candidate_metrics["count"], 6)
+                candidate_metrics["mean_holdout_skill"] = (
+                    round(candidate_metrics["holdout_skill_sum"] / candidate_metrics["holdout_skill_count"], 6)
+                    if candidate_metrics["holdout_skill_count"] else None)
+                candidate_metrics.pop("training_skill_sum", None)
+                candidate_metrics.pop("holdout_skill_sum", None)
+                candidate_metrics.pop("holdout_skill_count", None)
         pairs = len(combined_errors)
         model_mae = statistics.fmean(combined_errors) if pairs else None
         baseline_mae = statistics.fmean(combined_baseline_errors) if pairs else None
