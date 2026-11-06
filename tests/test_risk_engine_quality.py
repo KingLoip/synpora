@@ -35,13 +35,15 @@ class ForecastQualityTests(unittest.TestCase):
     def test_negative_site_tariff_is_valid(self):
         result = self._evaluate(-0.05)
         self.assertTrue(result["valid"])
-        self.assertEqual(result["status"], "validated")
+        self.assertEqual(result["status"], "data_ready_unvalidated")
+        self.assertTrue(any("independent 1h/6h/24h/72h" in warning for warning in result["warnings"]))
         self.assertFalse(any("negative" in warning.lower() for warning in result["warnings"]))
 
     def test_positive_site_tariff_is_valid(self):
         result = self._evaluate(0.25)
         self.assertTrue(result["valid"])
-        self.assertEqual(result["status"], "validated")
+        self.assertEqual(result["status"], "data_ready_unvalidated")
+        self.assertTrue(any("independent 1h/6h/24h/72h" in warning for warning in result["warnings"]))
 
     def test_tariff_below_supported_minimum_is_invalid(self):
         result = self._evaluate(-1.01)

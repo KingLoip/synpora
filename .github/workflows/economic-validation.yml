@@ -30,6 +30,7 @@ jobs:
       - name: Run independent empirical economic validation and enforce forecast gate
         env:
           GITHUB_EVENT_NAME: ${{ github.event_name }}
+          SYNPORA_SAVE_RAW_MARKET_HISTORY: "1"
         shell: bash
         run: |
           set -euo pipefail
@@ -45,8 +46,18 @@ jobs:
           gates = {}
           for name, result in report.get("results", {}).items():
               backtest = result["empirical_risk_aware_walk_forward"]
-              gate = dict(backtest["forecast_quality_gate"])
-              gate["actual_pairs"] = backtest.get("walk_forward_shrunk_forecast", {}).get("pairs", 0)
+              legacy_gate = dict(backtest.get("forecast_quality_gate", {}))
+              validation = backtest.get("production_corrected_horizon_validation", {})
+              horizon_gate = validation.get("release_gate", {})
+              one_hour = validation.get("horizons", {}).get("1", {})
+              gate = {
+                  "status": "pass" if horizon_gate.get("status") == "pass" else "blocked",
+                  "actual_pairs": one_hour.get("pairs", 0),
+                  "observed_mae_skill_vs_persistence": one_hour.get("mae_skill_vs_persistence"),
+                  "horizon_release_status": horizon_gate.get("status", "missing"),
+                  "ineligible_horizons_hours": horizon_gate.get("ineligible_horizons_hours", [1, 6, 24, 72]),
+                  "legacy_single_step_diagnostic": legacy_gate.get("status", "unknown"),
+              }
               gates[name] = gate
           blocked = {
               name: gate for name, gate in gates.items()
@@ -55,30 +66,35 @@ jobs:
           if not gates:
               blocked["missing_economic_scenarios"] = {"status": "missing"}
           investment = report.get("investment_readiness", {})
+          assumptions = report.get("assumptions", {})
           lines = [
               "# SYNPORA empirical economic validation",
               "",
-              f"- Forecast quality gate: **{'PASS' if not blocked else 'BLOCKED'}**",
+              f"- Production horizon release gate: **{'PASS' if not blocked else 'BLOCKED'}**",
               f"- Out-of-sample minimum pairs: 100",
               f"- Required MAE skill over persistence: 5%",
+              f"- Required forecast horizons: 1h, 6h, 24h and 72h must all pass independently",
               f"- Investment validation: **{investment.get('status', 'unknown')}**",
+              f"- BTC price external observations: {assumptions.get('btc_price_external_observations', 0)}",
+              f"- BTC network-hashrate external observations: {assumptions.get('network_hashrate_external_observations', 0)}",
+              f"- BTC difficulty external observations: {assumptions.get('difficulty_external_observations', 0)}",
               "",
-              "| Tariff scenario | Gate | Pairs | MAE skill vs persistence |",
-              "|---|---:|---:|---:|",
+              "| Tariff scenario | Horizon gate | 1h pairs | 1h MAE skill | Legacy diagnostic |",
+              "|---|---:|---:|---:|---:|",
           ]
           for name, gate in gates.items():
               skill = gate.get("observed_mae_skill_vs_persistence")
               skill_text = "n/a" if skill is None else f"{skill:.3%}"
               lines.append(
-                  f"| {name} | {gate.get('status')} | {gate.get('actual_pairs')} | {skill_text} |"
+                  f"| {name} | {gate.get('status')} | {gate.get('actual_pairs')} | {skill_text} | {gate.get('legacy_single_step_diagnostic')} |"
               )
           corrected = report.get("results", {})
           lines += [
               "",
               "## Horizon-aware production forecast validation",
               "",
-              "| Tariff scenario | Horizon | Pairs | MAE skill | 95% CI low | BTC skill | GPU skill | Eligible |",
-              "|---|---:|---:|---:|---:|---:|---:|---:|",
+              "| Tariff scenario | Horizon | Genuine OOS pairs | Fallbacks | History/separation fallbacks | Selector rejects | BTC persistence | GPU persistence | BTC selector diagnostics | GPU selector diagnostics | Total origins | History required | MAE skill | 95% CI low | BTC skill | GPU skill | Eligible |",
+              "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
           ]
           for name, result in corrected.items():
               backtest = result.get("empirical_risk_aware_walk_forward", {})
@@ -93,8 +109,20 @@ jobs:
                   gpu = per.get("AI Compute", {}).get("mae_skill_vs_persistence")
                   btc_text = "n/a" if btc is None else f"{btc:.3%}"
                   gpu_text = "n/a" if gpu is None else f"{gpu:.3%}"
+                  selector_diagnostics = metrics.get("selector_diagnostics", {})
+                  btc_diagnostics = json.dumps(selector_diagnostics.get("BTC", {}), sort_keys=True, separators=(",", ":"))
+                  gpu_diagnostics = json.dumps(selector_diagnostics.get("GPU", {}), sort_keys=True, separators=(",", ":"))
                   lines.append(
-                      f"| {name} | {horizon}h | {metrics.get('pairs', 0)} | "
+                      f"| {name} | {horizon}h | {metrics.get('genuine_model_pairs', metrics.get('pairs', 0))} | "
+                      f"{metrics.get('persistence_fallback_pairs', 0)} | "
+                      f"{metrics.get('skipped_insufficient_model_history', 0)}/"
+                      f"{metrics.get('persistence_fallback_due_insufficient_separated_origins', 0)} | "
+                      f"{metrics.get('selector_rejection_fallback_pairs', 0)} | "
+                      f"{metrics.get('btc_persistence_selector_fallbacks', 0)} | "
+                      f"{metrics.get('gpu_persistence_selector_fallbacks', 0)} | "
+                      f"`{btc_diagnostics}` | `{gpu_diagnostics}` | "
+                      f"{metrics.get('total_horizon_matched_origins', 0)} | "
+                      f"{metrics.get('minimum_total_observations_for_horizon_validation', 'n/a')} | "
                       f"{skill_text} | {ci_text} | {btc_text} | {gpu_text} | "
                       f"{metrics.get('release_eligible', False)} |"
                   )
@@ -109,7 +137,17 @@ jobs:
               with open(summary, "a", encoding="utf-8") as handle:
                   handle.write("\n".join(lines) + "\n")
           print("\n".join(lines))
-          if blocked and os.environ.get("GITHUB_EVENT_NAME") != "pull_request":
+          if blocked:
               print("Forecast quality gate is blocked; do not promote SYNPORA as a validated forecasting product.", file=sys.stderr)
               sys.exit(1)
           PY
+      - name: Upload short-lived economic validation diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synpora-economic-validation-${{ github.run_id }}
+          path: |
+            /tmp/synpora-economic-validation.json
+            /tmp/synpora-market-observations.json
+          if-no-files-found: warn
+          retention-days: 2

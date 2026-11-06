@@ -67,10 +67,16 @@ jobs:
       - name: Create and verify an isolated logical backup
         run: |
           set -euo pipefail
-          pg_dump --format=custom --no-owner --file=/tmp/synpora-recovery.dump synpora
+          # Use the same major client as the PostgreSQL 16 service. Newer pg_dump
+          # versions emit SET parameters (e.g. transaction_timeout) unsupported by PG16.
+          docker run --rm --network host -e PGPASSWORD=postgres -v /tmp:/backup postgres:16 \
+            pg_dump --host=127.0.0.1 --port=5432 --username=postgres \
+            --format=custom --no-owner --file=/backup/synpora-recovery.dump synpora
           test -s /tmp/synpora-recovery.dump
           createdb synpora_restore
-          pg_restore --dbname=synpora_restore --no-owner --exit-on-error /tmp/synpora-recovery.dump
+          docker run --rm --network host -e PGPASSWORD=postgres -v /tmp:/backup postgres:16 \
+            pg_restore --host=127.0.0.1 --port=5432 --username=postgres \
+            --dbname=synpora_restore --no-owner --exit-on-error /backup/synpora-recovery.dump
           original="$(psql -Atqc "SELECT id || ':' || marker FROM recovery_probe ORDER BY id")"
           restored="$(psql --dbname=synpora_restore -Atqc "SELECT id || ':' || marker FROM recovery_probe ORDER BY id")"
           test "$original" = "$restored"
