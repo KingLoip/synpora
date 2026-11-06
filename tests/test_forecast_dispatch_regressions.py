@@ -32,6 +32,17 @@ class ChronologicalForecastRegressionTests(unittest.TestCase):
         self.assertIn("10000 if compact else 500", source)
         self.assertIn('compact_payload["data_quality"]', source)
 
+    def test_mempool_live_hashrate_adapter_validates_units_and_provenance(self):
+        source = ast.get_source_segment(SOURCE, find_function("_mempool_network_observation"))
+        self.assertIn('raw.get("currentHashrate")', source)
+        self.assertIn("hashrate_hs / 1e18", source)
+        self.assertIn('raw.get("currentDifficulty")', source)
+        self.assertIn('"observed_at": float(now)', source)
+        adapter = ast.get_source_segment(SOURCE, find_function("_fetch_builtin_market_sources"))
+        self.assertIn("https://mempool.space/api/v1/mining/hashrate/1m", adapter)
+        self.assertIn('ttl_seconds=300, timeout=3, attempts=1', adapter)
+        self.assertIn('"Mempool.space live network hashrate API"', source)
+
     def test_adaptive_weights_use_rolling_origin_errors_on_inference_window(self):
         source = ast.get_source_segment(SOURCE, find_function("_adaptive_model_weights"))
         self.assertIn("history=y[max(0,target_idx-48):target_idx]", source)
