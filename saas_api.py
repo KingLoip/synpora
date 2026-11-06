@@ -987,6 +987,33 @@ def install(app):
             return parsed.timestamp()
         raise ValueError("Unsupported provider timestamp")
 
+    def _mempool_network_observation(raw, now):
+        """Validate Mempool's live network hashrate/difficulty response."""
+        import math
+        if not isinstance(raw, dict):
+            return {}
+        result = {}
+        try:
+            hashrate_hs = float(raw.get("currentHashrate"))
+            hashrate_eh = hashrate_hs / 1e18
+            if math.isfinite(hashrate_hs) and hashrate_hs > 0 and math.isfinite(hashrate_eh) and hashrate_eh > 0:
+                result["networkHashrate"] = {
+                    "value": hashrate_eh, "observed_at": float(now),
+                    "provider": "Mempool.space live network hashrate API",
+                }
+        except (TypeError, ValueError, OverflowError):
+            pass
+        try:
+            difficulty = float(raw.get("currentDifficulty"))
+            if math.isfinite(difficulty) and difficulty > 0:
+                result["difficulty"] = {
+                    "value": difficulty, "observed_at": float(now),
+                    "provider": "Mempool.space live network hashrate API",
+                }
+        except (TypeError, ValueError, OverflowError):
+            pass
+        return result
+
     def _fetch_builtin_market_sources(out):
         # Source adapters use public APIs with bounded caching and explicit provenance.
         import math, urllib.parse, urllib.error, logging
@@ -996,6 +1023,33 @@ def install(app):
         meta=out.setdefault("_fieldMeta",{})
         if os.getenv("SYNPORA_DISABLE_BUILTIN_MARKET_SOURCES","").strip().lower() in ("1","true","yes"):
             return out
+        # Mempool.space publishes a live network hashrate estimate and current
+        # difficulty. Validate the schema/units and retain the actual fetch time.
+        try:
+            mempool_url="https://mempool.space/api/v1/mining/hashrate/1m"
+            mempool_raw=_provider_json(
+                mempool_url, headers={"User-Agent":"SYNPORA/1.3.0","Accept":"application/json"},
+                ttl_seconds=300, timeout=3, attempts=1)
+            mempool_observed_at=_provider_json_cache_at.get(mempool_url, now)
+            mempool_observation=_mempool_network_observation(mempool_raw, mempool_observed_at)
+            for key in ("networkHashrate","difficulty"):
+                observation=mempool_observation.get(key)
+                if not observation:
+                    continue
+                existing=meta.get(key,{})
+                try:
+                    existing_age=now-float(existing.get("observed_at"))
+                    existing_fresh=(existing.get("source")=="external" and existing.get("valid",False)
+                                    and -60<=existing_age<=900)
+                except (TypeError,ValueError):
+                    existing_fresh=False
+                if not existing_fresh:
+                    out[key]=observation["value"]
+                    meta[key]={"source":"external","provider":observation["provider"],
+                        "source_url":mempool_url,"observed_at":observation["observed_at"],
+                        "age_seconds":round(max(0.0,now-observation["observed_at"]),1),"valid":True}
+        except Exception as exc:
+            logger.warning("Market provider %s failed (%s).", "mempool_network_hashrate", _provider_error_label(exc))
         # Timestamped public fallback for BTC hashprice if Startmining is unavailable or stale.
         try:
             hp_meta=meta.get("hashpriceUsd",{})
