@@ -614,7 +614,9 @@ def install(app):
                    "source":fields["gpu_l40s_usd_hour"].get("provider","pricing reference"),
                    "age_seconds":fields["gpu_l40s_usd_hour"].get("age_seconds")},
             "sources":sorted(set(["Startmining API (best effort)"]+
-                [fields[k].get("provider") for k in ("gpu_l40s_usd_hour","eur_usd","austria_spot_eur_kwh","site_energy_cost_eur_kwh")
+                [fields[k].get("provider") for k in (
+                    "btc_price_usd","btc_hashprice_usd_ph_day","btc_difficulty","network_hashrate_eh",
+                    "gpu_l40s_usd_hour","eur_usd","austria_spot_eur_kwh","site_energy_cost_eur_kwh")
                  if fields[k]["source"]=="external" and fields[k].get("provider")]+
                 (["Configured external market feed"] if ext.get("_configuredFeedAccepted") else []))),
             "data_quality":{"btc":"live_external" if fields["btc_price_usd"]["available"] else "missing",
@@ -650,7 +652,8 @@ def install(app):
               "gpu_platform_fee":ext.get("gpuPlatformFee",0.15),
               "source":"multi_provider_market_collection" if all_critical_external else "mixed_provider_market_collection",
               "providers":sorted(set([fields[k].get("provider") for k in
-                  ("btc_hashprice_usd_ph_day","gpu_l40s_usd_hour","eur_usd","austria_spot_eur_kwh","site_energy_cost_eur_kwh")
+                  ("btc_price_usd","btc_hashprice_usd_ph_day","btc_difficulty","network_hashrate_eh",
+                   "gpu_l40s_usd_hour","eur_usd","austria_spot_eur_kwh","site_energy_cost_eur_kwh")
                   if fields[k]["source"]=="external" and fields[k].get("provider")])),
               "data_quality":ext_quality}
         c=init_db()
