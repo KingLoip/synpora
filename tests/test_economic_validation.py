@@ -271,9 +271,29 @@ class EconomicValidationTests(unittest.TestCase):
 
     def test_corrected_forecast_guard_falls_back_to_persistence_without_five_percent_gain(self):
         flat = [10.0] * 60
-        weights = MODULE.corrected_forecast_weights(flat)
+        diagnostics = {}
+        weights = MODULE.corrected_forecast_weights(flat, diagnostics=diagnostics)
         self.assertEqual(weights["last_value"], 1.0)
         self.assertEqual(sum(weights.values()), 1.0)
+        self.assertEqual(diagnostics["rejection_reason"], "insufficient_history")
+        self.assertEqual(diagnostics["candidate_count"], 0)
+
+    def test_selector_diagnostics_explain_candidate_rejection_without_changing_forecast(self):
+        values = [10.0 + 0.001 * i + 0.2 * math.sin(i / 13.0) for i in range(5000)]
+        diagnostics = {}
+        weights = MODULE.corrected_forecast_weights(
+            values, sample_steps=12, interval_seconds=300, diagnostics=diagnostics)
+        self.assertIn(diagnostics["rejection_reason"], {
+            "persistence_best", "holdout_skill_below_5pct",
+            "holdout_block_instability", "selected",
+        })
+        self.assertGreaterEqual(diagnostics["training_origins"], 32)
+        self.assertGreaterEqual(diagnostics["candidate_count"], 8)
+        self.assertEqual(sum(weights.values()), 1.0)
+        if diagnostics["rejection_reason"] == "selected":
+            self.assertNotEqual(weights["last_value"], 1.0)
+        else:
+            self.assertEqual(weights["last_value"], 1.0)
 
     def test_validator_model_selection_matches_production_holdout_gate(self):
         source = inspect.getsource(MODULE.corrected_forecast_weights)
