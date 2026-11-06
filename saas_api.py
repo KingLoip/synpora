@@ -1080,7 +1080,8 @@ def install(app):
             mempool_raw=_provider_json(
                 mempool_url, headers={"User-Agent":"SYNPORA/1.3.0","Accept":"application/json"},
                 ttl_seconds=300, timeout=3, attempts=1)
-            mempool_observation=_mempool_network_observation(mempool_raw, now)
+            mempool_observed_at=_provider_json_cache_at.get(mempool_url, now)
+            mempool_observation=_mempool_network_observation(mempool_raw, mempool_observed_at)
             for key, source_key in (("networkHashrate","networkHashrate"),("difficulty","difficulty")):
                 observation=mempool_observation.get(source_key)
                 if not observation:
