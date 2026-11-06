@@ -46,6 +46,34 @@ class ChronologicalForecastRegressionTests(unittest.TestCase):
         self.assertIn('"btc_price_usd","btc_difficulty","network_hashrate_eh"', source)
         self.assertIn("required+optional", source)
 
+    def test_mempool_live_hashrate_adapter_validates_units_and_provenance(self):
+        node = find_function("_mempool_network_observation")
+        source = ast.get_source_segment(SOURCE, node)
+        adapter = ast.get_source_segment(SOURCE, find_function("_fetch_builtin_market_sources"))
+        self.assertIn('raw.get("currentHashrate")', source)
+        self.assertIn("hashrate_hs / 1e18", source)
+        self.assertIn('raw.get("currentDifficulty")', source)
+        self.assertIn('"observed_at": float(now)', source)
+        self.assertIn("https://mempool.space/api/v1/mining/hashrate/1m", adapter)
+        self.assertIn('_provider_json_cache_at.get(mempool_url, now)', adapter)
+        self.assertIn('ttl_seconds=300, timeout=3, attempts=1', adapter)
+        isolated = ast.Module(body=[node], type_ignores=[])
+        namespace = {}
+        exec(compile(ast.fix_missing_locations(isolated), "<mempool-adapter-test>", "exec"), namespace)
+        observe = namespace["_mempool_network_observation"]
+        result = observe({"currentHashrate": 1.02e21, "currentDifficulty": 148e12}, 1794000000.0)
+        self.assertAlmostEqual(result["networkHashrate"]["value"], 1020.0)
+        self.assertEqual(result["difficulty"]["value"], 148e12)
+        self.assertEqual(result["networkHashrate"]["observed_at"], 1794000000.0)
+        self.assertEqual(observe({"currentHashrate": -1, "currentDifficulty": "bad"}, 1.0), {})
+
+    def test_btc_network_provider_is_visible_in_market_provenance(self):
+        live = ast.get_source_segment(SOURCE, find_function("live_market"))
+        collect = ast.get_source_segment(SOURCE, find_function("collect_market"))
+        for field in ("btc_price_usd", "btc_hashprice_usd_ph_day", "btc_difficulty", "network_hashrate_eh"):
+            self.assertIn(field, live)
+            self.assertIn(field, collect)
+
 
 class DispatchSafetyRegressionTests(unittest.TestCase):
     def test_forecast_plan_marks_input_fallback_as_unverified(self):
