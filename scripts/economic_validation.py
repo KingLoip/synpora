@@ -691,13 +691,14 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
                     best_counts = counters.setdefault("best_candidate_counts", {})
                     best_counts[candidate] = best_counts.get(candidate, 0) + 1
                     candidate_metrics = counters.setdefault("best_candidate_metrics", {}).setdefault(
-                        candidate, {"count": 0, "training_skill_sum": 0.0,
+                        candidate, {"count": 0, "training_skill_sum": 0.0, "training_skill_count": 0,
                                     "holdout_skill_sum": 0.0, "holdout_skill_count": 0,
                                     "holdout_positive_blocks": 0, "holdout_blocks": 0})
                     candidate_metrics["count"] += 1
                     training_skill = diagnostic.get("best_training_skill")
                     if training_skill is not None:
                         candidate_metrics["training_skill_sum"] += float(training_skill)
+                        candidate_metrics["training_skill_count"] += 1
                     holdout_skill = diagnostic.get("holdout_skill")
                     if holdout_skill is not None:
                         candidate_metrics["holdout_skill_sum"] += float(holdout_skill)
@@ -741,12 +742,14 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
             combined_baseline_errors.append(statistics.fmean(pair_baseline))
         for counters in selector_diagnostics.values():
             for candidate_metrics in counters.get("best_candidate_metrics", {}).values():
-                candidate_metrics["mean_training_skill"] = round(
-                    candidate_metrics["training_skill_sum"] / candidate_metrics["count"], 6)
+                candidate_metrics["mean_training_skill"] = (
+                    round(candidate_metrics["training_skill_sum"] / candidate_metrics["training_skill_count"], 6)
+                    if candidate_metrics["training_skill_count"] else None)
                 candidate_metrics["mean_holdout_skill"] = (
                     round(candidate_metrics["holdout_skill_sum"] / candidate_metrics["holdout_skill_count"], 6)
                     if candidate_metrics["holdout_skill_count"] else None)
                 candidate_metrics.pop("training_skill_sum", None)
+                candidate_metrics.pop("training_skill_count", None)
                 candidate_metrics.pop("holdout_skill_sum", None)
                 candidate_metrics.pop("holdout_skill_count", None)
         pairs = len(combined_errors)
