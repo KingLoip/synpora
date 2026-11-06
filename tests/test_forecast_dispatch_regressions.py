@@ -32,6 +32,17 @@ class ChronologicalForecastRegressionTests(unittest.TestCase):
         self.assertIn("10000 if compact else 500", source)
         self.assertIn('compact_payload["data_quality"]', source)
 
+    def test_production_selector_uses_btc_price_trend_with_network_hold_candidate(self):
+        selector = ast.get_source_segment(SOURCE, find_function("_adaptive_horizon_weights"))
+        forecast = ast.get_source_segment(SOURCE, find_function("_ensemble_forecast"))
+        confidence = ast.get_source_segment(SOURCE, find_function("_ensemble_confidence"))
+        for source in (selector, forecast, confidence):
+            self.assertIn("btc_price_trend_network_hold", source)
+            self.assertIn("network_damping=0.0", source)
+        structural = ast.get_source_segment(SOURCE, find_function("_btc_price_network_candidate"))
+        self.assertIn("network_damped_hours", structural)
+        self.assertIn("price_damped_hours", structural)
+
     def test_btc_network_data_provider_is_visible_in_market_provenance(self):
         live = ast.get_source_segment(SOURCE, find_function("live_market"))
         collect = ast.get_source_segment(SOURCE, find_function("collect_market"))
