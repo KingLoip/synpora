@@ -391,7 +391,7 @@ def _horizon_candidate_values(values, origin, sample_steps, interval_seconds):
 
 
 def _btc_price_network_candidate(hashprice_values, price_values, network_values,
-                                 origin, sample_steps, interval_seconds):
+                                 origin, sample_steps, interval_seconds, network_damping=0.25):
     """Structural hashprice candidate from BTC price and network hash rate/difficulty."""
     interval = max(1.0, float(interval_seconds))
     recent_steps = max(2, round(48.0 * 3600.0 / interval))
@@ -403,16 +403,17 @@ def _btc_price_network_candidate(hashprice_values, price_values, network_values,
             or any(v is None or not math.isfinite(float(v)) or float(v) <= 0 for v in network_history)):
         return None
     horizon_hours = max(0.0, float(sample_steps) * interval / 3600.0)
-    damped_hours = min(horizon_hours, 24.0) * 0.25
+    price_damped_hours = min(horizon_hours, 24.0) * 0.25
+    network_damped_hours = min(horizon_hours, 24.0) * max(0.0, min(1.0, float(network_damping)))
 
-    def damped(series):
+    def damped(series, damped_hours):
         logs = [math.log(float(v)) for v in series]
         elapsed_hours = max(1e-9, (len(logs) - 1) * interval / 3600.0)
         slope = (logs[-1] - logs[0]) / elapsed_hours
         return math.exp(max(-50.0, min(50.0, logs[-1] + slope * damped_hours)))
 
-    predicted_price = damped(price_history)
-    predicted_network = damped(network_history)
+    predicted_price = damped(price_history, price_damped_hours)
+    predicted_network = damped(network_history, network_damped_hours)
     current_price = float(price_values[origin])
     current_network = float(network_values[origin])
     current_hashprice = float(hashprice_values[origin])
@@ -433,7 +434,8 @@ def corrected_forecast_weights(values, sample_steps=1, interval_seconds=300.0, l
         and all(v is not None and math.isfinite(float(v)) and float(v) > 0 for v in btc_price_values)
         and all(v is not None and math.isfinite(float(v)) and float(v) > 0 for v in network_values)
     )
-    names = direct_names + (("btc_price_network_structural",) if exogenous_ready else ())
+    structural_names = ("btc_price_network_structural", "btc_price_trend_network_hold")
+    names = direct_names + (structural_names if exogenous_ready else ())
     fallback = {name: (1.0 if name == "last_value" else 0.0) for name in names}
     def record_diagnostic(reason, **values):
         if diagnostics is not None:
@@ -456,9 +458,15 @@ def corrected_forecast_weights(values, sample_steps=1, interval_seconds=300.0, l
                           for name, value in candidates.items()}
         if exogenous_ready:
             structural = _btc_price_network_candidate(
-                values, btc_price_values, network_values, origin, sample_steps, interval)
+                values, btc_price_values, network_values, origin, sample_steps, interval,
+                network_damping=0.25)
+            network_hold = _btc_price_network_candidate(
+                values, btc_price_values, network_values, origin, sample_steps, interval,
+                network_damping=0.0)
             if structural is not None:
                 candidates["btc_price_network_structural"] = structural
+            if network_hold is not None:
+                candidates["btc_price_trend_network_hold"] = network_hold
         actual = float(values[origin + sample_steps])
         for name in names:
             if name in candidates:
@@ -527,11 +535,18 @@ def corrected_forecast_value(values, weights, horizon_hours, interval_seconds, l
     if log_scale:
         candidates = {name: math.exp(max(-50.0, min(50.0, value)))
                       for name, value in candidates.items()}
-    if "btc_price_network_structural" in weights and btc_price_values is not None and network_values is not None:
-        structural = _btc_price_network_candidate(
-            values, btc_price_values, network_values, len(values) - 1, sample_steps, interval)
-        if structural is not None:
-            candidates["btc_price_network_structural"] = structural
+    if any(name in weights for name in ("btc_price_network_structural", "btc_price_trend_network_hold")):
+        if btc_price_values is not None and network_values is not None:
+            structural = _btc_price_network_candidate(
+                values, btc_price_values, network_values, len(values) - 1, sample_steps, interval,
+                network_damping=0.25)
+            network_hold = _btc_price_network_candidate(
+                values, btc_price_values, network_values, len(values) - 1, sample_steps, interval,
+                network_damping=0.0)
+            if structural is not None:
+                candidates["btc_price_network_structural"] = structural
+            if network_hold is not None:
+                candidates["btc_price_trend_network_hold"] = network_hold
     return max(0.0, sum(weights[name] * candidates.get(name, float(values[-1])) for name in weights))
 
 
