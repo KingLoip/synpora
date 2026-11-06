@@ -423,7 +423,7 @@ def _btc_price_network_candidate(hashprice_values, price_values, network_values,
 
 
 def corrected_forecast_weights(values, sample_steps=1, interval_seconds=300.0, log_scale=False,
-                                btc_price_values=None, network_values=None):
+                                btc_price_values=None, network_values=None, diagnostics=None):
     """Select same-horizon candidates on horizon-spaced past-only origins and a strict holdout."""
     direct_names = ("recent_mean", "last_value", "trend", "mean_24", "median_24",
                     "seasonal_24h", "seasonal_168h", "ewma_02", "ewma_05")
@@ -435,11 +435,16 @@ def corrected_forecast_weights(values, sample_steps=1, interval_seconds=300.0, l
     )
     names = direct_names + (("btc_price_network_structural",) if exogenous_ready else ())
     fallback = {name: (1.0 if name == "last_value" else 0.0) for name in names}
+    def record_diagnostic(reason, **values):
+        if diagnostics is not None:
+            diagnostics.clear()
+            diagnostics.update({"rejection_reason": reason, **values})
     interval = max(1.0, float(interval_seconds))
     weekly_steps = max(1, round(168.0 * 3600.0 / interval))
     origin_stride = max(1, math.ceil(sample_steps / 8))
     minimum_training_origins = 32  # 24 fit origins plus 8 chronological holdout origins
     if sample_steps < 1 or len(values) < weekly_steps + sample_steps + minimum_training_origins * origin_stride:
+        record_diagnostic("insufficient_history", training_origins=0, candidate_count=0)
         return fallback
     model_values = [math.log(max(float(v), 1e-12)) for v in values] if log_scale else [float(v) for v in values]
     errors = {name: [] for name in names}
@@ -461,9 +466,17 @@ def corrected_forecast_weights(values, sample_steps=1, interval_seconds=300.0, l
     count = len(errors["last_value"])
     split = int(count * 0.75)
     if split < 24 or count - split < 8:
+        record_diagnostic("insufficient_training_origins", training_origins=count, candidate_count=0)
         return fallback
     train_maes = {name: statistics.fmean(series[:split]) for name, series in errors.items()}
     best = min(train_maes, key=train_maes.get)
+    baseline_train_mae = train_maes["last_value"]
+    best_training_skill = (1.0 - train_maes[best] / baseline_train_mae
+                           if baseline_train_mae > 1e-12 else None)
+    holdout_skill = None
+    positive_blocks = 0
+    evaluated_blocks = 0
+    rejection_reason = "persistence_best" if best == "last_value" else "holdout_rejected"
     if best != "last_value":
         # Match the production selector exactly: model choice is trained on the
         # first 75% of the up to 120 horizon-spaced origins with no more than eight overlapping windows per horizon, then retained only
@@ -482,13 +495,25 @@ def corrected_forecast_weights(values, sample_steps=1, interval_seconds=300.0, l
         for block in range(4):
             start = block * block_size
             end = len(valid_model) if block == 3 else min(len(valid_model), (block + 1) * block_size)
-            if (end <= start
-                    or statistics.fmean(valid_model[start:end])
-                    >= statistics.fmean(valid_base[start:end])):
+            evaluated_blocks += 1
+            if (end > start and statistics.fmean(valid_model[start:end])
+                    < statistics.fmean(valid_base[start:end])):
+                positive_blocks += 1
+            else:
                 stable = False
-                break
         if holdout_skill is None or holdout_skill < 0.05 or not stable:
             best = "last_value"
+            rejection_reason = ("holdout_skill_below_5pct" if holdout_skill is None or holdout_skill < 0.05
+                                else "holdout_block_instability")
+        else:
+            rejection_reason = "selected"
+    record_diagnostic(
+        rejection_reason, training_origins=count, candidate_count=len(names),
+        best_candidate=min(train_maes, key=train_maes.get),
+        best_training_skill=round(best_training_skill, 6) if best_training_skill is not None else None,
+        holdout_skill=round(holdout_skill, 6) if holdout_skill is not None else None,
+        holdout_positive_blocks=positive_blocks, holdout_blocks=evaluated_blocks,
+    )
     return {name: (1.0 if name == best else 0.0) for name in names}
 
 
@@ -586,6 +611,7 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
         selector_rejection_fallback_pairs = 0
         btc_persistence_selector_fallbacks = 0
         gpu_persistence_selector_fallbacks = 0
+        selector_diagnostics = {"BTC": {}, "GPU": {}}
         origin_stride = max(1, len(rows) // 200)
         for i in range(23, len(rows) - 1, origin_stride):
             decision = rows[i]
@@ -634,10 +660,14 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
                     network_values = None
                 if not all(v is not None and v > 0 for v in btc_price_values):
                     btc_price_values = None
+                btc_selector_diagnostic = {}
+                gpu_selector_diagnostic = {}
                 btc_weights = corrected_forecast_weights(
                     btc_values, sample_steps, interval_seconds, log_scale=True,
-                    btc_price_values=btc_price_values, network_values=network_values)
-                gpu_weights = corrected_forecast_weights(gpu_values, sample_steps, interval_seconds)
+                    btc_price_values=btc_price_values, network_values=network_values,
+                    diagnostics=btc_selector_diagnostic)
+                gpu_weights = corrected_forecast_weights(
+                    gpu_values, sample_steps, interval_seconds, diagnostics=gpu_selector_diagnostic)
                 cached_forecast = (
                     corrected_forecast_value(
                         btc_values, btc_weights, horizon, interval_seconds, log_scale=True,
@@ -646,9 +676,20 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
                         gpu_values, gpu_weights, horizon, interval_seconds),
                     btc_weights,
                     gpu_weights,
+                    btc_selector_diagnostic,
+                    gpu_selector_diagnostic,
                 )
                 _PRODUCTION_FORECAST_CACHE[cache_key] = cached_forecast
-            btc_forecast, gpu_forecast, btc_weights, gpu_weights = cached_forecast
+            (btc_forecast, gpu_forecast, btc_weights, gpu_weights,
+             btc_selector_diagnostic, gpu_selector_diagnostic) = cached_forecast
+            for series_name, diagnostic in (("BTC", btc_selector_diagnostic), ("GPU", gpu_selector_diagnostic)):
+                reason = diagnostic.get("rejection_reason", "unknown")
+                counters = selector_diagnostics[series_name]
+                counters[reason] = counters.get(reason, 0) + 1
+                candidate = diagnostic.get("best_candidate")
+                if candidate:
+                    best_counts = counters.setdefault("best_candidate_counts", {})
+                    best_counts[candidate] = best_counts.get(candidate, 0) + 1
             btc_weights_are_learned = any(name != "last_value" and weight > 1e-12
                                           for name, weight in btc_weights.items())
             gpu_weights_are_learned = any(name != "last_value" and weight > 1e-12
@@ -725,6 +766,7 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
             "selector_rejection_fallback_pairs": selector_rejection_fallback_pairs,
             "btc_persistence_selector_fallbacks": btc_persistence_selector_fallbacks,
             "gpu_persistence_selector_fallbacks": gpu_persistence_selector_fallbacks,
+            "selector_diagnostics": selector_diagnostics,
             "minimum_genuine_oos_pairs": 100,
             "skipped_nonmatching_horizon": skipped,
             "skipped_insufficient_model_history": insufficient_history_skipped,
