@@ -416,6 +416,15 @@ jobs:
           external_forecast=c.post(f"/api/v1/farms/{farm}/forecast-plan",headers=h,json={"horizon_hours":3})
           assert external_forecast.status_code==200, external_forecast.text
           assert all(v["samples"]==1 for v in external_forecast.json()["models"].values()), external_forecast.json()["models"]
+          # Fresh/provenance-verified market data must never be represented as empirically validated dispatch.
+          dispatch=c.post(f"/api/v1/farms/{farm}/dispatch-plan",headers=h,json={"horizon_hours":24})
+          assert dispatch.status_code==200, dispatch.text
+          dispatch_quality=dispatch.json()["forecast_quality"]
+          assert dispatch_quality["status"] in {"unvalidated","degraded"}, dispatch_quality
+          assert dispatch_quality["empirical_forecast_release_gate"]["status"]=="blocked", dispatch_quality
+          if dispatch.json()["forecast_source"]=="adaptive_market_with_site_tariff_input":
+              assert dispatch_quality["status"]=="unvalidated", dispatch_quality
+              assert dispatch_quality["market_data_status"]=="fresh_and_provenance_verified", dispatch_quality
           settled=c.post(f"/api/v1/farms/{farm}/learning/update",headers=h)
           assert settled.status_code==200, settled.text
           sb=settled.json()
