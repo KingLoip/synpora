@@ -2895,10 +2895,12 @@ def install(app):
         summary["net_value_eur"]=round(summary["total_value_eur"],2)
         summary["battery_degradation_cost_eur"]=round(summary["battery_discharge_kwh"]*max(0.0,x.battery_degradation_eur_kwh),3)
         summary["net_value_eur"]=round(summary["net_value_eur"]-summary["battery_degradation_cost_eur"],2)
-        dispatch_quality={"status":"validated" if forecast_source=="adaptive_market_with_site_tariff_input" else "degraded",
+        dispatch_quality={"status":"unvalidated" if forecast_source=="adaptive_market_with_site_tariff_input" else "degraded",
+                          "empirical_forecast_release_gate":{"status":"blocked","reason":"No independently validated all-horizon release result is persisted for this production model revision."},
+                          "market_data_status":"fresh_and_provenance_verified" if forecast_source=="adaptive_market_with_site_tariff_input" else "fallback_unverified",
                           "market_snapshot_freshness":snapshot_freshness,
                           "pv_profile_method":"flat_allocation_of_user_supplied_horizon_total",
-                          "warnings":forecast_warnings+["Hourly PV distribution is a flat allocation of the supplied horizon total; it is not a site-specific PV forecast."]}
+                          "warnings":forecast_warnings+["Forecast freshness and provenance do not establish empirical forecast validation.","Hourly PV distribution is a flat allocation of the supplied horizon total; it is not a site-specific PV forecast."]}
         return {"farm_id":farm_id,"horizon_hours":hours,"interval_hours":dt,"plan":plan,"soc_trace":trace,"forecasts":{"btc_hashprice_usd_ph_day":btc_fc,"gpu_hourly_usd":gpu_fc,"energy_cost_eur_kwh":energy_fc},"summary":{k:round(v,3) if isinstance(v,float) else v for k,v in summary.items()},"constraints":{"battery_reserve_pct":reserve,"battery_capacity_kwh":cap,"battery_power_kw":power,"charge_efficiency":ce,"discharge_efficiency":de},"forecast_source":forecast_source,"forecast_quality":dispatch_quality,"optimizer":"forecast_aware_horizon_v2","objective":"maximize_expected_value_with_battery_opportunity_cost","recommendation_only":True,"hardware_write":False}
 
     @app.post("/api/v1/farms/{farm_id}/scenario")
