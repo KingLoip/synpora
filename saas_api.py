@@ -804,6 +804,10 @@ def install(app):
         pool_fee: float=0.02
         tax_rate: float=0.0
 
+    class RegretAnalysisIn(ScenarioIn):
+        samples: int=1000
+        seed: int=42
+
     def _validate_numeric_inputs(x):
         # Reject NaN/Infinity and impossible physical/financial inputs before they
         # can silently become misleading recommendations or non-JSON responses.
@@ -3363,20 +3367,25 @@ def install(app):
                 "recommendation_only":True,"hardware_write":False}
 
     @app.post("/api/v1/farms/{farm_id}/regret-analysis")
-    def regret_analysis(farm_id:str,x:ScenarioIn,authorization:str|None=Header(default=None)):
+    def regret_analysis(farm_id:str,x:RegretAnalysisIn,authorization:str|None=Header(default=None)):
         uid=user(authorization); c=init_db()
         if not c.execute("SELECT 1 FROM synpora_saas_farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
         import random
-        n=max(100,min(5000,int(x.samples))); rng=random.Random(int(x.seed)); strategies=list(_economics(x).keys()); regret={k:[] for k in strategies}; winners={k:0 for k in strategies}
+        n=max(100,min(5000,int(x.samples))); rng=random.Random(int(x.seed))
+        btc_sigma=0.20; gpu_sigma=0.20; energy_sigma=0.13
+        strategies=list(_economics(x).keys()); regret={k:[] for k in strategies}; winners={k:0 for k in strategies}
         for _ in range(n):
-            s=x.model_copy(update={"btc_hashprice_usd_ph_day":x.btc_hashprice_usd_ph_day*rng.lognormvariate(-0.5*.20**2,.20),"gpu_hourly_usd":x.gpu_hourly_usd*rng.lognormvariate(-0.5*.20**2,.20),"energy_cost_eur_kwh":x.energy_cost_eur_kwh*rng.lognormvariate(-0.5*.13**2,.13)})
+            s=x.model_copy(update={
+                "btc_hashprice_usd_ph_day":x.btc_hashprice_usd_ph_day*rng.lognormvariate(-0.5*btc_sigma*btc_sigma,btc_sigma),
+                "gpu_hourly_usd":x.gpu_hourly_usd*rng.lognormvariate(-0.5*gpu_sigma*gpu_sigma,gpu_sigma),
+                "energy_cost_eur_kwh":x.energy_cost_eur_kwh*rng.lognormvariate(-0.5*energy_sigma*energy_sigma,energy_sigma)})
             vals=_economics(s); optimum=max(vals.values())
             for k in strategies: regret[k].append(max(0,optimum-vals[k]))
             winners[max(vals,key=vals.get)]+=1
         out={}
         for k in strategies:
             rs=sorted(regret[k]); mean=sum(rs)/n; p95=rs[min(n-1,int(.95*n))]; out[k]={"mean_regret_eur_kwh":round(mean,5),"p95_regret_eur_kwh":round(p95,5),"max_regret_eur_kwh":round(rs[-1],5),"winner_probability":round(winners[k]/n,4)}
-        safest=min(out,key=lambda k:out[k]["p95_regret_eur_kwh"]); return {"farm_id":farm_id,"samples":n,"seed":int(x.seed),"strategies":out,"lowest_tail_regret":safest,"method":"stochastic_regret_analysis","recommendation_only":True}
+        safest=min(out,key=lambda k:out[k]["p95_regret_eur_kwh"]); return {"farm_id":farm_id,"samples":n,"seed":int(x.seed),"strategies":out,"lowest_tail_regret":safest,"method":"stochastic_regret_analysis","shock_model":{"btc_sigma":btc_sigma,"gpu_sigma":gpu_sigma,"energy_sigma":energy_sigma,"mean_preserving":True},"recommendation_only":True,"hardware_write":False}
 
     class BacktestIn(BaseModel):
         min_samples: int=24
