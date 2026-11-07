@@ -242,6 +242,10 @@ jobs:
           assert extreme_energy.status_code==422, extreme_energy.text
           invalid_shock=c.post(f"/api/v1/farms/{farm}/risk-analysis",headers=h,json={"shock_pct":1.0})
           assert invalid_shock.status_code==422, invalid_shock.text
+          regret=c.post(f"/api/v1/farms/{farm}/regret-analysis",headers=h,json={"samples":100,"seed":7})
+          assert regret.status_code==200, regret.text
+          assert regret.json()["shock_model"]=={"btc_sigma":0.2,"gpu_sigma":0.2,"energy_sigma":0.13,"mean_preserving":True}, regret.json()
+          assert regret.json()["recommendation_only"] is True and regret.json()["hardware_write"] is False, regret.json()
           invalid_soc=c.post(f"/api/v1/farms/{farm}/dispatch-plan",headers=h,json={"battery_soc_pct":101})
           assert invalid_soc.status_code==422, invalid_soc.text
           # Loss-making compute/mining must stay negative rather than being hidden as break-even.
@@ -416,6 +420,15 @@ jobs:
           external_forecast=c.post(f"/api/v1/farms/{farm}/forecast-plan",headers=h,json={"horizon_hours":3})
           assert external_forecast.status_code==200, external_forecast.text
           assert all(v["samples"]==1 for v in external_forecast.json()["models"].values()), external_forecast.json()["models"]
+          # Fresh/provenance-verified market data must never be represented as empirically validated dispatch.
+          dispatch=c.post(f"/api/v1/farms/{farm}/dispatch-plan",headers=h,json={"horizon_hours":24})
+          assert dispatch.status_code==200, dispatch.text
+          dispatch_quality=dispatch.json()["forecast_quality"]
+          assert dispatch_quality["status"] in {"unvalidated","degraded"}, dispatch_quality
+          assert dispatch_quality["empirical_forecast_release_gate"]["status"]=="blocked", dispatch_quality
+          if dispatch.json()["forecast_source"]=="adaptive_market_with_site_tariff_input":
+              assert dispatch_quality["status"]=="unvalidated", dispatch_quality
+              assert dispatch_quality["market_data_status"]=="fresh_and_provenance_verified", dispatch_quality
           settled=c.post(f"/api/v1/farms/{farm}/learning/update",headers=h)
           assert settled.status_code==200, settled.text
           sb=settled.json()
