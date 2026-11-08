@@ -319,6 +319,47 @@ class EconomicValidationTests(unittest.TestCase):
         self.assertEqual(result["model_history_required_observations"], 840 + 30 + 32 * 4)
         self.assertEqual(result["minimum_total_observations_for_horizon_validation"], 840 + 60 + 32 * 4)
 
+    def test_btc_network_proxy_uses_difficulty_only_as_explicit_fallback(self):
+        rows = [{"network_hashrate": None, "btc_difficulty": 100.0 + i}
+                for i in range(40)]
+        values, source = MODULE.select_btc_network_proxy(rows)
+        self.assertEqual(source, "btc_difficulty_proxy")
+        self.assertEqual(values, [100.0 + i for i in range(40)])
+        rows[0]["network_hashrate"] = 500.0
+        values, source = MODULE.select_btc_network_proxy(rows)
+        self.assertEqual(source, "btc_difficulty_proxy")
+        complete_hashrate = [{"network_hashrate": 500.0 + i, "btc_difficulty": 100.0 + i}
+                             for i in range(40)]
+        values, source = MODULE.select_btc_network_proxy(complete_hashrate)
+        self.assertEqual(source, "network_hashrate")
+
+    def test_btc_selector_diagnostics_identify_difficulty_proxy_provenance(self):
+        values = [10.0 + 0.001 * i + 0.2 * math.sin(i / 13.0) for i in range(5000)]
+        prices = [60000.0 * math.exp(0.0001 * i + 0.01 * math.sin(i / 25.0))
+                  for i in range(5000)]
+        difficulty = [100.0] * 5000
+        diagnostics = {}
+        MODULE.corrected_forecast_weights(
+            values, sample_steps=12, interval_seconds=300, log_scale=True,
+            btc_price_values=prices, network_values=difficulty,
+            diagnostics=diagnostics, network_source="btc_difficulty_proxy")
+        self.assertEqual(diagnostics["network_proxy_source"], "btc_difficulty_proxy")
+
+    def test_release_blockers_explain_data_and_selector_failures_without_relaxing_gate(self):
+        blockers = MODULE.forecast_release_blockers(
+            pairs=0, skill=None, ci={"lower_95": None}, nonnegative=False,
+            persistence_fallback_pairs=190, insufficient_separated_origin_fallbacks=94)
+        self.assertIn("fewer_than_100_genuine_oos_pairs", blockers)
+        self.assertIn("insufficient_horizon_separated_training_history", blockers)
+        self.assertIn("btc_or_gpu_selector_fell_back_to_persistence", blockers)
+        self.assertIn("mae_skill_below_5pct_or_unavailable", blockers)
+        self.assertIn("bootstrap_lower_95_not_positive", blockers)
+        self.assertIn("at_least_one_strategy_has_negative_or_unavailable_skill", blockers)
+        passing = MODULE.forecast_release_blockers(
+            pairs=120, skill=0.08, ci={"lower_95": 0.01}, nonnegative=True,
+            persistence_fallback_pairs=0, insufficient_separated_origin_fallbacks=0)
+        self.assertEqual(passing, [])
+
     def test_oos_history_projection_estimates_data_lower_bound_without_changing_release_gate(self):
         result = MODULE.oos_history_projection(
             72, 722, current_observations=3183, evaluation_origin_stride=15,
