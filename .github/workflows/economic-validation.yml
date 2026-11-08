@@ -93,7 +93,7 @@ jobs:
               "",
               "## Horizon-aware production forecast validation",
               "",
-              "| Tariff scenario | Horizon | OOS spacing (h) | Non-overlap | Bootstrap block (h) | Genuine OOS pairs | Fallbacks | History/separation fallbacks | Selector rejects | BTC persistence | GPU persistence | BTC selector diagnostics | GPU selector diagnostics | Total origins | History required | Additional observations for 100 OOS pairs* | Additional days* | MAE skill | 95% CI low | BTC skill | GPU skill | Release blockers | Eligible |",
+              "| Tariff scenario | Horizon | OOS spacing (h) | Non-overlap | Bootstrap block (h) | Genuine OOS pairs | Fallbacks | History/separation fallbacks | Selector rejects | BTC persistence | GPU persistence | BTC selector diagnostics | GPU selector diagnostics | Total origins | Total observations for 100 non-overlapping OOS pairs* | Additional observations for 100 OOS pairs* | Additional days* | MAE skill | 95% CI low | BTC skill | GPU skill | Release blockers | Eligible |",
               "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|",
               "",
               "*Data-volume lower bound only. It does not imply that candidate selection, MAE skill, confidence intervals, or release approval will pass.",
@@ -128,7 +128,7 @@ jobs:
                       f"{metrics.get('gpu_persistence_selector_fallbacks', 0)} | "
                       f"`{btc_diagnostics}` | `{gpu_diagnostics}` | "
                       f"{metrics.get('total_horizon_matched_origins', 0)} | "
-                      f"{metrics.get('minimum_total_observations_for_horizon_validation', 'n/a')} | "
+                      f"{metrics.get('minimum_total_observations_for_100_nonoverlapping_oos_pairs', 'n/a')} | "
                       f"{metrics.get('history_growth_projection', {}).get('additional_observations_estimate', 'n/a')} | "
                       f"{metrics.get('history_growth_projection', {}).get('estimated_additional_days_at_current_cadence', 'n/a')} | "
                       f"{skill_text} | {ci_text} | {btc_text} | {gpu_text} | "
