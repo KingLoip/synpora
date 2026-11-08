@@ -33,6 +33,8 @@ class ChronologicalForecastRegressionTests(unittest.TestCase):
         self.assertIn('compact_payload["data_quality"]', source)
         self.assertIn('compact_payload["network_hashrate_history"]', source)
         self.assertIn('compact_payload["network_hashrate_history_source"]', source)
+        self.assertIn("history_included=False", source)
+        self.assertIn("if candidate_history and not history_included", source)
 
     def test_production_selector_uses_btc_price_trend_with_network_hold_candidate(self):
         selector = ast.get_source_segment(SOURCE, find_function("_adaptive_horizon_weights"))
