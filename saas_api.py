@@ -2383,7 +2383,8 @@ def install(app):
         return max(0.0,current_hashprice*(predicted_price/current_price)*(current_network/predicted_network))
 
     def _adaptive_horizon_weights(values, sample_steps, interval_seconds=300.0,
-                                  log_scale=False, btc_price_values=None, network_values=None):
+                                  log_scale=False, btc_price_values=None, network_values=None,
+                                  network_source="unavailable"):
         import math
         import statistics
         direct_names=("recent_mean","last_value","trend","mean_24","median_24",
@@ -2465,13 +2466,18 @@ def install(app):
         log_scale=series_key=="btc"
         price_values=[r[4] for r in valid] if series_key=="btc" else None
         network_values=None
+        network_source="unavailable"
         if series_key=="btc":
             hashrate=[r[5] for r in valid]
             difficulty=[r[6] for r in valid]
-            if all(v is not None and float(v)>0 for v in hashrate):
+            if hashrate and all(v is not None and float(v)>0 for v in hashrate):
                 network_values=hashrate
-            elif all(v is not None and float(v)>0 for v in difficulty):
+                network_source="network_hashrate"
+            elif difficulty and all(v is not None and float(v)>0 for v in difficulty):
+                # Difficulty is a slower protocol-adjusted proxy, not an observed
+                # high-frequency network-hashrate series. Keep its provenance explicit.
                 network_values=difficulty
+                network_source="btc_difficulty_proxy"
         model_values=[math.log(max(v,1e-12)) for v in y] if log_scale else y
         weights_by_horizon={}
         training_ready_by_horizon={}
@@ -2483,7 +2489,7 @@ def install(app):
             minimum_history=weekly_steps+sample_steps+minimum_training_origins*max(1,math.ceil(sample_steps/8))
             training_ready_by_horizon[str(h)]=len(y)>=minimum_history
             weights=_adaptive_horizon_weights(y,sample_steps,interval_seconds,log_scale=log_scale,
-                btc_price_values=price_values,network_values=network_values)
+                btc_price_values=price_values,network_values=network_values,network_source=network_source)
             candidates=_horizon_candidate_values(model_values,len(y)-1,sample_steps,interval_seconds)
             if log_scale:
                 candidates={name:math.exp(max(-50.0,min(50.0,value))) for name,value in candidates.items()}
@@ -2508,6 +2514,7 @@ def install(app):
                     "btc_exogenous_fields_used":bool(price_values is not None and network_values is not None
                         and all(v is not None and float(v)>0 for v in price_values)
                         and all(v is not None and float(v)>0 for v in network_values)),
+                    "btc_network_proxy_source":network_source if series_key=="btc" else None,
                     "weights_by_horizon":weights_by_horizon}
 
     def _model_select(c):
