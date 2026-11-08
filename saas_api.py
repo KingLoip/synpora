@@ -2120,6 +2120,10 @@ def install(app):
                 compact_payload["data_quality"]={"fields":{
                     key:fields.get(key) for key in required+optional
                 } if isinstance(fields,dict) else {}}
+                # Preserve the bounded daily Mempool series in compact history so
+                # the independent validator can reconstruct the same time-safe proxy.
+                compact_payload["network_hashrate_history"]=payload.get("network_hashrate_history",[])
+                compact_payload["network_hashrate_history_source"]=payload.get("network_hashrate_history_source")
                 payload=compact_payload
             result.append({"timestamp":row[0],"data":payload,"payload_valid":isinstance(payload,dict)})
         return result
