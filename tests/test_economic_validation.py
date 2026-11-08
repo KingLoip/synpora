@@ -327,6 +327,8 @@ class EconomicValidationTests(unittest.TestCase):
         self.assertEqual(MODULE.daily_network_hashrate_at(points, 90000.0), 900.0)
         self.assertIsNone(MODULE.daily_network_hashrate_at(points, 80000.0))
         self.assertEqual(MODULE.daily_network_hashrate_at(points, 180000.0), 950.0)
+        untrusted = [{"timestamp": 0.0, "hashrate_eh": 999.0, "provider": "unverified"}]
+        self.assertIsNone(MODULE.daily_network_hashrate_at(untrusted, 90000.0))
         self.assertIsNone(MODULE.daily_network_hashrate_at(points, 86400.0 + 86400.0 + 36.0 * 3600.0 + 1.0))
 
     def test_observations_backfill_daily_network_hashrate_without_lookahead(self):
