@@ -246,6 +246,10 @@ jobs:
           assert regret.status_code==200, regret.text
           assert regret.json()["shock_model"]=={"btc_sigma":0.2,"gpu_sigma":0.2,"energy_sigma":0.13,"mean_preserving":True}, regret.json()
           assert regret.json()["recommendation_only"] is True and regret.json()["hardware_write"] is False, regret.json()
+          assert regret.json()["regret_evidence_validated"] is False, regret.json()
+          assert regret.json()["regret_evidence_status"] in {"low_information_single_strategy_dominance","simulated_only_not_empirically_validated"}, regret.json()
+          if regret.json()["dominant_strategy_share"] >= 0.95:
+              assert regret.json()["regret_evidence_status"]=="low_information_single_strategy_dominance", regret.json()
           invalid_soc=c.post(f"/api/v1/farms/{farm}/dispatch-plan",headers=h,json={"battery_soc_pct":101})
           assert invalid_soc.status_code==422, invalid_soc.text
           # Loss-making compute/mining must stay negative rather than being hidden as break-even.
@@ -270,6 +274,8 @@ jobs:
           assert charging.status_code==200, charging.text
           assert charging.json()["forecast_source"]=="input_fallback_unverified", charging.json()
           assert charging.json()["forecast_quality"]["status"]=="degraded", charging.json()
+          assert charging.json()["forecast_quality"]["empirical_forecast_release_gate"]["status"]=="blocked", charging.json()
+          assert charging.json()["forecast_quality"]["status"] not in {"validated","ready"}, charging.json()
           cs=charging.json()["summary"]
           assert abs(cs["pv_balance_error_kwh"]) < 0.01, cs
           assert cs["battery_charge_kwh"] == 0, cs
