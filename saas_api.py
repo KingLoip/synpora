@@ -644,6 +644,7 @@ def install(app):
               "btc_difficulty":ext.get("difficulty"),
               "network_hashrate_eh":ext.get("networkHashrate"),
               "network_hashrate_history":ext.get("networkHashrateHistory",[]),
+              "network_hashrate_history_source":"Mempool.space live network hashrate API" if ext.get("networkHashrateHistory") else None,
               "eur_usd":fields["eur_usd"]["value"],
               "austria_spot_eur_kwh":fields["austria_spot_eur_kwh"]["value"],
               "site_energy_cost_eur_kwh":fields["site_energy_cost_eur_kwh"]["value"],
@@ -1079,7 +1080,8 @@ def install(app):
                     stamp=float(point.get("timestamp"))
                     value=float(point.get("avgHashrate"))/1e18
                     if math.isfinite(stamp) and stamp>0 and math.isfinite(value) and value>0:
-                        history.append({"timestamp":stamp,"hashrate_eh":value})
+                        history.append({"timestamp":stamp,"hashrate_eh":value,
+                                        "provider":"Mempool.space live network hashrate API"})
                 except (TypeError,ValueError,OverflowError):
                     continue
         if history:
@@ -2262,7 +2264,8 @@ def install(app):
                             try:
                                 stamp=float(point.get("timestamp"))
                                 value=float(point.get("hashrate_eh"))
-                                if math.isfinite(stamp) and stamp>0 and math.isfinite(value) and value>0:
+                                if (point.get("provider")=="Mempool.space live network hashrate API"
+                                        and math.isfinite(stamp) and stamp>0 and math.isfinite(value) and value>0):
                                     history_points.append({"timestamp":stamp,"hashrate_eh":value})
                             except (TypeError,ValueError,OverflowError):
                                 continue
