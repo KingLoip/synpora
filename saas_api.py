@@ -2238,13 +2238,13 @@ def install(app):
             return None
 
     def _daily_network_hashrate_at(history_points, timestamp):
-        # Mempool's /hashrate/1m series is daily. Treat each bucket as available
-        # only after its full 24h window has elapsed, preventing future leakage.
+        # Mempool timestamps each daily bucket at its END (UTC midnight).
+        # The timestamp itself is therefore the first safe availability time.
         import math
         eligible=[]
         for point in history_points:
             try:
-                available_at=float(point["timestamp"])+86400.0
+                available_at=float(point["timestamp"])
                 value=float(point["hashrate_eh"])
                 age=float(timestamp)-available_at
                 if (math.isfinite(available_at) and math.isfinite(value) and value>0
