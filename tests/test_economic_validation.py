@@ -319,6 +319,17 @@ class EconomicValidationTests(unittest.TestCase):
         self.assertEqual(result["model_history_required_observations"], 840 + 30 + 32 * 4)
         self.assertEqual(result["minimum_total_observations_for_horizon_validation"], 840 + 60 + 32 * 4)
 
+    def test_oos_history_projection_estimates_data_lower_bound_without_changing_release_gate(self):
+        result = MODULE.oos_history_projection(
+            72, 722, current_observations=3183, evaluation_origin_stride=15,
+            minimum_oos_pairs=100)
+        self.assertEqual(result["minimum_oos_pairs"], 100)
+        self.assertEqual(result["minimum_total_observations_estimate"], 4481)
+        self.assertEqual(result["additional_observations_estimate"], 1298)
+        self.assertAlmostEqual(result["estimated_additional_days_at_current_cadence"], 10.85, places=2)
+        self.assertTrue(result["data_only_lower_bound_not_release_prediction"])
+        self.assertFalse(MODULE.horizon_release_gate({"72": {"release_eligible": False}})["status"] == "pass")
+
     def test_horizon_origin_stride_caps_overlapping_windows_at_eight(self):
         # A 6h horizon at a 12-minute cadence has 30 steps. Floor division
         # yielded stride 3 (nine overlapping windows); ceil yields stride 4.
