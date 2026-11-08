@@ -412,10 +412,16 @@ class EconomicValidationTests(unittest.TestCase):
         result = MODULE.oos_history_projection(
             72, 722, current_observations=3183, evaluation_origin_stride=15,
             minimum_oos_pairs=100)
+        requirements = MODULE.horizon_history_requirements(72, 722)
+        expected_stride = math.ceil(72 * 3600 / 722)
+        expected_total = (requirements["model_history_required_observations"]
+                          + requirements["sample_steps"] + 99 * expected_stride)
         self.assertEqual(result["minimum_oos_pairs"], 100)
-        self.assertEqual(result["minimum_total_observations_estimate"], 4481)
-        self.assertEqual(result["additional_observations_estimate"], 1298)
-        self.assertAlmostEqual(result["estimated_additional_days_at_current_cadence"], 10.85, places=2)
+        self.assertEqual(result["evaluation_origin_stride"], expected_stride)
+        self.assertTrue(result["non_overlapping_oos_windows"])
+        self.assertEqual(result["minimum_total_observations_estimate"], expected_total)
+        self.assertEqual(result["additional_observations_estimate"], expected_total - 3183)
+        self.assertGreater(result["estimated_additional_days_at_current_cadence"], 250.0)
         self.assertTrue(result["data_only_lower_bound_not_release_prediction"])
         self.assertFalse(MODULE.horizon_release_gate({"72": {"release_eligible": False}})["status"] == "pass")
 
@@ -461,7 +467,9 @@ class EconomicValidationTests(unittest.TestCase):
         self.assertIn("selector_minimum_history", source)
         requirements = inspect.getsource(MODULE.horizon_history_requirements)
         self.assertIn("minimum_total_observations_for_horizon_validation", requirements)
+        self.assertIn("minimum_total_observations_for_100_nonoverlapping_oos_pairs", requirements)
         self.assertIn("math.ceil(sample_steps / 8)", requirements)
+        self.assertIn("last_oos_origin_ts", source)
 
     def test_72h_falls_back_until_32_separated_training_origins_exist(self):
         values = [100.0 + 0.001 * i for i in range(2637)]
@@ -533,7 +541,8 @@ class EconomicValidationTests(unittest.TestCase):
             self.assertEqual(result["horizons"][horizon]["pairs"], 0)
         self.assertFalse(result["release_eligible"])
         self.assertEqual(result["horizons"]["1"]["bootstrap_block_length"], 6)
-        self.assertEqual(result["horizons"]["24"]["bootstrap_block_length"], 48)
+        self.assertEqual(result["horizons"]["24"]["bootstrap_block_length"], 6)
+        self.assertTrue(result["horizons"]["72"]["oos_windows_non_overlapping"])
         for horizon in result["horizons"].values():
             self.assertIn("mae_skill_vs_persistence", horizon)
             self.assertIn("mae_skill_confidence_interval_95", horizon)
