@@ -540,6 +540,8 @@ class EconomicValidationTests(unittest.TestCase):
         for horizon in ("1", "6", "24", "72"):
             self.assertEqual(result["horizons"][horizon]["pairs"], 0)
         self.assertFalse(result["release_eligible"])
+        self.assertFalse(result["oos_evaluation_policy"]["overlapping_oos_windows"])
+        self.assertEqual(result["oos_evaluation_policy"]["bootstrap_block_length_horizon_windows"], 6)
         self.assertEqual(result["horizons"]["1"]["bootstrap_block_length"], 6)
         self.assertEqual(result["horizons"]["24"]["bootstrap_block_length"], 6)
         self.assertTrue(result["horizons"]["72"]["oos_windows_non_overlapping"])
