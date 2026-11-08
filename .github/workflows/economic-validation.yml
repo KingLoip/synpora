@@ -93,8 +93,8 @@ jobs:
               "",
               "## Horizon-aware production forecast validation",
               "",
-              "| Tariff scenario | Horizon | Genuine OOS pairs | Fallbacks | History/separation fallbacks | Selector rejects | BTC persistence | GPU persistence | BTC selector diagnostics | GPU selector diagnostics | Total origins | History required | Additional observations for 100 OOS pairs* | Additional days* | MAE skill | 95% CI low | BTC skill | GPU skill | Eligible |",
-              "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+              "| Tariff scenario | Horizon | Genuine OOS pairs | Fallbacks | History/separation fallbacks | Selector rejects | BTC persistence | GPU persistence | BTC selector diagnostics | GPU selector diagnostics | Total origins | History required | Additional observations for 100 OOS pairs* | Additional days* | MAE skill | 95% CI low | BTC skill | GPU skill | Release blockers | Eligible |",
+              "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|",
               "",
               "*Data-volume lower bound only. It does not imply that candidate selection, MAE skill, confidence intervals, or release approval will pass.",
           ]
@@ -128,6 +128,7 @@ jobs:
                       f"{metrics.get('history_growth_projection', {}).get('additional_observations_estimate', 'n/a')} | "
                       f"{metrics.get('history_growth_projection', {}).get('estimated_additional_days_at_current_cadence', 'n/a')} | "
                       f"{skill_text} | {ci_text} | {btc_text} | {gpu_text} | "
+                      f"{'; '.join(metrics.get('release_blockers', [])) or 'none'} | "
                       f"{metrics.get('release_eligible', False)} |"
                   )
           lines += [
