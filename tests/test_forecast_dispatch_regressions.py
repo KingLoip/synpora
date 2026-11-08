@@ -62,15 +62,47 @@ class ChronologicalForecastRegressionTests(unittest.TestCase):
         self.assertIn('ttl_seconds=300, timeout=3, attempts=1', adapter)
         self.assertIn('_provider_json_cache_at.get(mempool_url, now)', adapter)
         self.assertIn('"Mempool.space live network hashrate API"', source)
+        self.assertIn('raw.get("hashrates",[])', source)
+        adapter = ast.get_source_segment(SOURCE, find_function("_fetch_builtin_market_sources"))
+        self.assertIn('out["networkHashrateHistory"]=history', adapter)
+        collector = ast.get_source_segment(SOURCE, find_function("collect_market"))
+        self.assertIn('"network_hashrate_history":ext.get("networkHashrateHistory",[])', collector)
+        rows_source = ast.get_source_segment(SOURCE, find_function("_eligible_market_rows"))
+        self.assertIn("_daily_network_hashrate_at(history_points,float(row[0]))", rows_source)
         isolated = ast.Module(body=[node], type_ignores=[])
         namespace = {}
         exec(compile(ast.fix_missing_locations(isolated), "<mempool-adapter-test>", "exec"), namespace)
         observe = namespace["_mempool_network_observation"]
-        result = observe({"currentHashrate": 1.02e21, "currentDifficulty": 148e12}, 1794000000.0)
+        result = observe({
+            "currentHashrate": 1.02e21, "currentDifficulty": 148e12,
+            "hashrates": [
+                {"timestamp": 1791504000, "avgHashrate": 9.0e20},
+                {"timestamp": 1791590400, "avgHashrate": 9.5e20},
+            ],
+        }, 1794000000.0)
         self.assertAlmostEqual(result["networkHashrate"]["value"], 1020.0)
         self.assertEqual(result["difficulty"]["value"], 148e12)
         self.assertEqual(result["networkHashrate"]["observed_at"], 1794000000.0)
+        self.assertEqual(result["networkHashrateHistory"], [
+            {"timestamp": 1791504000.0, "hashrate_eh": 900.0},
+            {"timestamp": 1791590400.0, "hashrate_eh": 950.0},
+        ])
         self.assertEqual(observe({"currentHashrate": -1, "currentDifficulty": "bad"}, 1.0), {})
+
+    def test_daily_hashrate_alignment_is_time_safe_and_keeps_live_source_separate(self):
+        node = find_function("_daily_network_hashrate_at")
+        isolated = ast.Module(body=[node], type_ignores=[])
+        namespace = {}
+        exec(compile(ast.fix_missing_locations(isolated), "<daily-hashrate-alignment-test>", "exec"), namespace)
+        lookup = namespace["_daily_network_hashrate_at"]
+        points = [
+            {"timestamp": 0.0, "hashrate_eh": 900.0},
+            {"timestamp": 86400.0, "hashrate_eh": 950.0},
+        ]
+        self.assertEqual(lookup(points, 90000.0), 900.0)
+        self.assertIsNone(lookup(points, 80000.0))
+        self.assertEqual(lookup(points, 180000.0), 950.0)
+        self.assertIsNone(lookup(points, 86400.0 + 86400.0 + 36.0 * 3600.0 + 1.0))
 
     def test_adaptive_weights_use_rolling_origin_errors_on_inference_window(self):
         source = ast.get_source_segment(SOURCE, find_function("_adaptive_model_weights"))
