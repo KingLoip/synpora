@@ -643,6 +643,7 @@ def install(app):
               "btc_hashprice_usd_ph_day":fields["btc_hashprice_usd_ph_day"]["value"],
               "btc_difficulty":ext.get("difficulty"),
               "network_hashrate_eh":ext.get("networkHashrate"),
+              "network_hashrate_history":ext.get("networkHashrateHistory",[]),
               "eur_usd":fields["eur_usd"]["value"],
               "austria_spot_eur_kwh":fields["austria_spot_eur_kwh"]["value"],
               "site_energy_cost_eur_kwh":fields["site_energy_cost_eur_kwh"]["value"],
@@ -1068,6 +1069,23 @@ def install(app):
                 }
         except (TypeError, ValueError, OverflowError):
             pass
+        history=[]
+        raw_history=raw.get("hashrates",[])
+        if isinstance(raw_history,list):
+            for point in raw_history:
+                if not isinstance(point,dict):
+                    continue
+                try:
+                    stamp=float(point.get("timestamp"))
+                    value=float(point.get("avgHashrate"))/1e18
+                    if math.isfinite(stamp) and stamp>0 and math.isfinite(value) and value>0:
+                        history.append({"timestamp":stamp,"hashrate_eh":value})
+                except (TypeError,ValueError,OverflowError):
+                    continue
+        if history:
+            result["networkHashrateHistory"]=sorted(
+                {item["timestamp"]:item for item in history}.values(),
+                key=lambda item:item["timestamp"])[-62:]
         return result
 
     def _fetch_builtin_market_sources(out):
@@ -1089,6 +1107,9 @@ def install(app):
                 ttl_seconds=300, timeout=3, attempts=1)
             mempool_observed_at=_provider_json_cache_at.get(mempool_url, now)
             mempool_observation=_mempool_network_observation(mempool_raw, mempool_observed_at)
+            history=mempool_observation.get("networkHashrateHistory")
+            if history:
+                out["networkHashrateHistory"]=history
             for key, source_key in (("networkHashrate","networkHashrate"),("difficulty","difficulty")):
                 observation=mempool_observation.get(source_key)
                 if not observation:
@@ -2203,17 +2224,52 @@ def install(app):
         except (TypeError,ValueError,OverflowError):
             return None
 
+    def _daily_network_hashrate_at(history_points, timestamp):
+        # Mempool's /hashrate/1m series is daily. Treat each bucket as available
+        # only after its full 24h window has elapsed, preventing future leakage.
+        import math
+        eligible=[]
+        for point in history_points:
+            try:
+                available_at=float(point["timestamp"])+86400.0
+                value=float(point["hashrate_eh"])
+                age=float(timestamp)-available_at
+                if (math.isfinite(available_at) and math.isfinite(value) and value>0
+                        and 0.0<=age<=36.0*3600.0):
+                    eligible.append((available_at,value))
+            except (KeyError,TypeError,ValueError,OverflowError):
+                continue
+        return max(eligible,key=lambda item:item[0])[1] if eligible else None
+
     def _eligible_market_rows(c, limit=168, include_ts=False, require_site_tariff=True):
         # Site tariffs are required for realized economic labels, but not for
         # forecasting globally sourced BTC hashprice and GPU marketplace prices.
         # The user's own tariff is supplied separately to the dispatch calculation.
         raw=c.execute("SELECT ts,payload,btc_hashprice_usd_ph_day,gpu_l40s_usd_hour,austria_spot_eur_kwh FROM market_snapshots ORDER BY ts DESC LIMIT ?",(int(limit),)).fetchall()
-        rows=[]
+        parsed=[]
+        history_points=[]
         for row in raw:
             try:
                 payload=json.loads(row[1])
             except Exception:
                 continue
+            parsed.append((row,payload))
+            if not history_points:
+                candidate=payload.get("network_hashrate_history",[])
+                if isinstance(candidate,list):
+                    for point in candidate:
+                        if isinstance(point,dict):
+                            try:
+                                stamp=float(point.get("timestamp"))
+                                value=float(point.get("hashrate_eh"))
+                                if math.isfinite(stamp) and stamp>0 and math.isfinite(value) and value>0:
+                                    history_points.append({"timestamp":stamp,"hashrate_eh":value})
+                            except (TypeError,ValueError,OverflowError):
+                                continue
+                    if history_points:
+                        break
+        rows=[]
+        for row,payload in parsed:
             if require_site_tariff:
                 if not _snapshot_is_learning_eligible(payload):
                     continue
@@ -2225,10 +2281,17 @@ def install(app):
             except (KeyError,TypeError,ValueError):
                 if require_site_tariff:
                     continue
+            network_hashrate=_optional_external_market_value(payload,"network_hashrate_eh")
+            network_source="network_hashrate" if network_hashrate is not None else "unavailable"
+            if network_hashrate is None and history_points:
+                network_hashrate=_daily_network_hashrate_at(history_points,float(row[0]))
+                if network_hashrate is not None:
+                    network_source="mempool_daily_hashrate_history"
             values=(row[0],row[2],row[3],site_energy,
                     _optional_external_market_value(payload,"btc_price_usd"),
-                    _optional_external_market_value(payload,"network_hashrate_eh"),
-                    _optional_external_market_value(payload,"btc_difficulty"))
+                    network_hashrate,
+                    _optional_external_market_value(payload,"btc_difficulty"),
+                    network_source)
             rows.append(values if include_ts else values[1:])
         # SQL fetches the newest bounded window; restore chronological order before
         # fitting or evaluating any forward-looking model.
@@ -2383,8 +2446,7 @@ def install(app):
         return max(0.0,current_hashprice*(predicted_price/current_price)*(current_network/predicted_network))
 
     def _adaptive_horizon_weights(values, sample_steps, interval_seconds=300.0,
-                                  log_scale=False, btc_price_values=None, network_values=None,
-                                  network_source="unavailable"):
+                                  log_scale=False, btc_price_values=None, network_values=None):
         import math
         import statistics
         direct_names=("recent_mean","last_value","trend","mean_24","median_24",
@@ -2470,9 +2532,16 @@ def install(app):
         if series_key=="btc":
             hashrate=[r[5] for r in valid]
             difficulty=[r[6] for r in valid]
+            hashrate_sources=[r[7] if len(r)>7 else "unavailable" for r in valid]
             if hashrate and all(v is not None and float(v)>0 for v in hashrate):
                 network_values=hashrate
-                network_source="network_hashrate"
+                source_set=set(hashrate_sources)
+                if source_set=={"network_hashrate"}:
+                    network_source="network_hashrate"
+                elif source_set=={"mempool_daily_hashrate_history"}:
+                    network_source="mempool_daily_hashrate_history"
+                else:
+                    network_source="mixed_live_and_daily_hashrate_history"
             elif difficulty and all(v is not None and float(v)>0 for v in difficulty):
                 # Difficulty is a slower protocol-adjusted proxy, not an observed
                 # high-frequency network-hashrate series. Keep its provenance explicit.
@@ -2489,7 +2558,7 @@ def install(app):
             minimum_history=weekly_steps+sample_steps+minimum_training_origins*max(1,math.ceil(sample_steps/8))
             training_ready_by_horizon[str(h)]=len(y)>=minimum_history
             weights=_adaptive_horizon_weights(y,sample_steps,interval_seconds,log_scale=log_scale,
-                btc_price_values=price_values,network_values=network_values,network_source=network_source)
+                btc_price_values=price_values,network_values=network_values)
             candidates=_horizon_candidate_values(model_values,len(y)-1,sample_steps,interval_seconds)
             if log_scale:
                 candidates={name:math.exp(max(-50.0,min(50.0,value))) for name,value in candidates.items()}
