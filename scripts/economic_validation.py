@@ -423,8 +423,44 @@ def _btc_price_network_candidate(hashprice_values, price_values, network_values,
                * (current_network / predicted_network))
 
 
+def select_btc_network_proxy(rows):
+    """Return a complete BTC network series and its explicit source provenance."""
+    if not rows:
+        return None, "unavailable"
+    hashrate = [row.get("network_hashrate") for row in rows]
+    if all(value is not None and math.isfinite(float(value)) and float(value) > 0
+           for value in hashrate):
+        return hashrate, "network_hashrate"
+    difficulty = [row.get("btc_difficulty") for row in rows]
+    if all(value is not None and math.isfinite(float(value)) and float(value) > 0
+           for value in difficulty):
+        return difficulty, "btc_difficulty_proxy"
+    return None, "unavailable"
+
+
+def forecast_release_blockers(pairs, skill, ci, nonnegative, persistence_fallback_pairs,
+                              insufficient_separated_origin_fallbacks):
+    """Explain why a horizon is not releasable without weakening its gate."""
+    blockers = []
+    if pairs < 100:
+        blockers.append("fewer_than_100_genuine_oos_pairs")
+    if insufficient_separated_origin_fallbacks > 0:
+        blockers.append("insufficient_horizon_separated_training_history")
+    if persistence_fallback_pairs > 0:
+        blockers.append("btc_or_gpu_selector_fell_back_to_persistence")
+    if skill is None or skill < 0.05:
+        blockers.append("mae_skill_below_5pct_or_unavailable")
+    lower = ci.get("lower_95") if isinstance(ci, dict) else None
+    if lower is None or lower <= 0.0:
+        blockers.append("bootstrap_lower_95_not_positive")
+    if not nonnegative:
+        blockers.append("at_least_one_strategy_has_negative_or_unavailable_skill")
+    return blockers
+
+
 def corrected_forecast_weights(values, sample_steps=1, interval_seconds=300.0, log_scale=False,
-                                btc_price_values=None, network_values=None, diagnostics=None):
+                                btc_price_values=None, network_values=None, diagnostics=None,
+                                network_source="unspecified_proxy_series"):
     """Select same-horizon candidates on horizon-spaced past-only origins and a strict holdout."""
     direct_names = ("recent_mean", "last_value", "trend", "mean_24", "median_24",
                     "seasonal_24h", "seasonal_168h", "ewma_02", "ewma_05")
@@ -440,7 +476,8 @@ def corrected_forecast_weights(values, sample_steps=1, interval_seconds=300.0, l
     def record_diagnostic(reason, **values):
         if diagnostics is not None:
             diagnostics.clear()
-            diagnostics.update({"rejection_reason": reason, **values})
+            diagnostics.update({"rejection_reason": reason,
+                                "network_proxy_source": network_source, **values})
     interval = max(1.0, float(interval_seconds))
     weekly_steps = max(1, round(168.0 * 3600.0 / interval))
     origin_stride = max(1, math.ceil(sample_steps / 8))
@@ -692,11 +729,7 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
                 btc_values = [row["btc"] for row in history_rows]
                 gpu_values = [row["gpu"] for row in history_rows]
                 btc_price_values = [row.get("btc_price") for row in history_rows]
-                network_values = [row.get("network_hashrate") for row in history_rows]
-                if not all(v is not None and v > 0 for v in network_values):
-                    network_values = [row.get("btc_difficulty") for row in history_rows]
-                if not all(v is not None and v > 0 for v in network_values):
-                    network_values = None
+                network_values, network_source = select_btc_network_proxy(history_rows)
                 if not all(v is not None and v > 0 for v in btc_price_values):
                     btc_price_values = None
                 btc_selector_diagnostic = {}
@@ -704,7 +737,7 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
                 btc_weights = corrected_forecast_weights(
                     btc_values, sample_steps, interval_seconds, log_scale=True,
                     btc_price_values=btc_price_values, network_values=network_values,
-                    diagnostics=btc_selector_diagnostic)
+                    diagnostics=btc_selector_diagnostic, network_source=network_source)
                 gpu_weights = corrected_forecast_weights(
                     gpu_values, sample_steps, interval_seconds, diagnostics=gpu_selector_diagnostic)
                 cached_forecast = (
@@ -848,6 +881,9 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
             "mae_skill_confidence_interval_95": ci,
             "bootstrap_block_length": block_length,
             "per_strategy": per_strategy,
+            "release_blockers": forecast_release_blockers(
+                pairs, skill, ci, nonnegative, persistence_fallback_pairs,
+                insufficient_separated_origin_fallbacks),
             "release_eligible": bool(
                 pairs >= 100 and skill is not None and skill >= 0.05
                 and ci["lower_95"] is not None and ci["lower_95"] > 0.0
