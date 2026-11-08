@@ -2106,6 +2106,7 @@ def install(app):
         except Exception:
             rows=[]
         result=[]
+        history_included=False
         required=("btc_hashprice_usd_ph_day","gpu_l40s_usd_hour","eur_usd")
         optional=("gpu_l40s_power_kw","gpu_utilization","gpu_platform_fee","btc_price_usd","btc_difficulty","network_hashrate_eh")
         for row in rows:
@@ -2122,8 +2123,14 @@ def install(app):
                 } if isinstance(fields,dict) else {}}
                 # Preserve the bounded daily Mempool series in compact history so
                 # the independent validator can reconstruct the same time-safe proxy.
-                compact_payload["network_hashrate_history"]=payload.get("network_hashrate_history",[])
-                compact_payload["network_hashrate_history_source"]=payload.get("network_hashrate_history_source")
+                candidate_history=payload.get("network_hashrate_history",[])
+                if candidate_history and not history_included:
+                    compact_payload["network_hashrate_history"]=candidate_history
+                    compact_payload["network_hashrate_history_source"]=payload.get("network_hashrate_history_source")
+                    history_included=True
+                else:
+                    compact_payload["network_hashrate_history"]=[]
+                    compact_payload["network_hashrate_history_source"]=None
                 payload=compact_payload
             result.append({"timestamp":row[0],"data":payload,"payload_valid":isinstance(payload,dict)})
         return result
