@@ -964,7 +964,12 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
         }
     release_gate = horizon_release_gate(results, horizons_hours)
     return {
-        "method": "rolling_origin_same_features_as_production_with_hourly_horizon_and_damped_trend",
+        "method": "rolling_origin_same_features_as_production_with_non_overlapping_oos_windows",
+        "oos_evaluation_policy": {
+            "window_spacing": "at_least_forecast_horizon",
+            "overlapping_oos_windows": False,
+            "bootstrap_block_length_horizon_windows": 6,
+        },
         "status": release_gate["status"],
         "minimum_pairs": 100,
         "minimum_mae_skill_vs_persistence": 0.05,
