@@ -349,7 +349,7 @@ class EconomicValidationTests(unittest.TestCase):
             }}
         history = [
             {"timestamp": 1000.0, "hashrate_eh": 900.0, "provider": "Mempool.space live network hashrate API"},
-            {"timestamp": 87400.0, "hashrate_eh": 950.0, "provider": "Mempool.space live network hashrate API"},
+            {"timestamp": 100000.0, "hashrate_eh": 950.0, "provider": "Mempool.space live network hashrate API"},
         ]
         rows, rejected = MODULE.observations_from_history([
             payload(91000.0, history), payload(181000.0, history)])
