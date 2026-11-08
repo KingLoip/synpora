@@ -319,6 +319,51 @@ class EconomicValidationTests(unittest.TestCase):
         self.assertEqual(result["model_history_required_observations"], 840 + 30 + 32 * 4)
         self.assertEqual(result["minimum_total_observations_for_horizon_validation"], 840 + 60 + 32 * 4)
 
+    def test_daily_hashrate_history_is_used_only_after_full_bucket_and_within_age_limit(self):
+        points = [
+            {"timestamp": 0.0, "hashrate_eh": 900.0},
+            {"timestamp": 86400.0, "hashrate_eh": 950.0},
+        ]
+        self.assertEqual(MODULE.daily_network_hashrate_at(points, 90000.0), 900.0)
+        self.assertIsNone(MODULE.daily_network_hashrate_at(points, 80000.0))
+        self.assertEqual(MODULE.daily_network_hashrate_at(points, 180000.0), 950.0)
+        self.assertIsNone(MODULE.daily_network_hashrate_at(points, 86400.0 + 86400.0 + 36.0 * 3600.0 + 1.0))
+
+    def test_observations_backfill_daily_network_hashrate_without_lookahead(self):
+        def payload(ts, history):
+            fields = {
+                "btc_hashprice_usd_ph_day": external_field(1),
+                "gpu_l40s_usd_hour": external_field(1),
+                "eur_usd": external_field(1),
+                "btc_price_usd": external_field(1),
+                "btc_difficulty": external_field(1),
+            }
+            return {"timestamp": ts, "data": {
+                "btc_hashprice_usd_ph_day": 40.0, "gpu_l40s_usd_hour": 1.1,
+                "eur_usd": 1.1, "btc_price_usd": 60000.0, "btc_difficulty": 100.0,
+                "data_quality": {"fields": fields},
+                "network_hashrate_history": history,
+            }}
+        history = [
+            {"timestamp": 0.0, "hashrate_eh": 900.0},
+            {"timestamp": 86400.0, "hashrate_eh": 950.0},
+        ]
+        rows, rejected = MODULE.observations_from_history([
+            payload(90000.0, history), payload(180000.0, history)])
+        self.assertEqual(rejected, 0)
+        self.assertEqual(rows[0]["network_hashrate"], 900.0)
+        self.assertEqual(rows[0]["network_hashrate_source"], "mempool_daily_hashrate_history")
+        self.assertEqual(rows[1]["network_hashrate"], 950.0)
+
+    def test_btc_network_proxy_reports_mixed_live_and_daily_history(self):
+        rows = [
+            {"network_hashrate": 950.0, "network_hashrate_source": "network_hashrate"},
+            {"network_hashrate": 900.0, "network_hashrate_source": "mempool_daily_hashrate_history"},
+        ]
+        values, source = MODULE.select_btc_network_proxy(rows)
+        self.assertEqual(values, [950.0, 900.0])
+        self.assertEqual(source, "mixed_live_and_daily_hashrate_history")
+
     def test_btc_network_proxy_uses_difficulty_only_as_explicit_fallback(self):
         rows = [{"network_hashrate": None, "btc_difficulty": 100.0 + i}
                 for i in range(40)]
