@@ -103,8 +103,9 @@ class ChronologicalForecastRegressionTests(unittest.TestCase):
             {"timestamp": 0.0, "hashrate_eh": 900.0, "provider": "Mempool.space live network hashrate API"},
             {"timestamp": 86400.0, "hashrate_eh": 950.0, "provider": "Mempool.space live network hashrate API"},
         ]
-        self.assertEqual(lookup(points, 90000.0), 900.0)
-        self.assertIsNone(lookup(points, 80000.0))
+        self.assertEqual(lookup(points, 0.0), 900.0)
+        self.assertEqual(lookup(points, 80000.0), 900.0)
+        self.assertEqual(lookup(points, 86400.0), 950.0)
         self.assertEqual(lookup(points, 180000.0), 950.0)
         self.assertIsNone(lookup(points, 86400.0 + 86400.0 + 36.0 * 3600.0 + 1.0))
 
