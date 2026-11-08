@@ -99,7 +99,10 @@ def observations_from_history(raw):
                     value = finite(point.get("hashrate_eh"))
                     if (point.get("provider") == "Mempool.space live network hashrate API"
                             and stamp is not None and value is not None and stamp > 0 and value > 0):
-                        history_points.append({"timestamp": stamp, "hashrate_eh": value})
+                        history_points.append({
+                            "timestamp": stamp, "hashrate_eh": value,
+                            "provider": "Mempool.space live network hashrate API",
+                        })
     history_points = list({point["timestamp"]: point for point in history_points}.values())
     for item in raw if isinstance(raw, list) else []:
         payload = item.get("data") if isinstance(item, dict) else None
