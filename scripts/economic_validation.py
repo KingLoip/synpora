@@ -69,7 +69,7 @@ def market_ready(payload):
 
 
 def daily_network_hashrate_at(history_points, timestamp):
-    """Use daily Mempool averages only after the complete 24h bucket is observable."""
+    """Use daily Mempool averages from the timestamped bucket end onward."""
     eligible = []
     for point in history_points:
         stamp = finite(point.get("timestamp")) if isinstance(point, dict) else None
@@ -78,7 +78,8 @@ def daily_network_hashrate_at(history_points, timestamp):
                 or point.get("provider") != "Mempool.space live network hashrate API"
                 or stamp is None or value is None or value <= 0):
             continue
-        available_at = stamp + 86400.0
+        # Mempool timestamps each daily bucket at its END, not its start.
+        available_at = stamp
         age = float(timestamp) - available_at
         if 0.0 <= age <= 36.0 * 3600.0:
             eligible.append((available_at, value))
