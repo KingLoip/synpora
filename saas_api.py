@@ -2266,8 +2266,7 @@ def install(app):
                                     history_points.append({"timestamp":stamp,"hashrate_eh":value})
                             except (TypeError,ValueError,OverflowError):
                                 continue
-                    if history_points:
-                        break
+
         rows=[]
         for row,payload in parsed:
             if require_site_tariff:
