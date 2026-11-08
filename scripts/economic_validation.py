@@ -68,9 +68,36 @@ def market_ready(payload):
     return True
 
 
+def daily_network_hashrate_at(history_points, timestamp):
+    """Use daily Mempool averages only after the complete 24h bucket is observable."""
+    eligible = []
+    for point in history_points:
+        stamp = finite(point.get("timestamp")) if isinstance(point, dict) else None
+        value = finite(point.get("hashrate_eh")) if isinstance(point, dict) else None
+        if stamp is None or value is None or value <= 0:
+            continue
+        available_at = stamp + 86400.0
+        age = float(timestamp) - available_at
+        if 0.0 <= age <= 36.0 * 3600.0:
+            eligible.append((available_at, value))
+    return max(eligible, key=lambda item: item[0])[1] if eligible else None
+
+
 def observations_from_history(raw):
     result = []
     rejected = 0
+    history_points = []
+    for item in raw if isinstance(raw, list) else []:
+        payload = item.get("data") if isinstance(item, dict) else None
+        candidate = payload.get("network_hashrate_history", []) if isinstance(payload, dict) else []
+        if isinstance(candidate, list):
+            for point in candidate:
+                if isinstance(point, dict):
+                    stamp = finite(point.get("timestamp"))
+                    value = finite(point.get("hashrate_eh"))
+                    if stamp is not None and value is not None and stamp > 0 and value > 0:
+                        history_points.append({"timestamp": stamp, "hashrate_eh": value})
+    history_points = list({point["timestamp"]: point for point in history_points}.values())
     for item in raw if isinstance(raw, list) else []:
         payload = item.get("data") if isinstance(item, dict) else None
         ts = finite(item.get("timestamp")) if isinstance(item, dict) else None
@@ -93,11 +120,18 @@ def observations_from_history(raw):
                     or age is None or age < -60 or age > 900):
                 return None
             return value
+        network_hashrate = optional_external("network_hashrate_eh")
+        network_hashrate_source = "network_hashrate" if network_hashrate is not None else "unavailable"
+        if network_hashrate is None:
+            network_hashrate = daily_network_hashrate_at(history_points, ts)
+            if network_hashrate is not None:
+                network_hashrate_source = "mempool_daily_hashrate_history"
         result.append({
             "ts": ts,
             "btc": float(payload["btc_hashprice_usd_ph_day"]),
             "btc_price": optional_external("btc_price_usd"),
-            "network_hashrate": optional_external("network_hashrate_eh"),
+            "network_hashrate": network_hashrate,
+            "network_hashrate_source": network_hashrate_source,
             "btc_difficulty": optional_external("btc_difficulty"),
             "gpu": float(payload["gpu_l40s_usd_hour"]),
             "fx": float(payload["eur_usd"]),
@@ -430,7 +464,14 @@ def select_btc_network_proxy(rows):
     hashrate = [row.get("network_hashrate") for row in rows]
     if all(value is not None and math.isfinite(float(value)) and float(value) > 0
            for value in hashrate):
-        return hashrate, "network_hashrate"
+        sources = {row.get("network_hashrate_source", "network_hashrate") for row in rows}
+        if sources == {"network_hashrate"}:
+            source = "network_hashrate"
+        elif sources == {"mempool_daily_hashrate_history"}:
+            source = "mempool_daily_hashrate_history"
+        else:
+            source = "mixed_live_and_daily_hashrate_history"
+        return hashrate, source
     difficulty = [row.get("btc_difficulty") for row in rows]
     if all(value is not None and math.isfinite(float(value)) and float(value) > 0
            for value in difficulty):
