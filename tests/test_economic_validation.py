@@ -321,8 +321,8 @@ class EconomicValidationTests(unittest.TestCase):
 
     def test_daily_hashrate_history_is_used_only_after_full_bucket_and_within_age_limit(self):
         points = [
-            {"timestamp": 0.0, "hashrate_eh": 900.0},
-            {"timestamp": 86400.0, "hashrate_eh": 950.0},
+            {"timestamp": 0.0, "hashrate_eh": 900.0, "provider": "Mempool.space live network hashrate API"},
+            {"timestamp": 86400.0, "hashrate_eh": 950.0, "provider": "Mempool.space live network hashrate API"},
         ]
         self.assertEqual(MODULE.daily_network_hashrate_at(points, 90000.0), 900.0)
         self.assertIsNone(MODULE.daily_network_hashrate_at(points, 80000.0))
@@ -345,8 +345,8 @@ class EconomicValidationTests(unittest.TestCase):
                 "network_hashrate_history": history,
             }}
         history = [
-            {"timestamp": 1000.0, "hashrate_eh": 900.0},
-            {"timestamp": 87400.0, "hashrate_eh": 950.0},
+            {"timestamp": 1000.0, "hashrate_eh": 900.0, "provider": "Mempool.space live network hashrate API"},
+            {"timestamp": 87400.0, "hashrate_eh": 950.0, "provider": "Mempool.space live network hashrate API"},
         ]
         rows, rejected = MODULE.observations_from_history([
             payload(91000.0, history), payload(181000.0, history)])
