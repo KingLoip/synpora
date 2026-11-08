@@ -804,6 +804,10 @@ def install(app):
         pool_fee: float=0.02
         tax_rate: float=0.0
 
+    class RegretAnalysisIn(ScenarioIn):
+        samples: int=1000
+        seed: int=42
+
     def _validate_numeric_inputs(x):
         # Reject NaN/Infinity and impossible physical/financial inputs before they
         # can silently become misleading recommendations or non-JSON responses.
@@ -882,7 +886,7 @@ def install(app):
         gpu_life=max(0.01,float(getattr(x,"gpu_lifetime_years",5.0)))
         btc_maintenance=max(0.0,float(getattr(x,"btc_maintenance_eur_year",0.0)))
         gpu_maintenance=max(0.0,float(getattr(x,"gpu_maintenance_eur_year",0.0)))
-        btc_fixed=(btc_capex/btc_life+btc_maintenance)/(btc_device_power*8760)
+        btc_fixed=(btc_capex/btc_life+btc_maintenance)/((btc_device_power+btc_overhead)*8760)
         gpu_fixed=(gpu_capex/gpu_life+gpu_maintenance)/(gpu_power*8760)
         btc_pre_tax=btc_uptime*(btc_active_value-energy_cost)-btc_fixed
         gpu_pre_tax=gpu_uptime*(gpu_active_value-energy_cost)-gpu_fixed
@@ -914,9 +918,58 @@ def install(app):
                 "maintenance_eur_year":float(getattr(x,"btc_maintenance_eur_year",0.0)),
                 "uptime":float(getattr(x,"btc_uptime",0.98)),
                 "pool_fee":float(getattr(x,"pool_fee",0.02)),
-                "depreciation_and_maintenance_eur_kwh":round((float(getattr(x,"btc_capex_eur",0.0))/float(getattr(x,"btc_lifetime_years",4.0))+float(getattr(x,"btc_maintenance_eur_year",0.0)))/(float(getattr(x,"btc_device_power_kw",3.5))*8760),6)},
+                "depreciation_and_maintenance_eur_kwh":round((float(getattr(x,"btc_capex_eur",0.0))/float(getattr(x,"btc_lifetime_years",4.0))+float(getattr(x,"btc_maintenance_eur_year",0.0)))/((float(getattr(x,"btc_device_power_kw",3.5))+max(0.0,float(getattr(x,"btc_facility_overhead_kw",0.0)))+max(0.0,float(getattr(x,"facility_overhead_kw",0.0))))*8760),6)},
             "tax_rate":float(getattr(x,"tax_rate",0.0)),
             "warning":"Tax rate and cost assumptions are user supplied; not tax advice. Site/network limits and one-off installation costs are not modeled."}
+
+    def _btc_mining_metrics(x):
+        """Expose BTC miner economics on a consistent site-kWh and daily basis."""
+        import math
+        _validate_numeric_inputs(x)
+        device_power=max(0.01,float(getattr(x,"btc_device_power_kw",3.5)))
+        overhead=max(0.0,float(getattr(x,"btc_facility_overhead_kw",0.0)))+max(0.0,float(getattr(x,"facility_overhead_kw",0.0)))
+        site_power=device_power+overhead
+        efficiency=max(0.01,float(getattr(x,"asic_efficiency_j_th",20.0)))
+        pool_fee=max(0.0,min(0.99,float(getattr(x,"pool_fee",0.02))))
+        uptime=max(0.0,min(1.0,float(getattr(x,"btc_uptime",0.98))))
+        eur_usd=max(0.01,float(x.eur_usd))
+        hashprice=max(0.0,float(x.btc_hashprice_usd_ph_day))
+        hashrate_th_s=device_power*1000.0/efficiency
+        hashrate_ph_s=hashrate_th_s/1000.0
+        gross_daily_eur=hashprice*hashrate_ph_s/eur_usd
+        gross_site_kwh=(hashprice/eur_usd)/(efficiency*24.0)*(device_power/site_power)
+        net_revenue_site_kwh=gross_site_kwh*(1.0-pool_fee)
+        capex=max(0.0,float(getattr(x,"btc_capex_eur",0.0)))
+        life=max(0.01,float(getattr(x,"btc_lifetime_years",4.0)))
+        maintenance=max(0.0,float(getattr(x,"btc_maintenance_eur_year",0.0)))
+        annual_fixed=capex/life+maintenance
+        fixed_per_available_kwh=annual_fixed/(site_power*8760.0)
+        energy_cost=float(x.energy_cost_eur_kwh)
+        break_even_energy=(net_revenue_site_kwh-fixed_per_available_kwh/uptime
+                           if uptime>0 else None)
+        break_even_hashprice=((energy_cost+fixed_per_available_kwh/max(uptime,1e-12))
+            *eur_usd*efficiency*24.0*(site_power/device_power)/(1.0-pool_fee))
+        economics=_economics(x)
+        net_per_available_kwh=float(economics["BTC Mining"])
+        return {
+            "status":"modeled_not_settled",
+            "effective_hashrate_th_s":round(hashrate_th_s,3),
+            "asic_efficiency_j_th":round(efficiency,3),
+            "device_power_kw":round(device_power,4),
+            "facility_overhead_kw":round(overhead,4),
+            "total_site_power_kw":round(site_power,4),
+            "pool_fee":round(pool_fee,4),
+            "uptime":round(uptime,4),
+            "gross_revenue_eur_day_before_pool_fee":round(gross_daily_eur,4),
+            "net_revenue_eur_per_available_site_kwh_before_energy_and_fixed_costs":round(net_revenue_site_kwh,6),
+            "annualized_capex_and_maintenance_eur":round(annual_fixed,2),
+            "fixed_cost_eur_per_available_site_kwh":round(fixed_per_available_kwh,6),
+            "break_even_energy_cost_eur_kwh":round(break_even_energy,6) if break_even_energy is not None else None,
+            "break_even_hashprice_usd_ph_day":round(break_even_hashprice,4),
+            "modeled_net_eur_per_available_site_kwh":round(net_per_available_kwh,6),
+            "modeled_net_eur_day_at_full_site_capacity":round(net_per_available_kwh*site_power*24.0,4),
+            "realized_pool_payout_verified":False,
+        }
 
     def _market_feed_host_allowed(feed_url):
         # Require an exact operator-supplied hostname allowlist; HTTPS alone is not enough.
@@ -1027,7 +1080,8 @@ def install(app):
         if os.getenv("SYNPORA_DISABLE_BUILTIN_MARKET_SOURCES","").strip().lower() in ("1","true","yes"):
             return out
         # Mempool.space publishes a live network hashrate estimate and current
-        # difficulty. Validate the schema/units and retain the actual fetch time.
+        # difficulty. The response schema and units are validated before use;
+        # networkHashrate is stored in EH/s, matching SYNPORA's history schema.
         try:
             mempool_url="https://mempool.space/api/v1/mining/hashrate/1m"
             mempool_raw=_provider_json(
@@ -1035,8 +1089,8 @@ def install(app):
                 ttl_seconds=300, timeout=3, attempts=1)
             mempool_observed_at=_provider_json_cache_at.get(mempool_url, now)
             mempool_observation=_mempool_network_observation(mempool_raw, mempool_observed_at)
-            for key in ("networkHashrate","difficulty"):
-                observation=mempool_observation.get(key)
+            for key, source_key in (("networkHashrate","networkHashrate"),("difficulty","difficulty")):
+                observation=mempool_observation.get(source_key)
                 if not observation:
                     continue
                 existing=meta.get(key,{})
@@ -1050,7 +1104,7 @@ def install(app):
                     out[key]=observation["value"]
                     meta[key]={"source":"external","provider":observation["provider"],
                         "source_url":mempool_url,"observed_at":observation["observed_at"],
-                        "age_seconds":round(max(0.0,now-observation["observed_at"]),1),"valid":True}
+                        "age_seconds":0.0,"valid":True}
         except Exception as exc:
             logger.warning("Market provider %s failed (%s).", "mempool_network_hashrate", _provider_error_label(exc))
         # Timestamped public fallback for BTC hashprice if Startmining is unavailable or stale.
@@ -1478,17 +1532,20 @@ def install(app):
         energy_in_range=all(-1.0<=v<=10.0 for v in energy_values)
         valid=finite and market_nonnegative and energy_in_range
         readiness={k:bool(v.get("ready")) for k,v in models.items()}
+        readiness_by_horizon={k:v.get("ready_by_horizon",{}) for k,v in models.items()
+                              if isinstance(v,dict) and v.get("ready_by_horizon")}
         ready_count=sum(readiness.values())
         warnings=[]
         if not finite: warnings.append("Forecast contains non-finite values.")
         if not market_nonnegative: warnings.append("Forecast contains negative market revenue values.")
         if not energy_in_range: warnings.append("Forecast energy tariff is outside the supported range [-1, 10] EUR/kWh.")
-        if ready_count<3: warnings.append("Insufficient historical samples for fully validated forecasts.")
+        if ready_count<3: warnings.append("Insufficient separated horizon-specific training origins; persistence or unverified fallback is used.")
         if any(float(v)<0.60 for v in confidence.values()): warnings.append("At least one forecast series has low confidence.")
         return {"valid":valid,"historical_models_ready":ready_count,"model_readiness":readiness,
+                "model_readiness_by_horizon":readiness_by_horizon,
                 "confidence_by_series":confidence,"horizon_hours":hours,
-                "status":"validated" if valid and ready_count==3 else ("degraded" if valid else "invalid"),
-                "warnings":warnings}
+                "status":"data_ready_unvalidated" if valid and ready_count==3 else ("degraded" if valid else "invalid"),
+                "warnings":warnings+["Data freshness and sample readiness do not establish empirical forecast skill; independent 1h/6h/24h/72h out-of-sample release validation is required."]}
 
     def _ensure_market_table(c):
         if c.is_postgres:
@@ -1699,6 +1756,7 @@ def install(app):
                 "note":"A scenario gate is a warning, not a guarantee; input assumptions and external data quality still matter."},
             "method":"deterministic_seeded_monte_carlo_lognormal_shocks_with_stress_tests",
             "cost_model":_economic_cost_model(x),
+            "btc_mining_analysis":_btc_mining_metrics(x),
             "recommendation_only":True,"hardware_write":False
         }
 
@@ -1746,6 +1804,7 @@ def install(app):
                 "explanation":"Risk-adjusted choice from current economics plus seeded Monte-Carlo market shocks; no hardware action is executed.",
                 "method":"unified_forecast_risk_regret_v1","cost_model":_economic_cost_model(x),
                 "confidence_status":"uncalibrated_heuristic",
+                "btc_mining_analysis":_btc_mining_metrics(x),
                 "confidence_note":"This score is a model heuristic, not a statistically calibrated probability. Calibration requires sufficient settled decisions with verified actual outcomes.",
                 "investment_gate":{"status":"not_investment_validated" if (float(getattr(x,"gpu_capex_eur",0.0))<=0 or float(getattr(x,"btc_capex_eur",0.0))<=0 or float(getattr(x,"gpu_maintenance_eur_year",0.0))<=0 or float(getattr(x,"btc_maintenance_eur_year",0.0))<=0) else "cost_inputs_present_but_realized_revenue_unverified",
                     "required":["hardware_capex","annual_maintenance","verified_realized_revenue","metered_all_in_energy_cost","uptime_and_utilization","tax_and_financing_costs"],
@@ -1977,11 +2036,18 @@ def install(app):
         confidence_gap=None
         pairs=[(float(r[5]),1.0 if (r[3] is not None and abs(float(r[2])-float(r[3]))<=1e-9) else 0.0) for r in rows if r[5] is not None and r[3] is not None]
         if pairs: confidence_gap=sum(a-b for a,b in pairs)/len(pairs)
+        chosen_strategies={str(r[0]) for r in rows if r[0] is not None}
+        selection_information=("low_information_single_strategy_dominance"
+                               if len(chosen_strategies)<2 else "multi_strategy_observations")
+        status=("learning" if len(rows)<24 else
+                ("low_information_single_strategy_dominance" if len(chosen_strategies)<2 else "validated"))
         return {"farm_id":farm_id,"samples":len(rows),"winner_accuracy":round(winner,3),
                 "avg_regret_eur_kwh":round(sum(regrets)/len(regrets),6) if regrets else 0.0,
                 "p90_regret_eur_kwh":round(p90,6) if p90 is not None else 0.0,
                 "confidence_calibration_gap":round(confidence_gap,3) if confidence_gap is not None else None,
-                "status":"validated" if len(rows)>=24 else "learning",
+                "distinct_strategies_selected":len(chosen_strategies),
+                "selection_information":selection_information,
+                "status":status,
                 "recommendation_only":True}
     
     @app.get("/api/v1/farms/{farm_id}/model-score")
@@ -2046,6 +2112,12 @@ def install(app):
         gpu_platform_fee: float=0.15
         asic_efficiency_j_th: float=20.0
         btc_device_power_kw: float=3.5
+        btc_facility_overhead_kw: float=0.0
+        btc_uptime: float=0.98
+        pool_fee: float=0.02
+        btc_capex_eur: float=0.0
+        btc_lifetime_years: float=4.0
+        btc_maintenance_eur_year: float=0.0
 
     @app.post("/api/v1/farms/{farm_id}/portfolio-optimize")
     def portfolio_optimize(farm_id:str,x:PortfolioIn,authorization:str|None=Header(default=None)):
@@ -2059,14 +2131,27 @@ def install(app):
                 value=(x.gpu_hourly_usd/x.eur_usd)*x.gpu_utilization*(1-x.gpu_platform_fee)/power
                 candidates.append({"asset_id":a["id"],"asset":a["name"],"kind":"GPU","value_eur_kwh":value,"capacity_kwh":power*x.horizon_hours})
             elif kind=="BTC":
-                value=(x.btc_hashprice_usd_ph_day/x.eur_usd)/(x.asic_efficiency_j_th*24)*0.98*0.98
-                candidates.append({"asset_id":a["id"],"asset":a["name"],"kind":"BTC","value_eur_kwh":value,"capacity_kwh":power*x.horizon_hours})
-        candidates.sort(key=lambda z:z["value_eur_kwh"],reverse=True)
+                device_power=power
+                overhead=max(0.0,float(x.btc_facility_overhead_kw))
+                site_power=device_power+overhead
+                uptime=max(0.0,min(1.0,float(x.btc_uptime)))
+                pool_fee=max(0.0,min(0.99,float(x.pool_fee)))
+                efficiency=max(0.01,float(x.asic_efficiency_j_th))
+                value=((x.btc_hashprice_usd_ph_day/max(float(x.eur_usd),0.01))/(efficiency*24.0)
+                       *(device_power/site_power)*(1.0-pool_fee))
+                fixed=(max(0.0,float(x.btc_capex_eur))/max(0.01,float(x.btc_lifetime_years))
+                       +max(0.0,float(x.btc_maintenance_eur_year)))/(site_power*8760.0*max(uptime,0.01))
+                candidates.append({"asset_id":a["id"],"asset":a["name"],"kind":"BTC",
+                    "value_eur_kwh":value,"energy_cost_factor":uptime,
+                    "fixed_cost_eur_kwh":fixed,"capacity_kwh":site_power*x.horizon_hours*uptime,
+                    "effective_hashrate_th_s":device_power*1000.0/efficiency})
+        candidates.sort(key=lambda z:z["value_eur_kwh"]-x.energy_cost_eur_kwh*z.get("energy_cost_factor",1.0)-z.get("fixed_cost_eur_kwh",0.0),reverse=True)
         remaining=max(0,x.energy_kwh); allocation=[]
         for a in candidates:
             kwh=min(remaining,a["capacity_kwh"])
             if kwh>0:
-                allocation.append({**a,"allocated_kwh":round(kwh,3),"net_eur":round((a["value_eur_kwh"]-x.energy_cost_eur_kwh)*kwh,2)})
+                net_per_kwh=(a["value_eur_kwh"]-x.energy_cost_eur_kwh*a.get("energy_cost_factor",1.0)-a.get("fixed_cost_eur_kwh",0.0))
+                allocation.append({**a,"allocated_kwh":round(kwh,3),"net_eur":round(net_per_kwh*kwh,2)})
                 remaining-=kwh
         grid_value=0.055
         if remaining>0:
@@ -2103,8 +2188,25 @@ def install(app):
         gpu_facility_overhead_kw: float=0.0
         facility_overhead_kw: float=0.0
 
-    def _eligible_market_rows(c, limit=168, include_ts=False):
-        # Forecast fitting and weights must use the same provenance gate as learning labels.
+    def _optional_external_market_value(payload,key):
+        try:
+            quality=payload.get("data_quality",{})
+            fields=quality.get("fields",{}) if isinstance(quality,dict) else {}
+            field=fields.get(key,{}) if isinstance(fields,dict) else {}
+            value=float(payload.get(key))
+            age=float(field.get("age_seconds"))
+            if (not math.isfinite(value) or value<=0 or not isinstance(field,dict)
+                    or field.get("source")!="external" or field.get("available") is not True
+                    or not math.isfinite(age) or age < -60 or age > 900):
+                return None
+            return value
+        except (TypeError,ValueError,OverflowError):
+            return None
+
+    def _eligible_market_rows(c, limit=168, include_ts=False, require_site_tariff=True):
+        # Site tariffs are required for realized economic labels, but not for
+        # forecasting globally sourced BTC hashprice and GPU marketplace prices.
+        # The user's own tariff is supplied separately to the dispatch calculation.
         raw=c.execute("SELECT ts,payload,btc_hashprice_usd_ph_day,gpu_l40s_usd_hour,austria_spot_eur_kwh FROM market_snapshots ORDER BY ts DESC LIMIT ?",(int(limit),)).fetchall()
         rows=[]
         for row in raw:
@@ -2112,11 +2214,21 @@ def install(app):
                 payload=json.loads(row[1])
             except Exception:
                 continue
-            if not _snapshot_is_learning_eligible(payload):
+            if require_site_tariff:
+                if not _snapshot_is_learning_eligible(payload):
+                    continue
+            elif not _snapshot_is_market_ready(payload):
                 continue
-            try: site_energy=float(payload["site_energy_cost_eur_kwh"])
-            except (KeyError,TypeError,ValueError): continue
-            values=(row[0],row[2],row[3],site_energy)
+            site_energy=None
+            try:
+                site_energy=float(payload["site_energy_cost_eur_kwh"])
+            except (KeyError,TypeError,ValueError):
+                if require_site_tariff:
+                    continue
+            values=(row[0],row[2],row[3],site_energy,
+                    _optional_external_market_value(payload,"btc_price_usd"),
+                    _optional_external_market_value(payload,"network_hashrate_eh"),
+                    _optional_external_market_value(payload,"btc_difficulty"))
             rows.append(values if include_ts else values[1:])
         # SQL fetches the newest bounded window; restore chronological order before
         # fitting or evaluating any forward-looking model.
@@ -2124,72 +2236,371 @@ def install(app):
         return rows
 
     def _adaptive_model_weights(c, series_key):
-        rows=_eligible_market_rows(c,168,include_ts=True)
+        # Calibrate weights with rolling-origin errors from the same 48-observation
+        # feature window used by _ensemble_forecast. The previous implementation
+        # fitted weights on a long-window mean/slope but applied them to a different
+        # short-window mean/slope at inference time.
+        rows=_eligible_market_rows(c,168,include_ts=True,require_site_tariff=False)
         idx={"btc":1,"gpu":2,"energy":3}[series_key]
         y=[float(r[idx]) for r in rows if r[idx] is not None]
-        if len(y)<8:
-            return {"recent_mean":.34,"last_value":.33,"trend":.33}
-        cut=min(48,len(y)-4)
-        train=y[:-cut]
-        test=y[-cut:]
-        mean=sum(train)/len(train)
-        last=train[-1]
-        slope=(train[-1]-train[0])/(len(train)-1) if len(train)>1 else 0.0
-        preds={"recent_mean":[mean]*len(test),"last_value":[last]*len(test),
-               "trend":[last+slope*(i+1) for i in range(len(test))]}
-        errors={k:sum(abs(a-b) for a,b in zip(test,v))/len(test) for k,v in preds.items()}
-        inv={k:1.0/(v+1e-9) for k,v in errors.items()}
-        total=sum(inv.values())
-        return {k:round(v/total,4) for k,v in inv.items()}
+        if len(y)<24:
+            return {"recent_mean":0.0,"last_value":1.0,"trend":0.0}
+        errors={"recent_mean":[],"last_value":[],"trend":[]}
+        first=max(8,len(y)-48)
+        for target_idx in range(first,len(y)):
+            history=y[max(0,target_idx-48):target_idx]
+            mean=sum(history)/len(history)
+            last=history[-1]
+            slope=(history[-1]-history[0])/(len(history)-1) if len(history)>1 else 0.0
+            predictions={"recent_mean":mean,"last_value":last,"trend":last+slope}
+            for name,prediction in predictions.items():
+                errors[name].append(abs(y[target_idx]-prediction))
+        maes={name:sum(values)/len(values) for name,values in errors.items() if values}
+        if not maes or "last_value" not in maes:
+            return {"recent_mean":0.0,"last_value":1.0,"trend":0.0}
+        best=min(maes,key=maes.get)
+        # Never take model risk unless a candidate beats persistence by at least
+        # 5% on rolling-origin validation. Otherwise use the no-change baseline.
+        if best=="last_value" or maes[best]>=maes["last_value"]*0.95:
+            best="last_value"
+        return {name:(1.0 if name==best else 0.0)
+                for name in ("recent_mean","last_value","trend")}
+
+    def _horizon_candidate_values(values, origin, sample_steps, interval_seconds):
+        """Build forecast features from elapsed-time windows, never raw row counts."""
+        import math
+        import statistics
+        if not values or origin < 0 or origin >= len(values):
+            return {}
+        interval=max(1.0,float(interval_seconds))
+        period_24h=max(1,int(round(24.0*3600.0/interval)))
+        period_168h=max(1,int(round(168.0*3600.0/interval)))
+        recent_steps=max(2,int(round(48.0*3600.0/interval)))
+        daily_steps=max(2,period_24h)
+        lookback=max(period_168h,recent_steps,daily_steps)
+        history=values[max(0,origin-lookback+1):origin+1]
+        if not history:
+            return {}
+        recent=history[-min(len(history),recent_steps):]
+        daily=history[-min(len(history),daily_steps):]
+        last=float(values[origin])
+        def ewma(series,alpha):
+            value=float(series[0])
+            for item in series[1:]:
+                value=alpha*float(item)+(1.0-alpha)*value
+            return value
+        def seasonal(period):
+            # Use the most recent prior occurrence at the same phase. For horizons
+            # longer than one period, subtract enough whole periods to stay <= origin.
+            lag=((max(1,int(sample_steps))+period-1)//period)*period
+            index=origin+int(sample_steps)-lag
+            return float(values[index]) if 0<=index<=origin else last
+        slope=(float(recent[-1])-float(recent[0]))/(len(recent)-1) if len(recent)>1 else 0.0
+        decay_steps=max(1.0,6.0*3600.0/interval)
+        damped_steps=decay_steps*(1.0-math.exp(-max(1.0,float(sample_steps))/decay_steps))
+        return {
+            "recent_mean":statistics.fmean(float(v) for v in recent),
+            "last_value":last,
+            "trend":last+slope*damped_steps,
+            "mean_24":statistics.fmean(float(v) for v in daily),
+            "median_24":statistics.median(float(v) for v in daily),
+            "seasonal_24h":seasonal(period_24h),
+            "seasonal_168h":seasonal(period_168h),
+            "ewma_02":ewma(recent,0.2),
+            "ewma_05":ewma(recent,0.5),
+        }
+
+    def _horizon_candidate_values(values, origin, sample_steps, interval_seconds):
+        """Build forecast features from elapsed-time windows, never raw row counts."""
+        import math
+        import statistics
+        if not values or origin < 0 or origin >= len(values):
+            return {}
+        interval=max(1.0,float(interval_seconds))
+        period_24h=max(1,int(round(24.0*3600.0/interval)))
+        period_168h=max(1,int(round(168.0*3600.0/interval)))
+        recent_steps=max(2,int(round(48.0*3600.0/interval)))
+        daily_steps=max(2,period_24h)
+        lookback=max(period_168h,recent_steps,daily_steps)
+        history=values[max(0,origin-lookback+1):origin+1]
+        if not history:
+            return {}
+        recent=history[-min(len(history),recent_steps):]
+        daily=history[-min(len(history),daily_steps):]
+        last=float(values[origin])
+        def ewma(series,alpha):
+            value=float(series[0])
+            for item in series[1:]:
+                value=alpha*float(item)+(1.0-alpha)*value
+            return value
+        def seasonal(period):
+            lag=((max(1,int(sample_steps))+period-1)//period)*period
+            index=origin+int(sample_steps)-lag
+            return float(values[index]) if 0<=index<=origin else last
+        slope=(float(recent[-1])-float(recent[0]))/(len(recent)-1) if len(recent)>1 else 0.0
+        decay_steps=max(1.0,6.0*3600.0/interval)
+        damped_steps=decay_steps*(1.0-math.exp(-max(1.0,float(sample_steps))/decay_steps))
+        return {
+            "recent_mean":statistics.fmean(float(v) for v in recent),
+            "last_value":last,
+            "trend":last+slope*damped_steps,
+            "mean_24":statistics.fmean(float(v) for v in daily),
+            "median_24":statistics.median(float(v) for v in daily),
+            "seasonal_24h":seasonal(period_24h),
+            "seasonal_168h":seasonal(period_168h),
+            "ewma_02":ewma(recent,0.2),
+            "ewma_05":ewma(recent,0.5),
+        }
+
+    def _btc_price_network_candidate(hashprice_values, price_values, network_values,
+                                      origin, sample_steps, interval_seconds, network_damping=0.25):
+        """Structural hashprice candidate from BTC price and network difficulty/hashrate."""
+        import math
+        interval=max(1.0,float(interval_seconds))
+        recent_steps=max(2,int(round(48.0*3600.0/interval)))
+        start=max(0,origin-recent_steps+1)
+        price_history=price_values[start:origin+1]
+        network_history=network_values[start:origin+1]
+        if (len(price_history)<2 or len(network_history)<2
+                or any(v is None or not math.isfinite(float(v)) or float(v)<=0 for v in price_history)
+                or any(v is None or not math.isfinite(float(v)) or float(v)<=0 for v in network_history)):
+            return None
+        horizon_hours=max(0.0,float(sample_steps)*interval/3600.0)
+        price_damped_hours=min(horizon_hours,24.0)*0.25
+        network_damped_hours=min(horizon_hours,24.0)*max(0.0,min(1.0,float(network_damping)))
+        def damped(series,damped_hours):
+            logs=[math.log(float(v)) for v in series]
+            elapsed_hours=max(1e-9,(len(logs)-1)*interval/3600.0)
+            slope=(logs[-1]-logs[0])/elapsed_hours
+            return math.exp(max(-50.0,min(50.0,logs[-1]+slope*damped_hours)))
+        predicted_price=damped(price_history,price_damped_hours)
+        predicted_network=damped(network_history,network_damped_hours)
+        current_price=float(price_values[origin])
+        current_network=float(network_values[origin])
+        current_hashprice=float(hashprice_values[origin])
+        if min(current_price,current_network,predicted_price,predicted_network)<=0:
+            return None
+        return max(0.0,current_hashprice*(predicted_price/current_price)*(current_network/predicted_network))
+
+    def _adaptive_horizon_weights(values, sample_steps, interval_seconds=300.0,
+                                  log_scale=False, btc_price_values=None, network_values=None):
+        import math
+        import statistics
+        direct_names=("recent_mean","last_value","trend","mean_24","median_24",
+                      "seasonal_24h","seasonal_168h","ewma_02","ewma_05")
+        exogenous_ready=(btc_price_values is not None and network_values is not None
+            and len(btc_price_values)==len(values) and len(network_values)==len(values)
+            and all(v is not None and math.isfinite(float(v)) and float(v)>0 for v in btc_price_values)
+            and all(v is not None and math.isfinite(float(v)) and float(v)>0 for v in network_values))
+        structural_names=("btc_price_network_structural","btc_price_trend_network_hold")
+        names=direct_names+(structural_names if exogenous_ready else ())
+        fallback={name:(1.0 if name=="last_value" else 0.0) for name in names}
+        interval=max(1.0,float(interval_seconds))
+        weekly_steps=max(1,int(round(168.0*3600.0/interval)))
+        origin_stride=max(1,math.ceil(sample_steps/8))  # at most eight overlapping forecast windows per horizon
+        minimum_training_origins=32  # 24 fit origins plus 8 chronological holdout origins
+        if sample_steps<1 or len(values)<weekly_steps+sample_steps+minimum_training_origins*origin_stride:
+            return fallback
+        model_values=[math.log(max(float(v),1e-12)) for v in values] if log_scale else [float(v) for v in values]
+        errors={name:[] for name in names}
+        first=max(weekly_steps,len(values)-sample_steps-120*origin_stride)
+        for origin in range(first,len(values)-sample_steps,origin_stride):
+            candidates=_horizon_candidate_values(model_values,origin,sample_steps,interval)
+            if log_scale:
+                candidates={name:math.exp(max(-50.0,min(50.0,value))) for name,value in candidates.items()}
+            if exogenous_ready:
+                structural=_btc_price_network_candidate(
+                    values,btc_price_values,network_values,origin,sample_steps,interval,
+                    network_damping=0.25)
+                network_hold=_btc_price_network_candidate(
+                    values,btc_price_values,network_values,origin,sample_steps,interval,
+                    network_damping=0.0)
+                if structural is not None:
+                    candidates["btc_price_network_structural"]=structural
+                if network_hold is not None:
+                    candidates["btc_price_trend_network_hold"]=network_hold
+            actual=float(values[origin+sample_steps])
+            for name in names:
+                if name in candidates:
+                    errors[name].append(abs(actual-candidates[name]))
+        count=len(errors["last_value"])
+        split=int(count*0.75)
+        if split<24 or count-split<8:
+            return fallback
+        train_maes={name:statistics.fmean(series[:split]) for name,series in errors.items()}
+        best=min(train_maes,key=train_maes.get)
+        if best!="last_value":
+            baseline=errors["last_value"][split:]
+            candidate=errors[best][split:]
+            baseline_mae=statistics.fmean(baseline)
+            candidate_mae=statistics.fmean(candidate)
+            skill=1.0-candidate_mae/baseline_mae if baseline_mae>1e-12 else None
+            block_size=max(1,len(candidate)//4)
+            stable=True
+            for block in range(4):
+                start=block*block_size
+                end=len(candidate) if block==3 else min(len(candidate),(block+1)*block_size)
+                if end<=start or statistics.fmean(candidate[start:end])>=statistics.fmean(baseline[start:end]):
+                    stable=False
+                    break
+            if skill is None or skill<0.05 or not stable:
+                best="last_value"
+        return {name:(1.0 if name==best else 0.0) for name in names}
 
     def _ensemble_forecast(c, series_key, horizon, fallback):
-        weights=_adaptive_model_weights(c,series_key)
-        rows=_eligible_market_rows(c,48)
-        idx={"btc":0,"gpu":1,"energy":2}[series_key]
-        y=[float(r[idx]) for r in rows if r[idx] is not None]
-        if not y: return [fallback]*horizon,weights
-        mean=sum(y)/len(y); last=y[-1]
-        slope=(y[-1]-y[0])/(len(y)-1) if len(y)>1 else 0
+        import math
+        import statistics
+        rows=_eligible_market_rows(c,10000,include_ts=True,require_site_tariff=False)
+        idx={"btc":1,"gpu":2,"energy":3}[series_key]
+        valid=[r for r in rows if r[idx] is not None]
+        y=[float(r[idx]) for r in valid]
+        if not y:
+            return [fallback]*horizon,{"method":"unverified_fallback"}
+        timestamps=[float(r[0]) for r in valid]
+        gaps=[timestamps[i]-timestamps[i-1] for i in range(1,len(timestamps))
+              if timestamps[i]>timestamps[i-1]]
+        interval_seconds=statistics.median(gaps) if gaps else 300.0
+        if interval_seconds<=0:
+            interval_seconds=300.0
+        log_scale=series_key=="btc"
+        price_values=[r[4] for r in valid] if series_key=="btc" else None
+        network_values=None
+        if series_key=="btc":
+            hashrate=[r[5] for r in valid]
+            difficulty=[r[6] for r in valid]
+            if all(v is not None and float(v)>0 for v in hashrate):
+                network_values=hashrate
+            elif all(v is not None and float(v)>0 for v in difficulty):
+                network_values=difficulty
+        model_values=[math.log(max(v,1e-12)) for v in y] if log_scale else y
+        weights_by_horizon={}
+        training_ready_by_horizon={}
         out=[]
+        weekly_steps=max(1,round(168.0*3600.0/interval_seconds))
         for h in range(1,horizon+1):
-            pred=(weights["recent_mean"]*mean + weights["last_value"]*last +
-                  weights["trend"]*(last+slope*h))
-            out.append(pred)
-        return out,weights
+            sample_steps=max(1,round((h*3600.0)/interval_seconds))
+            minimum_training_origins=32
+            minimum_history=weekly_steps+sample_steps+minimum_training_origins*max(1,math.ceil(sample_steps/8))
+            training_ready_by_horizon[str(h)]=len(y)>=minimum_history
+            weights=_adaptive_horizon_weights(y,sample_steps,interval_seconds,log_scale=log_scale,
+                btc_price_values=price_values,network_values=network_values)
+            candidates=_horizon_candidate_values(model_values,len(y)-1,sample_steps,interval_seconds)
+            if log_scale:
+                candidates={name:math.exp(max(-50.0,min(50.0,value))) for name,value in candidates.items()}
+            if price_values is not None and network_values is not None:
+                structural=_btc_price_network_candidate(y,price_values,network_values,
+                    len(y)-1,sample_steps,interval_seconds,network_damping=0.25)
+                network_hold=_btc_price_network_candidate(y,price_values,network_values,
+                    len(y)-1,sample_steps,interval_seconds,network_damping=0.0)
+                if structural is not None:
+                    candidates["btc_price_network_structural"]=structural
+                if network_hold is not None:
+                    candidates["btc_price_trend_network_hold"]=network_hold
+            pred=sum(weights[name]*candidates.get(name,y[-1]) for name in weights)
+            out.append(max(0.0,pred))
+            weights_by_horizon[str(h)]=weights
+        return out,{"method":"elapsed_time_horizon_specific_rolling_origin",
+                    "sample_interval_seconds":round(interval_seconds,2),
+                    "history_observations":len(y),"history_hours":round(len(y)*interval_seconds/3600.0,2),
+                     "training_ready_by_horizon":training_ready_by_horizon,
+                     "minimum_training_origins":32,
+                    "btc_log_scale":log_scale,
+                    "btc_exogenous_fields_used":bool(price_values is not None and network_values is not None
+                        and all(v is not None and float(v)>0 for v in price_values)
+                        and all(v is not None and float(v)>0 for v in network_values)),
+                    "weights_by_horizon":weights_by_horizon}
 
     def _model_select(c):
-        rows=_eligible_market_rows(c,168,include_ts=True)
+        rows=_eligible_market_rows(c,168,include_ts=True,require_site_tariff=False)
         result={}
         for name,idx in (("btc",1),("gpu",2),("energy",3)):
             y=[float(r[idx]) for r in rows if r[idx] is not None]
-            if len(y)<8:
-                result[name]={"model":"recent_mean","mae":None,"samples":len(y),"ready":False}
+            errors={"recent_mean":[],"last_value":[],"trend":[]}
+            first=max(8,len(y)-48)
+            for target_idx in range(first,len(y)):
+                history=y[max(0,target_idx-48):target_idx]
+                mean=sum(history)/len(history)
+                last=history[-1]
+                slope=(history[-1]-history[0])/(len(history)-1) if len(history)>1 else 0.0
+                predictions={"recent_mean":mean,"last_value":last,"trend":last+slope}
+                for model,prediction in predictions.items():
+                    errors[model].append(abs(y[target_idx]-prediction))
+            scores={model:sum(values)/len(values) for model,values in errors.items() if values}
+            if not scores:
+                result[name]={"model":"last_value","mae":None,"samples":len(y),"ready":False}
                 continue
-            cut=min(48,len(y)-4)
-            train=y[:-cut]
-            test=y[-cut:]
-            mean=sum(train)/len(train); last=train[-1]
-            preds={"recent_mean":[mean]*len(test),"last_value":[last]*len(test)}
-            slope=(train[-1]-train[0])/(len(train)-1) if len(train)>1 else 0.0
-            preds["trend"]=[last+slope*(i+1) for i in range(len(test))]
-            scores={k:sum(abs(a-b) for a,b in zip(test,v))/len(test) for k,v in preds.items()}
             best=min(scores,key=scores.get)
-            result[name]={"model":best,"mae":round(scores[best],8),"scores":{k:round(v,8) for k,v in scores.items()},"samples":len(y),"ready":len(y)>=24}
+            if best!="last_value" and scores[best]>=scores.get("last_value",float("inf"))*0.95:
+                best="last_value"
+            result[name]={"model":best,"mae":round(scores[best],8),
+                          "scores":{k:round(v,8) for k,v in scores.items()},
+                          "samples":len(y),"ready":len(y)>=24}
         return result
 
-    def _ensemble_confidence(c, series_key):
-        w=_adaptive_model_weights(c,series_key)
-        vals=list(w.values())
-        concentration=max(vals) if vals else 0.33
-        rows=_eligible_market_rows(c,48)
-        idx={"btc":0,"gpu":1,"energy":2}[series_key]
-        y=[float(r[idx]) for r in rows if r[idx] is not None]
-        if len(y)<8:
+    def _ensemble_confidence(c, series_key, horizon_hours=1):
+        import math
+        import statistics
+        rows=_eligible_market_rows(c,10000,include_ts=True,require_site_tariff=False)
+        idx={"btc":1,"gpu":2,"energy":3}[series_key]
+        valid=[r for r in rows if r[idx] is not None]
+        y=[float(r[idx]) for r in valid]
+        if len(y)<216:
             return 0.55
-        mean=sum(y)/len(y)
-        volatility=(sum(abs(v-mean) for v in y)/len(y))/(abs(mean)+1e-9)
-        stability=max(0.0,min(1.0,1.0-volatility))
-        return round(max(.55,min(.95,.55+.25*concentration+.20*stability)),3)
+        timestamps=[float(r[0]) for r in valid]
+        gaps=[timestamps[i]-timestamps[i-1] for i in range(1,len(timestamps))
+              if timestamps[i]>timestamps[i-1]]
+        interval_seconds=statistics.median(gaps) if gaps else 300.0
+        if interval_seconds<=0:
+            return 0.55
+        sample_steps=max(1,round((float(horizon_hours)*3600.0)/interval_seconds))
+        weekly_steps=max(1,round(168.0*3600.0/interval_seconds))
+        confidence_stride=max(1,math.ceil(sample_steps/8))
+        first_origin=len(y)-sample_steps-24*confidence_stride
+        if first_origin<weekly_steps+24:
+            return 0.55
+        log_scale=series_key=="btc"
+        price_values=[r[4] for r in valid] if series_key=="btc" else None
+        network_values=None
+        if series_key=="btc":
+            hashrate=[r[5] for r in valid]
+            difficulty=[r[6] for r in valid]
+            if all(v is not None and float(v)>0 for v in hashrate):
+                network_values=hashrate
+            elif all(v is not None and float(v)>0 for v in difficulty):
+                network_values=difficulty
+        model_errors=[]
+        baseline_errors=[]
+        for origin in range(first_origin,len(y)-sample_steps,confidence_stride):
+            training=y[:origin+1]
+            prices=price_values[:origin+1] if price_values is not None else None
+            networks=network_values[:origin+1] if network_values is not None else None
+            weights=_adaptive_horizon_weights(training,sample_steps,interval_seconds,log_scale=log_scale,
+                btc_price_values=prices,network_values=networks)
+            model_values=[math.log(max(v,1e-12)) for v in training] if log_scale else training
+            candidates=_horizon_candidate_values(model_values,len(training)-1,sample_steps,interval_seconds)
+            if log_scale:
+                candidates={name:math.exp(max(-50.0,min(50.0,value))) for name,value in candidates.items()}
+            if prices is not None and networks is not None:
+                structural=_btc_price_network_candidate(training,prices,networks,
+                    len(training)-1,sample_steps,interval_seconds,network_damping=0.25)
+                network_hold=_btc_price_network_candidate(training,prices,networks,
+                    len(training)-1,sample_steps,interval_seconds,network_damping=0.0)
+                if structural is not None:
+                    candidates["btc_price_network_structural"]=structural
+                if network_hold is not None:
+                    candidates["btc_price_trend_network_hold"]=network_hold
+            predicted=sum(weights[name]*candidates.get(name,training[-1]) for name in weights)
+            actual=y[origin+sample_steps]
+            model_errors.append(abs(actual-predicted))
+            baseline_errors.append(abs(actual-y[origin]))
+        if len(model_errors)<24:
+            return 0.55
+        baseline_mae=statistics.fmean(baseline_errors)
+        if baseline_mae<=1e-12:
+            return 0.55
+        skill=1.0-statistics.fmean(model_errors)/baseline_mae
+        confidence=0.55+0.40*max(0.0,min(1.0,skill))
+        return round(max(0.55,min(0.95,confidence)),3)
 
     def _settled_learning_stats(c, farm_id, strategy):
         rows=c.execute("SELECT predicted_value,actual_value,actual_best_value,regret_eur_kwh FROM decision_ledger WHERE farm_id=? AND chosen=? AND status='settled' AND predicted_value IS NOT NULL AND actual_value IS NOT NULL ORDER BY ts DESC LIMIT 100",(farm_id,strategy)).fetchall()
@@ -2751,18 +3162,25 @@ def install(app):
         if not c.execute("SELECT 1 FROM synpora_saas_farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
         learn=_forecast_learning(c,farm_id)
         models=_model_select(c)
+        models["energy"]={"model":"user_supplied_constant","mae":None,"samples":0,"ready":True,"forecasted":False}
         # Energy tariffs are site-specific user inputs; never infer them from another
         # location's spot market. Market forecasts require fresh, provenance-verified data.
         hours=max(1,min(72,x.horizon_hours))
         snapshot_freshness=_market_snapshot_freshness(c)
         try:
-            adaptive_ready=(snapshot_freshness.get("status")=="fresh" and len(_eligible_market_rows(c,8))>=8)
+            adaptive_ready=(snapshot_freshness.get("status")=="fresh" and len(_eligible_market_rows(c,24,require_site_tariff=False))>=24)
         except Exception:
             adaptive_ready=False
         if adaptive_ready:
             btc_fc,btc_w=_ensemble_forecast(c,"btc",hours,x.btc_hashprice_usd_ph_day)
             gpu_fc,gpu_w=_ensemble_forecast(c,"gpu",hours,x.gpu_hourly_usd)
-            conf={"btc":_ensemble_confidence(c,"btc"),"gpu":_ensemble_confidence(c,"gpu"),"energy":0.0}
+            for name,meta in (("btc",btc_w),("gpu",gpu_w)):
+                ready_by_horizon=meta.get("training_ready_by_horizon",{})
+                models[name]={"model":"horizon_specific_adaptive","mae":None,
+                              "samples":meta.get("history_observations",0),
+                              "ready":bool(ready_by_horizon) and all(ready_by_horizon.values()),
+                              "ready_by_horizon":ready_by_horizon}
+            conf={"btc":_ensemble_confidence(c,"btc",hours),"gpu":_ensemble_confidence(c,"gpu",hours),"energy":1.0}
             forecast_method="historical_adaptive_model_selection"
             forecast_source="fresh_external_market_data"
             market_warnings=[]
@@ -2771,6 +3189,8 @@ def install(app):
             gpu_fc=[float(x.gpu_hourly_usd)]*hours
             btc_w={"method":"unverified_user_input_fallback","weights":{}}
             gpu_w={"method":"unverified_user_input_fallback","weights":{}}
+            models["btc"]={"model":"unverified_user_input_fallback","samples":0,"ready":False}
+            models["gpu"]={"model":"unverified_user_input_fallback","samples":0,"ready":False}
             conf={"btc":0.0,"gpu":0.0,"energy":0.0}
             forecast_method="user_input_fallback_unverified"
             forecast_source="unverified_user_input"
@@ -2790,6 +3210,8 @@ def install(app):
                          "btc_hashprice_usd_ph_day":round(btc,4),"gpu_value_eur_kwh":round(gpu_v,5),"forecast_energy_cost_eur_kwh":round(energy,5),
                          "btc_value_eur_kwh":round(btc_v,5),"best_option":"AI Compute" if gpu_v>=btc_v else "BTC Mining"})
         forecast_quality=_forecast_quality(rows,models,conf,hours)
+        forecast_quality["confidence_method"]="horizon_specific_rolling_origin_holdout_vs_persistence"
+        forecast_quality["confidence_is_probability"]=False
         forecast_quality["warnings"].append("Energy cost is held at the supplied site tariff; no location-independent electricity-price forecast is applied.")
         forecast_quality["warnings"].append("Hourly PV is a flat allocation of the supplied horizon total; it is not a site-specific PV forecast.")
         forecast_quality["market_snapshot_freshness"]=snapshot_freshness
@@ -2813,16 +3235,24 @@ def install(app):
         snapshot_freshness=_market_snapshot_freshness(c)
         latest_eligible=False
         try:
-            latest_eligible=len(_eligible_market_rows(c,8))>=8
+            latest_eligible=len(_eligible_market_rows(c,24,require_site_tariff=False))>=24
             if snapshot_freshness.get("status")!="fresh" or not latest_eligible:
                 raise ValueError("No fresh provenance-verified market snapshot")
-            btc_fc,_=_ensemble_forecast(c,"btc",hours,x.btc_hashprice_usd_ph_day)
-            gpu_fc,_=_ensemble_forecast(c,"gpu",hours,x.gpu_hourly_usd)
+            btc_fc,btc_meta=_ensemble_forecast(c,"btc",hours,x.btc_hashprice_usd_ph_day)
+            gpu_fc,gpu_meta=_ensemble_forecast(c,"gpu",hours,x.gpu_hourly_usd)
+            forecast_training_ready_by_horizon={
+                "btc":btc_meta.get("training_ready_by_horizon",{}),
+                "gpu":gpu_meta.get("training_ready_by_horizon",{}),
+            }
+            forecast_training_ready=all(
+                bool(v) and all(v.values()) for v in forecast_training_ready_by_horizon.values())
             forecast_source="adaptive_market_with_site_tariff_input"
             forecast_warnings=[]
         except Exception:
             btc_fc=[x.btc_hashprice_usd_ph_day]*hours
             gpu_fc=[x.gpu_hourly_usd]*hours
+            forecast_training_ready_by_horizon={"btc":{},"gpu":{}}
+            forecast_training_ready=False
             forecast_source="input_fallback_unverified"
             forecast_warnings=["Market forecast unavailable or not fresh/provenance-verified; supplied input values are used as unverified fallbacks."]
         # Never apply an Austrian or cross-user energy forecast to this farm.
@@ -2895,7 +3325,11 @@ def install(app):
         summary["net_value_eur"]=round(summary["total_value_eur"],2)
         summary["battery_degradation_cost_eur"]=round(summary["battery_discharge_kwh"]*max(0.0,x.battery_degradation_eur_kwh),3)
         summary["net_value_eur"]=round(summary["net_value_eur"]-summary["battery_degradation_cost_eur"],2)
-        dispatch_quality={"status":"validated" if forecast_source=="adaptive_market_with_site_tariff_input" else "degraded",
+        dispatch_quality={"status":"unvalidated" if forecast_source=="adaptive_market_with_site_tariff_input" and forecast_training_ready else "degraded",
+                          "empirical_forecast_release_gate":{"status":"blocked","reason":"No independently validated all-horizon release result is persisted for this production model revision."},
+                          "market_data_status":"fresh_and_provenance_verified" if forecast_source=="adaptive_market_with_site_tariff_input" else "fallback_unverified",
+                          "forecast_training_ready":forecast_training_ready,
+                          "training_ready_by_horizon":forecast_training_ready_by_horizon,
                           "market_snapshot_freshness":snapshot_freshness,
                           "pv_profile_method":"flat_allocation_of_user_supplied_horizon_total",
                           "warnings":forecast_warnings+["Hourly PV distribution is a flat allocation of the supplied horizon total; it is not a site-specific PV forecast."]}
@@ -2933,20 +3367,33 @@ def install(app):
                 "recommendation_only":True,"hardware_write":False}
 
     @app.post("/api/v1/farms/{farm_id}/regret-analysis")
-    def regret_analysis(farm_id:str,x:ScenarioIn,authorization:str|None=Header(default=None)):
+    def regret_analysis(farm_id:str,x:RegretAnalysisIn,authorization:str|None=Header(default=None)):
         uid=user(authorization); c=init_db()
         if not c.execute("SELECT 1 FROM synpora_saas_farms WHERE id=? AND user_id=?",(farm_id,uid)).fetchone(): raise HTTPException(404,"Farm not found")
         import random
-        n=max(100,min(5000,int(x.samples))); rng=random.Random(int(x.seed)); strategies=list(_economics(x).keys()); regret={k:[] for k in strategies}; winners={k:0 for k in strategies}
+        n=max(100,min(5000,int(x.samples))); rng=random.Random(int(x.seed))
+        btc_sigma=0.20; gpu_sigma=0.20; energy_sigma=0.13
+        strategies=list(_economics(x).keys()); regret={k:[] for k in strategies}; winners={k:0 for k in strategies}
         for _ in range(n):
-            s=x.model_copy(update={"btc_hashprice_usd_ph_day":x.btc_hashprice_usd_ph_day*rng.lognormvariate(0,.18),"gpu_hourly_usd":x.gpu_hourly_usd*rng.lognormvariate(0,.15),"energy_cost_eur_kwh":x.energy_cost_eur_kwh*rng.lognormvariate(0,.20)})
+            s=x.model_copy(update={
+                "btc_hashprice_usd_ph_day":x.btc_hashprice_usd_ph_day*rng.lognormvariate(-0.5*btc_sigma*btc_sigma,btc_sigma),
+                "gpu_hourly_usd":x.gpu_hourly_usd*rng.lognormvariate(-0.5*gpu_sigma*gpu_sigma,gpu_sigma),
+                "energy_cost_eur_kwh":x.energy_cost_eur_kwh*rng.lognormvariate(-0.5*energy_sigma*energy_sigma,energy_sigma)})
             vals=_economics(s); optimum=max(vals.values())
             for k in strategies: regret[k].append(max(0,optimum-vals[k]))
             winners[max(vals,key=vals.get)]+=1
         out={}
         for k in strategies:
             rs=sorted(regret[k]); mean=sum(rs)/n; p95=rs[min(n-1,int(.95*n))]; out[k]={"mean_regret_eur_kwh":round(mean,5),"p95_regret_eur_kwh":round(p95,5),"max_regret_eur_kwh":round(rs[-1],5),"winner_probability":round(winners[k]/n,4)}
-        safest=min(out,key=lambda k:out[k]["p95_regret_eur_kwh"]); return {"farm_id":farm_id,"samples":n,"seed":int(x.seed),"strategies":out,"lowest_tail_regret":safest,"method":"stochastic_regret_analysis","recommendation_only":True}
+        safest=min(out,key=lambda k:out[k]["p95_regret_eur_kwh"])
+        dominant_share=max(winners.values())/n if n else 0.0
+        evidence_status="low_information_single_strategy_dominance" if dominant_share>=0.95 else "simulated_only_not_empirically_validated"
+        return {"farm_id":farm_id,"samples":n,"seed":int(x.seed),"strategies":out,"lowest_tail_regret":safest,
+                "regret_evidence_status":evidence_status,"regret_evidence_validated":False,
+                "dominant_strategy_share":round(dominant_share,4),
+                "method":"stochastic_regret_analysis",
+                "shock_model":{"btc_sigma":btc_sigma,"gpu_sigma":gpu_sigma,"energy_sigma":energy_sigma,"mean_preserving":True},
+                "recommendation_only":True,"hardware_write":False}
 
     class BacktestIn(BaseModel):
         min_samples: int=24
