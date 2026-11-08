@@ -93,8 +93,8 @@ jobs:
               "",
               "## Horizon-aware production forecast validation",
               "",
-              "| Tariff scenario | Horizon | Genuine OOS pairs | Fallbacks | History/separation fallbacks | Selector rejects | BTC persistence | GPU persistence | BTC selector diagnostics | GPU selector diagnostics | Total origins | History required | Additional observations for 100 OOS pairs* | Additional days* | MAE skill | 95% CI low | BTC skill | GPU skill | Release blockers | Eligible |",
-              "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|",
+              "| Tariff scenario | Horizon | OOS spacing (h) | Non-overlap | Bootstrap block (h) | Genuine OOS pairs | Fallbacks | History/separation fallbacks | Selector rejects | BTC persistence | GPU persistence | BTC selector diagnostics | GPU selector diagnostics | Total origins | History required | Additional observations for 100 OOS pairs* | Additional days* | MAE skill | 95% CI low | BTC skill | GPU skill | Release blockers | Eligible |",
+              "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|",
               "",
               "*Data-volume lower bound only. It does not imply that candidate selection, MAE skill, confidence intervals, or release approval will pass.",
           ]
@@ -115,7 +115,11 @@ jobs:
                   btc_diagnostics = json.dumps(selector_diagnostics.get("BTC", {}), sort_keys=True, separators=(",", ":"))
                   gpu_diagnostics = json.dumps(selector_diagnostics.get("GPU", {}), sort_keys=True, separators=(",", ":"))
                   lines.append(
-                      f"| {name} | {horizon}h | {metrics.get('genuine_model_pairs', metrics.get('pairs', 0))} | "
+                      f"| {name} | {horizon}h | "
+                      f"{metrics.get('history_growth_projection', {}).get('oos_pair_spacing_hours', 'n/a')} | "
+                      f"{'yes' if metrics.get('oos_windows_non_overlapping') else 'no'} | "
+                      f"{metrics.get('bootstrap_block_duration_hours', 'n/a')} | "
+                      f"{metrics.get('genuine_model_pairs', metrics.get('pairs', 0))} | "
                       f"{metrics.get('persistence_fallback_pairs', 0)} | "
                       f"{metrics.get('skipped_insufficient_model_history', 0)}/"
                       f"{metrics.get('persistence_fallback_due_insufficient_separated_origins', 0)} | "
