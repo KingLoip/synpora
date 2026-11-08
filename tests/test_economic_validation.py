@@ -547,6 +547,23 @@ class EconomicValidationTests(unittest.TestCase):
             self.assertIn("mae_skill_vs_persistence", horizon)
             self.assertIn("mae_skill_confidence_interval_95", horizon)
 
+    def test_outer_oos_origins_are_separated_by_at_least_the_forecast_horizon(self):
+        rows = [
+            {"ts": i * 300, "btc": 40.0 + 0.01 * i, "gpu": 1.0 + 0.001 * i,
+             "fx": 1.1, "gpu_power": 0.35, "gpu_util": 0.7, "gpu_fee": 0.15}
+            for i in range(200)
+        ]
+        result = MODULE.production_corrected_horizon_validation(rows, 0.20)
+        one_hour = result["horizons"]["1"]
+        # 200 five-minute observations produce 14 valid, non-overlapping 1h
+        # windows after the validator's initial 23-row warm-up. Models lack
+        # the required weekly training history, so all remain fallbacks.
+        self.assertEqual(one_hour["total_horizon_matched_origins"], 14)
+        self.assertEqual(one_hour["persistence_fallback_pairs"], 14)
+        self.assertEqual(one_hour["pairs"], 0)
+        self.assertTrue(one_hour["oos_windows_non_overlapping"])
+        self.assertEqual(one_hour["history_growth_projection"]["oos_pair_spacing_hours"], 1.0)
+
     def test_forecast_quality_gate_blocks_persistence_only_calibration(self):
         rows = []
         for i in range(38):
