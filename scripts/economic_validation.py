@@ -758,6 +758,10 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
                 reason = diagnostic.get("rejection_reason", "unknown")
                 counters = selector_diagnostics[series_name]
                 counters[reason] = counters.get(reason, 0) + 1
+                proxy_source = diagnostic.get("network_proxy_source", "unavailable")
+                if series_name == "BTC":
+                    proxy_counts = counters.setdefault("network_proxy_source_counts", {})
+                    proxy_counts[proxy_source] = proxy_counts.get(proxy_source, 0) + 1
                 candidate = diagnostic.get("best_candidate")
                 if candidate:
                     best_counts = counters.setdefault("best_candidate_counts", {})
