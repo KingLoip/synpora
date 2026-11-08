@@ -324,8 +324,9 @@ class EconomicValidationTests(unittest.TestCase):
             {"timestamp": 0.0, "hashrate_eh": 900.0, "provider": "Mempool.space live network hashrate API"},
             {"timestamp": 86400.0, "hashrate_eh": 950.0, "provider": "Mempool.space live network hashrate API"},
         ]
-        self.assertEqual(MODULE.daily_network_hashrate_at(points, 90000.0), 900.0)
-        self.assertIsNone(MODULE.daily_network_hashrate_at(points, 80000.0))
+        self.assertEqual(MODULE.daily_network_hashrate_at(points, 0.0), 900.0)
+        self.assertEqual(MODULE.daily_network_hashrate_at(points, 80000.0), 900.0)
+        self.assertEqual(MODULE.daily_network_hashrate_at(points, 86400.0), 950.0)
         self.assertEqual(MODULE.daily_network_hashrate_at(points, 180000.0), 950.0)
         untrusted = [{"timestamp": 0.0, "hashrate_eh": 999.0, "provider": "unverified"}]
         self.assertIsNone(MODULE.daily_network_hashrate_at(untrusted, 90000.0))
