@@ -683,12 +683,19 @@ def horizon_history_requirements(horizon_hours, interval_seconds):
     sample_steps = max(1, round(float(horizon_hours) * 3600.0 / interval))
     weekly_steps = max(1, round(168.0 * 3600.0 / interval))
     origin_stride = max(1, math.ceil(sample_steps / 8))
+    evaluation_origin_stride = max(1, math.ceil(float(horizon_hours) * 3600.0 / interval))
     return {
         "sample_steps": sample_steps,
         "weekly_steps": weekly_steps,
         "training_origin_stride": origin_stride,
+        "evaluation_origin_stride": evaluation_origin_stride,
+        "oos_pair_spacing_hours": round(evaluation_origin_stride * interval / 3600.0, 3),
         "model_history_required_observations": weekly_steps + sample_steps + 32 * origin_stride,
         "minimum_total_observations_for_horizon_validation": weekly_steps + 2 * sample_steps + 32 * origin_stride,
+        "minimum_total_observations_for_100_nonoverlapping_oos_pairs": (
+            weekly_steps + sample_steps + 32 * origin_stride
+            + sample_steps + 99 * evaluation_origin_stride
+        ),
     }
 
 
@@ -700,14 +707,18 @@ def oos_history_projection(horizon_hours, interval_seconds, current_observations
     selector will accept a candidate or that its MAE/CI release gates will pass.
     """
     requirements = horizon_history_requirements(horizon_hours, interval_seconds)
+    safe_stride = max(
+        requirements["evaluation_origin_stride"], max(1, int(evaluation_origin_stride)))
     required = (requirements["model_history_required_observations"]
                 + requirements["sample_steps"]
-                + max(0, int(minimum_oos_pairs) - 1) * max(1, int(evaluation_origin_stride)))
+                + max(0, int(minimum_oos_pairs) - 1) * safe_stride)
     additional = max(0, required - int(current_observations))
     cadence_days = additional * max(1.0, float(interval_seconds)) / 86400.0
     return {
         "minimum_oos_pairs": int(minimum_oos_pairs),
-        "evaluation_origin_stride": max(1, int(evaluation_origin_stride)),
+        "evaluation_origin_stride": safe_stride,
+        "oos_pair_spacing_hours": round(safe_stride * max(1.0, float(interval_seconds)) / 3600.0, 3),
+        "non_overlapping_oos_windows": True,
         "current_observations": int(current_observations),
         "minimum_total_observations_estimate": required,
         "additional_observations_estimate": additional,
@@ -736,10 +747,16 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
         btc_persistence_selector_fallbacks = 0
         gpu_persistence_selector_fallbacks = 0
         selector_diagnostics = {"BTC": {}, "GPU": {}}
-        origin_stride = max(1, len(rows) // 200)
+        expected_seconds = horizon * 3600.0
+        # Outer OOS forecast windows must not overlap. The selector's own
+        # training origins remain separately capped at eight overlapping windows.
+        origin_stride = max(1, math.ceil(expected_seconds / median_interval_seconds))
+        last_oos_origin_ts = None
         for i in range(23, len(rows) - 1, origin_stride):
             decision = rows[i]
-            expected_seconds = horizon * 3600.0
+            if (last_oos_origin_ts is not None
+                    and decision["ts"] - last_oos_origin_ts < expected_seconds):
+                continue
             target_index = min(
                 range(i + 1, len(rows)),
                 key=lambda j: abs((rows[j]["ts"] - decision["ts"]) - expected_seconds),
@@ -750,6 +767,7 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
                 skipped += 1
                 continue
             total_horizon_matched_origins += 1
+            last_oos_origin_ts = decision["ts"]
             history_rows = rows[:i + 1]
             recent_rows = history_rows[-48:]
             gaps = [recent_rows[j]["ts"] - recent_rows[j - 1]["ts"]
@@ -897,8 +915,8 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
         all_gaps = [rows[j]["ts"] - rows[j - 1]["ts"] for j in range(1, len(rows))
                     if rows[j]["ts"] > rows[j - 1]["ts"]]
         median_interval = statistics.median(all_gaps) if all_gaps else 3600.0
-        block_length = min(48, max(6, math.ceil(
-            (horizon * 3600.0) / (median_interval * origin_stride))))
+        # Six consecutive non-overlapping horizon windows per bootstrap block.
+        block_length = 6
         ci = _block_bootstrap_skill_ci(
             combined_errors, combined_baseline_errors, SEED + horizon,
             block_length=block_length,
@@ -927,6 +945,8 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
             "persistence_fallback_due_insufficient_separated_origins": insufficient_separated_origin_fallbacks,
             **history_requirements,
             "history_growth_projection": history_projection,
+            "oos_windows_non_overlapping": True,
+            "bootstrap_block_duration_hours": block_length * horizon,
             "mae_eur_per_kwh": round(model_mae, 6) if model_mae is not None else None,
             "persistence_mae_eur_per_kwh": round(baseline_mae, 6) if baseline_mae is not None else None,
             "mae_skill_vs_persistence": round(skill, 6) if skill is not None else None,
