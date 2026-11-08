@@ -3385,7 +3385,15 @@ def install(app):
         out={}
         for k in strategies:
             rs=sorted(regret[k]); mean=sum(rs)/n; p95=rs[min(n-1,int(.95*n))]; out[k]={"mean_regret_eur_kwh":round(mean,5),"p95_regret_eur_kwh":round(p95,5),"max_regret_eur_kwh":round(rs[-1],5),"winner_probability":round(winners[k]/n,4)}
-        safest=min(out,key=lambda k:out[k]["p95_regret_eur_kwh"]); return {"farm_id":farm_id,"samples":n,"seed":int(x.seed),"strategies":out,"lowest_tail_regret":safest,"method":"stochastic_regret_analysis","shock_model":{"btc_sigma":btc_sigma,"gpu_sigma":gpu_sigma,"energy_sigma":energy_sigma,"mean_preserving":True},"recommendation_only":True,"hardware_write":False}
+        safest=min(out,key=lambda k:out[k]["p95_regret_eur_kwh"])
+        dominant_share=max(winners.values())/n if n else 0.0
+        evidence_status="low_information_single_strategy_dominance" if dominant_share>=0.95 else "simulated_only_not_empirically_validated"
+        return {"farm_id":farm_id,"samples":n,"seed":int(x.seed),"strategies":out,"lowest_tail_regret":safest,
+                "regret_evidence_status":evidence_status,"regret_evidence_validated":False,
+                "dominant_strategy_share":round(dominant_share,4),
+                "method":"stochastic_regret_analysis",
+                "shock_model":{"btc_sigma":btc_sigma,"gpu_sigma":gpu_sigma,"energy_sigma":energy_sigma,"mean_preserving":True},
+                "recommendation_only":True,"hardware_write":False}
 
     class BacktestIn(BaseModel):
         min_samples: int=24
