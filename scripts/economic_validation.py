@@ -607,6 +607,30 @@ def horizon_history_requirements(horizon_hours, interval_seconds):
     }
 
 
+def oos_history_projection(horizon_hours, interval_seconds, current_observations,
+                          evaluation_origin_stride, minimum_oos_pairs=100):
+    """Estimate the minimum history needed to collect the required OOS pairs.
+
+    This is a data-volume lower bound only: it does not predict that the model
+    selector will accept a candidate or that its MAE/CI release gates will pass.
+    """
+    requirements = horizon_history_requirements(horizon_hours, interval_seconds)
+    required = (requirements["model_history_required_observations"]
+                + requirements["sample_steps"]
+                + max(0, int(minimum_oos_pairs) - 1) * max(1, int(evaluation_origin_stride)))
+    additional = max(0, required - int(current_observations))
+    cadence_days = additional * max(1.0, float(interval_seconds)) / 86400.0
+    return {
+        "minimum_oos_pairs": int(minimum_oos_pairs),
+        "evaluation_origin_stride": max(1, int(evaluation_origin_stride)),
+        "current_observations": int(current_observations),
+        "minimum_total_observations_estimate": required,
+        "additional_observations_estimate": additional,
+        "estimated_additional_days_at_current_cadence": round(cadence_days, 2),
+        "data_only_lower_bound_not_release_prediction": True,
+    }
+
+
 def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 24, 72)):
     """Validate the corrected production forecast at the API's actual hour horizons."""
     results = {}
@@ -800,6 +824,8 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
             for value in per_strategy.values()
         )
         history_requirements = horizon_history_requirements(horizon, median_interval_seconds)
+        history_projection = oos_history_projection(
+            horizon, median_interval_seconds, len(rows), origin_stride, minimum_oos_pairs=100)
         results[str(horizon)] = {
             "horizon_hours": horizon,
             "pairs": pairs,
@@ -815,6 +841,7 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
             "skipped_insufficient_model_history": insufficient_history_skipped,
             "persistence_fallback_due_insufficient_separated_origins": insufficient_separated_origin_fallbacks,
             **history_requirements,
+            "history_growth_projection": history_projection,
             "mae_eur_per_kwh": round(model_mae, 6) if model_mae is not None else None,
             "persistence_mae_eur_per_kwh": round(baseline_mae, 6) if baseline_mae is not None else None,
             "mae_skill_vs_persistence": round(skill, 6) if skill is not None else None,
