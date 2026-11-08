@@ -74,7 +74,9 @@ def daily_network_hashrate_at(history_points, timestamp):
     for point in history_points:
         stamp = finite(point.get("timestamp")) if isinstance(point, dict) else None
         value = finite(point.get("hashrate_eh")) if isinstance(point, dict) else None
-        if stamp is None or value is None or value <= 0:
+        if (not isinstance(point, dict)
+                or point.get("provider") != "Mempool.space live network hashrate API"
+                or stamp is None or value is None or value <= 0):
             continue
         available_at = stamp + 86400.0
         age = float(timestamp) - available_at
@@ -95,7 +97,8 @@ def observations_from_history(raw):
                 if isinstance(point, dict):
                     stamp = finite(point.get("timestamp"))
                     value = finite(point.get("hashrate_eh"))
-                    if stamp is not None and value is not None and stamp > 0 and value > 0:
+                    if (point.get("provider") == "Mempool.space live network hashrate API"
+                            and stamp is not None and value is not None and stamp > 0 and value > 0):
                         history_points.append({"timestamp": stamp, "hashrate_eh": value})
     history_points = list({point["timestamp"]: point for point in history_points}.values())
     for item in raw if isinstance(raw, list) else []:
