@@ -84,8 +84,8 @@ class ChronologicalForecastRegressionTests(unittest.TestCase):
         self.assertEqual(result["difficulty"]["value"], 148e12)
         self.assertEqual(result["networkHashrate"]["observed_at"], 1794000000.0)
         self.assertEqual(result["networkHashrateHistory"], [
-            {"timestamp": 1791504000.0, "hashrate_eh": 900.0},
-            {"timestamp": 1791590400.0, "hashrate_eh": 950.0},
+            {"timestamp": 1791504000.0, "hashrate_eh": 900.0, "provider": "Mempool.space live network hashrate API"},
+            {"timestamp": 1791590400.0, "hashrate_eh": 950.0, "provider": "Mempool.space live network hashrate API"},
         ])
         self.assertEqual(observe({"currentHashrate": -1, "currentDifficulty": "bad"}, 1.0), {})
 
@@ -96,8 +96,8 @@ class ChronologicalForecastRegressionTests(unittest.TestCase):
         exec(compile(ast.fix_missing_locations(isolated), "<daily-hashrate-alignment-test>", "exec"), namespace)
         lookup = namespace["_daily_network_hashrate_at"]
         points = [
-            {"timestamp": 0.0, "hashrate_eh": 900.0},
-            {"timestamp": 86400.0, "hashrate_eh": 950.0},
+            {"timestamp": 0.0, "hashrate_eh": 900.0, "provider": "Mempool.space live network hashrate API"},
+            {"timestamp": 86400.0, "hashrate_eh": 950.0, "provider": "Mempool.space live network hashrate API"},
         ]
         self.assertEqual(lookup(points, 90000.0), 900.0)
         self.assertIsNone(lookup(points, 80000.0))
