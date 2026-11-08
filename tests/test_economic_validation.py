@@ -345,11 +345,11 @@ class EconomicValidationTests(unittest.TestCase):
                 "network_hashrate_history": history,
             }}
         history = [
-            {"timestamp": 0.0, "hashrate_eh": 900.0},
-            {"timestamp": 86400.0, "hashrate_eh": 950.0},
+            {"timestamp": 1000.0, "hashrate_eh": 900.0},
+            {"timestamp": 87400.0, "hashrate_eh": 950.0},
         ]
         rows, rejected = MODULE.observations_from_history([
-            payload(90000.0, history), payload(180000.0, history)])
+            payload(91000.0, history), payload(181000.0, history)])
         self.assertEqual(rejected, 0)
         self.assertEqual(rows[0]["network_hashrate"], 900.0)
         self.assertEqual(rows[0]["network_hashrate_source"], "mempool_daily_hashrate_history")
