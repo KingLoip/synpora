@@ -77,8 +77,8 @@ class ProductionValidatorSelectorParityTests(unittest.TestCase):
     def test_both_selectors_fail_closed_before_32_separated_origins_exist(self):
         sample_steps = 288
         stride = math.ceil(sample_steps / 8)
-        weekly_steps = 7 * 24 * 12
-        values, prices, network = self.fixture(weekly_steps + sample_steps + 32 * stride - 1)
+        minimum_feature_history_steps = 48 * 12
+        values, prices, network = self.fixture(minimum_feature_history_steps + sample_steps + 32 * stride - 1)
         production_weights = self.production["_adaptive_horizon_weights"](
             values, sample_steps, 300.0)
         validator_weights = self.validator["corrected_forecast_weights"](
