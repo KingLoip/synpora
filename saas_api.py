@@ -1439,7 +1439,8 @@ def install(app):
                 ok=False; number=None; age=None; provider="unknown"; meta={}
             field={"available":bool(ok),"source":"external" if ok else "missing","value":number if ok else None}
             if ok:
-                field.update({"provider":provider,"age_seconds":round(max(0.0,age),1),"source_url":meta.get("source_url")})
+                field.update({"provider":provider,"age_seconds":round(max(0.0,age),1),
+                    "observed_at":float(meta.get("observed_at")),"source_url":meta.get("source_url")})
             observed[name]=field
         configured=bool(ext.get("_configuredFeedConfigured") or ext.get("_configuredFeedAccepted"))
         accepted=bool(ext.get("_configuredFeedAccepted"))
@@ -1472,7 +1473,8 @@ def install(app):
                 provider="unknown"
             if fresh:
                 observed[name]={"available":True,"source":"external","value":float(value),
-                    "provider":provider,"age_seconds":round(max(0.0,age),1) if age is not None else None}
+                    "provider":provider,"age_seconds":round(max(0.0,age),1) if age is not None else None,
+                    "observed_at":float(meta.get("observed_at"))}
                 if meta.get("source_url"):
                     observed[name]["source_url"]=meta["source_url"]
                 if meta.get("license"):
