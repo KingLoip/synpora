@@ -127,6 +127,17 @@ def observations_from_history(raw):
                     or age is None or age < -60 or age > 900):
                 return None
             return value
+        def external_observed_at(key):
+            field = fields.get(key) if isinstance(fields, dict) else None
+            if not isinstance(field, dict) or field.get("source") != "external":
+                return None
+            observed_at = finite(field.get("observed_at"))
+            age = finite(field.get("age_seconds"))
+            # Older stored snapshots predate the explicit field. Reconstruct the
+            # source time from the collection timestamp and the recorded source age.
+            if observed_at is None and age is not None:
+                observed_at = ts - age
+            return observed_at if observed_at is not None and observed_at > 0 else None
         network_hashrate = optional_external("network_hashrate_eh")
         network_hashrate_source = "network_hashrate" if network_hashrate is not None else "unavailable"
         if network_hashrate is None:
@@ -136,11 +147,13 @@ def observations_from_history(raw):
         result.append({
             "ts": ts,
             "btc": float(payload["btc_hashprice_usd_ph_day"]),
+            "btc_observed_at": external_observed_at("btc_hashprice_usd_ph_day"),
             "btc_price": optional_external("btc_price_usd"),
             "network_hashrate": network_hashrate,
             "network_hashrate_source": network_hashrate_source,
             "btc_difficulty": optional_external("btc_difficulty"),
             "gpu": float(payload["gpu_l40s_usd_hour"]),
+            "gpu_observed_at": external_observed_at("gpu_l40s_usd_hour"),
             "fx": float(payload["eur_usd"]),
             "gpu_power": optional("gpu_l40s_power_kw", 0.35),
             "gpu_util": optional("gpu_utilization", 0.70, 0.0, 1.0),
@@ -748,6 +761,10 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
         insufficient_history_skipped = 0
         insufficient_separated_origin_fallbacks = 0
         total_horizon_matched_origins = 0
+        stale_source_observation_pairs = 0
+        stale_btc_source_observation_pairs = 0
+        stale_gpu_source_observation_pairs = 0
+        source_timestamp_gate_applied = False
         persistence_fallback_pairs = 0
         selector_rejection_fallback_pairs = 0
         btc_persistence_selector_fallbacks = 0
@@ -774,6 +791,28 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
                 continue
             total_horizon_matched_origins += 1
             last_oos_origin_ts = decision["ts"]
+            source_keys = ("btc_observed_at", "gpu_observed_at")
+            source_metadata_present = any(
+                key in decision or key in target for key in source_keys)
+            if source_metadata_present:
+                source_timestamp_gate_applied = True
+                btc_decision_source = finite(decision.get("btc_observed_at"))
+                btc_target_source = finite(target.get("btc_observed_at"))
+                gpu_decision_source = finite(decision.get("gpu_observed_at"))
+                gpu_target_source = finite(target.get("gpu_observed_at"))
+                btc_source_advanced = (
+                    btc_decision_source is not None and btc_target_source is not None
+                    and btc_target_source > btc_decision_source)
+                gpu_source_advanced = (
+                    gpu_decision_source is not None and gpu_target_source is not None
+                    and gpu_target_source > gpu_decision_source)
+                if not btc_source_advanced or not gpu_source_advanced:
+                    stale_source_observation_pairs += 1
+                    if not btc_source_advanced:
+                        stale_btc_source_observation_pairs += 1
+                    if not gpu_source_advanced:
+                        stale_gpu_source_observation_pairs += 1
+                    continue
             history_rows = rows[:i + 1]
             recent_rows = history_rows[-48:]
             gaps = [recent_rows[j]["ts"] - recent_rows[j - 1]["ts"]
@@ -983,6 +1022,10 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
             "total_horizon_matched_origins": total_horizon_matched_origins,
             "persistence_fallback_pairs": persistence_fallback_pairs,
             "selector_rejection_fallback_pairs": selector_rejection_fallback_pairs,
+            "source_timestamp_gate_applied": source_timestamp_gate_applied,
+            "stale_source_observation_pairs": stale_source_observation_pairs,
+            "stale_btc_source_observation_pairs": stale_btc_source_observation_pairs,
+            "stale_gpu_source_observation_pairs": stale_gpu_source_observation_pairs,
             "btc_persistence_selector_fallbacks": btc_persistence_selector_fallbacks,
             "gpu_persistence_selector_fallbacks": gpu_persistence_selector_fallbacks,
             "selector_diagnostics": selector_diagnostics,
