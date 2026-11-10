@@ -944,7 +944,7 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
             )
             independent_ci = _block_bootstrap_skill_ci(
                 model_series, baseline_series, SEED + horizon + (1 if strategy == "BTC Mining" else 2),
-                block_length=block_length,
+                block_length=6,
             )
             independent_per_strategy[strategy] = {
                 "pairs": len(model_series),
