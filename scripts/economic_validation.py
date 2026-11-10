@@ -527,15 +527,17 @@ def corrected_forecast_weights(values, sample_steps=1, interval_seconds=300.0, l
             diagnostics.update({"rejection_reason": reason,
                                 "network_proxy_source": network_source, **values})
     interval = max(1.0, float(interval_seconds))
-    weekly_steps = max(1, round(168.0 * 3600.0 / interval))
+    # 48h context is enough for non-seasonal candidates. The weekly seasonal
+    # candidate stays equal to persistence until a full 168h window is available.
+    minimum_feature_history_steps = max(2, round(48.0 * 3600.0 / interval))
     origin_stride = max(1, math.ceil(sample_steps / 8))
     minimum_training_origins = 32  # 24 fit origins plus 8 chronological holdout origins
-    if sample_steps < 1 or len(values) < weekly_steps + sample_steps + minimum_training_origins * origin_stride:
+    if sample_steps < 1 or len(values) < minimum_feature_history_steps + sample_steps + minimum_training_origins * origin_stride:
         record_diagnostic("insufficient_history", training_origins=0, candidate_count=0)
         return fallback
     model_values = [math.log(max(float(v), 1e-12)) for v in values] if log_scale else [float(v) for v in values]
     errors = {name: [] for name in names}
-    first = max(weekly_steps, len(values) - sample_steps - 120 * origin_stride)
+    first = max(minimum_feature_history_steps - 1, len(values) - sample_steps - 120 * origin_stride)
     for origin in range(first, len(values) - sample_steps, origin_stride):
         candidates = _horizon_candidate_values(model_values, origin, sample_steps, interval)
         if log_scale:
@@ -682,18 +684,20 @@ def horizon_history_requirements(horizon_hours, interval_seconds):
     interval = max(1.0, float(interval_seconds))
     sample_steps = max(1, round(float(horizon_hours) * 3600.0 / interval))
     weekly_steps = max(1, round(168.0 * 3600.0 / interval))
+    minimum_feature_history_steps = max(2, round(48.0 * 3600.0 / interval))
     origin_stride = max(1, math.ceil(sample_steps / 8))
     evaluation_origin_stride = max(1, math.ceil(float(horizon_hours) * 3600.0 / interval))
     return {
         "sample_steps": sample_steps,
         "weekly_steps": weekly_steps,
+        "minimum_feature_history_steps": minimum_feature_history_steps,
         "training_origin_stride": origin_stride,
         "evaluation_origin_stride": evaluation_origin_stride,
         "oos_pair_spacing_hours": round(evaluation_origin_stride * interval / 3600.0, 3),
-        "model_history_required_observations": weekly_steps + sample_steps + 32 * origin_stride,
-        "minimum_total_observations_for_horizon_validation": weekly_steps + 2 * sample_steps + 32 * origin_stride,
+        "model_history_required_observations": minimum_feature_history_steps + sample_steps + 32 * origin_stride,
+        "minimum_total_observations_for_horizon_validation": minimum_feature_history_steps + 2 * sample_steps + 32 * origin_stride,
         "minimum_total_observations_for_100_nonoverlapping_oos_pairs": (
-            weekly_steps + sample_steps + 32 * origin_stride
+            minimum_feature_history_steps + sample_steps + 32 * origin_stride
             + sample_steps + 99 * evaluation_origin_stride
         ),
     }
@@ -775,13 +779,13 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
                     if recent_rows[j]["ts"] > recent_rows[j - 1]["ts"]]
             interval_seconds = statistics.median(gaps) if gaps else median_interval_seconds
             sample_steps = max(1, round(horizon * 3600.0 / interval_seconds))
-            weekly_steps = max(1, round(168.0 * 3600.0 / interval_seconds))
+            minimum_feature_history_steps = max(2, round(48.0 * 3600.0 / interval_seconds))
             minimum_training_origins = 32
             training_origin_stride = max(1, math.ceil(sample_steps / 8))
-            selector_minimum_history = weekly_steps + sample_steps + minimum_training_origins * training_origin_stride
+            selector_minimum_history = minimum_feature_history_steps + sample_steps + minimum_training_origins * training_origin_stride
             # Persistence fallback is safe operationally, but is not evidence
             # that the learned horizon model is validated.
-            if len(history_rows) < weekly_steps + sample_steps + 32:
+            if len(history_rows) < minimum_feature_history_steps + sample_steps + 32:
                 insufficient_history_skipped += 1
                 persistence_fallback_pairs += 1
                 continue
