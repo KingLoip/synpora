@@ -332,6 +332,27 @@ class EconomicValidationTests(unittest.TestCase):
         self.assertEqual(observations[0]["btc_observed_at"], timestamp - 12.0)
         self.assertEqual(observations[0]["gpu_observed_at"], timestamp - 24.0)
 
+    def test_history_parser_drops_repeated_or_out_of_order_gpu_source_observations(self):
+        timestamp = 1_800_000_000.0
+        raw = []
+        for offset, gpu_age in ((0.0, 24.0), (720.0, 900.0)):
+            payload = {
+                "btc_hashprice_usd_ph_day": 32.0,
+                "gpu_l40s_usd_hour": 1.25,
+                "eur_usd": 1.10,
+                "data_quality": {
+                    "fields": {
+                        "btc_hashprice_usd_ph_day": external_field(12.0),
+                        "gpu_l40s_usd_hour": external_field(gpu_age),
+                        "eur_usd": external_field(3600.0),
+                    }
+                },
+            }
+            raw.append({"timestamp": timestamp + offset, "data": payload})
+        observations, rejected = MODULE.observations_from_history(raw)
+        self.assertEqual(len(observations), 1)
+        self.assertEqual(rejected, 1)
+
     def test_horizon_validation_excludes_reused_source_observations(self):
         rows = [
             {
