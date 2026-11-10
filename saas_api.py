@@ -2472,14 +2472,16 @@ def install(app):
         names=direct_names+(structural_names if exogenous_ready else ())
         fallback={name:(1.0 if name=="last_value" else 0.0) for name in names}
         interval=max(1.0,float(interval_seconds))
-        weekly_steps=max(1,int(round(168.0*3600.0/interval)))
+        # Non-seasonal candidates need 48h of context; the 168h seasonal
+        # candidate remains a persistence fallback until a full week exists.
+        minimum_feature_history_steps=max(2,int(round(48.0*3600.0/interval)))
         origin_stride=max(1,math.ceil(sample_steps/8))  # at most eight overlapping forecast windows per horizon
         minimum_training_origins=32  # 24 fit origins plus 8 chronological holdout origins
-        if sample_steps<1 or len(values)<weekly_steps+sample_steps+minimum_training_origins*origin_stride:
+        if sample_steps<1 or len(values)<minimum_feature_history_steps+sample_steps+minimum_training_origins*origin_stride:
             return fallback
         model_values=[math.log(max(float(v),1e-12)) for v in values] if log_scale else [float(v) for v in values]
         errors={name:[] for name in names}
-        first=max(weekly_steps,len(values)-sample_steps-120*origin_stride)
+        first=max(minimum_feature_history_steps-1,len(values)-sample_steps-120*origin_stride)
         for origin in range(first,len(values)-sample_steps,origin_stride):
             candidates=_horizon_candidate_values(model_values,origin,sample_steps,interval)
             if log_scale:
@@ -2564,11 +2566,11 @@ def install(app):
         weights_by_horizon={}
         training_ready_by_horizon={}
         out=[]
-        weekly_steps=max(1,round(168.0*3600.0/interval_seconds))
+        minimum_feature_history_steps=max(2,int(round(48.0*3600.0/interval_seconds)))
         for h in range(1,horizon+1):
             sample_steps=max(1,round((h*3600.0)/interval_seconds))
             minimum_training_origins=32
-            minimum_history=weekly_steps+sample_steps+minimum_training_origins*max(1,math.ceil(sample_steps/8))
+            minimum_history=minimum_feature_history_steps+sample_steps+minimum_training_origins*max(1,math.ceil(sample_steps/8))
             training_ready_by_horizon[str(h)]=len(y)>=minimum_history
             weights=_adaptive_horizon_weights(y,sample_steps,interval_seconds,log_scale=log_scale,
                 btc_price_values=price_values,network_values=network_values)
