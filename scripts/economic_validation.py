@@ -166,7 +166,23 @@ def observations_from_history(raw):
             rejected += 1
             continue
         deduped.append(row)
-    return deduped, rejected
+    # A collection snapshot is not a new market observation when either
+    # provider timestamp moved backwards or repeated a cached source quote.
+    source_deduped = []
+    last_btc_observed_at = None
+    last_gpu_observed_at = None
+    for row in deduped:
+        btc_observed_at = finite(row.get("btc_observed_at"))
+        gpu_observed_at = finite(row.get("gpu_observed_at"))
+        if (btc_observed_at is None or gpu_observed_at is None
+                or (last_btc_observed_at is not None and btc_observed_at <= last_btc_observed_at)
+                or (last_gpu_observed_at is not None and gpu_observed_at <= last_gpu_observed_at)):
+            rejected += 1
+            continue
+        source_deduped.append(row)
+        last_btc_observed_at = btc_observed_at
+        last_gpu_observed_at = gpu_observed_at
+    return source_deduped, rejected
 
 
 def economics(row, tariff, gpu_capex=0.0, btc_capex=0.0, *,
