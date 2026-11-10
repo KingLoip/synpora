@@ -316,8 +316,10 @@ class EconomicValidationTests(unittest.TestCase):
         result = MODULE.horizon_history_requirements(6, 720)
         self.assertEqual(result["sample_steps"], 30)
         self.assertEqual(result["training_origin_stride"], 4)
-        self.assertEqual(result["model_history_required_observations"], 840 + 30 + 32 * 4)
-        self.assertEqual(result["minimum_total_observations_for_horizon_validation"], 840 + 60 + 32 * 4)
+        self.assertEqual(result["weekly_steps"], 840)
+        self.assertEqual(result["minimum_feature_history_steps"], 240)
+        self.assertEqual(result["model_history_required_observations"], 240 + 30 + 32 * 4)
+        self.assertEqual(result["minimum_total_observations_for_horizon_validation"], 240 + 60 + 32 * 4)
 
     def test_daily_hashrate_history_is_used_only_after_full_bucket_and_within_age_limit(self):
         points = [
@@ -441,7 +443,7 @@ class EconomicValidationTests(unittest.TestCase):
         self.assertIn("split < 24 or count - split < 8", source)
         production_source = (Path(__file__).resolve().parents[1] / "saas_api.py").read_text(encoding="utf-8")
         self.assertIn("origin_stride=max(1,math.ceil(sample_steps/8))", production_source)
-        self.assertIn("minimum_history=weekly_steps+sample_steps+minimum_training_origins*max(1,math.ceil(sample_steps/8))", production_source)
+        self.assertIn("minimum_history=minimum_feature_history_steps+sample_steps+minimum_training_origins*max(1,math.ceil(sample_steps/8))", production_source)
         self.assertIn("confidence_stride=max(1,math.ceil(sample_steps/8))", production_source)
 
     def test_horizon_validation_excludes_persistence_fallbacks_from_oos_pairs(self):
@@ -472,7 +474,7 @@ class EconomicValidationTests(unittest.TestCase):
         self.assertIn("last_oos_origin_ts", source)
 
     def test_72h_falls_back_until_32_separated_training_origins_exist(self):
-        values = [100.0 + 0.001 * i for i in range(2637)]
+        values = [100.0 + 0.001 * i for i in range(2037)]
         weights = MODULE.corrected_forecast_weights(
             values, sample_steps=360, interval_seconds=722.0, log_scale=True)
         self.assertEqual(weights["last_value"], 1.0)
