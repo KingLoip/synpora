@@ -311,6 +311,50 @@ class EconomicValidationTests(unittest.TestCase):
         self.assertIn("holdout_skill < 0.05 or not stable", source)
         self.assertNotIn("ci[\"lower_95\"] <= 0.0", source)
 
+    def test_history_parser_preserves_source_observation_timestamps(self):
+        timestamp = 1_800_000_000.0
+        payload = {
+            "btc_hashprice_usd_ph_day": 32.0,
+            "gpu_l40s_usd_hour": 1.25,
+            "eur_usd": 1.10,
+            "data_quality": {
+                "fields": {
+                    "btc_hashprice_usd_ph_day": external_field(12.0),
+                    "gpu_l40s_usd_hour": external_field(24.0),
+                    "eur_usd": external_field(3600.0),
+                }
+            },
+        }
+        observations, rejected = MODULE.observations_from_history([
+            {"timestamp": timestamp, "data": payload}
+        ])
+        self.assertEqual(rejected, 0)
+        self.assertEqual(observations[0]["btc_observed_at"], timestamp - 12.0)
+        self.assertEqual(observations[0]["gpu_observed_at"], timestamp - 24.0)
+
+    def test_horizon_validation_excludes_reused_source_observations(self):
+        rows = [
+            {
+                "ts": i * 300.0,
+                "btc": 40.0 + 0.001 * i,
+                "gpu": 1.0 + 0.0001 * i,
+                "fx": 1.1,
+                "gpu_power": 0.35,
+                "gpu_util": 0.70,
+                "gpu_fee": 0.15,
+                "btc_observed_at": 1_700_000_000.0,
+                "gpu_observed_at": 1_700_000_000.0,
+            }
+            for i in range(1300)
+        ]
+        report = MODULE.production_corrected_horizon_validation(
+            rows, 0.05, horizons_hours=(1,))
+        horizon = report["horizons"]["1"]
+        self.assertTrue(horizon["source_timestamp_gate_applied"])
+        self.assertGreater(horizon["stale_source_observation_pairs"], 0)
+        self.assertEqual(horizon["pairs"], 0)
+        self.assertFalse(horizon["release_eligible"])
+
     def test_independent_series_metrics_survive_the_other_series_fallback(self):
         rows = [
             {
