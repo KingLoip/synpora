@@ -740,6 +740,8 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
     for horizon in horizons_hours:
         strategy_errors = {"BTC Mining": [], "AI Compute": []}
         baseline_errors = {"BTC Mining": [], "AI Compute": []}
+        independent_strategy_errors = {"BTC Mining": [], "AI Compute": []}
+        independent_baseline_errors = {"BTC Mining": [], "AI Compute": []}
         combined_errors = []
         combined_baseline_errors = []
         skipped = 0
@@ -863,10 +865,6 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
                 btc_persistence_selector_fallbacks += 1
             if not gpu_weights_are_learned:
                 gpu_persistence_selector_fallbacks += 1
-            if not (btc_weights_are_learned and gpu_weights_are_learned):
-                selector_rejection_fallback_pairs += 1
-                persistence_fallback_pairs += 1
-                continue
             predicted = dict(decision)
             predicted["btc"], predicted["gpu"] = btc_forecast, gpu_forecast
             # Market-price forecasts are independent of the site tariff, so reuse
@@ -875,6 +873,23 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
             actual_values = economics(target, tariff)
             predicted_values = economics(predicted, tariff)
             persistence_values = economics(decision, tariff)
+            learned_by_strategy = {
+                "BTC Mining": btc_weights_are_learned,
+                "AI Compute": gpu_weights_are_learned,
+            }
+            # Diagnose each market model on every origin where that model itself
+            # passed its selector. This does not promote a mixed/fallback pair into
+            # the joint release sample below.
+            for strategy, learned in learned_by_strategy.items():
+                if learned:
+                    independent_strategy_errors[strategy].append(
+                        abs(actual_values[strategy] - predicted_values[strategy]))
+                    independent_baseline_errors[strategy].append(
+                        abs(actual_values[strategy] - persistence_values[strategy]))
+            if not (btc_weights_are_learned and gpu_weights_are_learned):
+                selector_rejection_fallback_pairs += 1
+                persistence_fallback_pairs += 1
+                continue
             pair_model = []
             pair_baseline = []
             for strategy in ("BTC Mining", "AI Compute"):
@@ -915,6 +930,34 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
                 "persistence_mae_eur_per_kwh": round(baseline_series_mae, 6) if baseline_series_mae is not None else None,
                 "mae_skill_vs_persistence": round(1.0 - model_series_mae / baseline_series_mae, 6)
                 if model_series_mae is not None and baseline_series_mae and baseline_series_mae > 1e-12 else None,
+            }
+        independent_per_strategy = {}
+        for strategy in ("BTC Mining", "AI Compute"):
+            model_series = independent_strategy_errors[strategy]
+            baseline_series = independent_baseline_errors[strategy]
+            model_series_mae = statistics.fmean(model_series) if model_series else None
+            baseline_series_mae = statistics.fmean(baseline_series) if baseline_series else None
+            independent_skill = (
+                1.0 - model_series_mae / baseline_series_mae
+                if model_series_mae is not None and baseline_series_mae is not None
+                and baseline_series_mae > 1e-12 else None
+            )
+            independent_ci = _block_bootstrap_skill_ci(
+                model_series, baseline_series, SEED + horizon + (1 if strategy == "BTC Mining" else 2),
+                block_length=block_length,
+            )
+            independent_per_strategy[strategy] = {
+                "pairs": len(model_series),
+                "mae_eur_per_kwh": round(model_series_mae, 6) if model_series_mae is not None else None,
+                "persistence_mae_eur_per_kwh": round(baseline_series_mae, 6) if baseline_series_mae is not None else None,
+                "mae_skill_vs_persistence": round(independent_skill, 6) if independent_skill is not None else None,
+                "mae_skill_confidence_interval_95": independent_ci,
+                "release_eligible": bool(
+                    len(model_series) >= 100 and independent_skill is not None
+                    and independent_skill >= 0.05
+                    and independent_ci["lower_95"] is not None
+                    and independent_ci["lower_95"] > 0.0
+                ),
             }
         all_gaps = [rows[j]["ts"] - rows[j - 1]["ts"] for j in range(1, len(rows))
                     if rows[j]["ts"] > rows[j - 1]["ts"]]
@@ -957,6 +1000,7 @@ def production_corrected_horizon_validation(rows, tariff, horizons_hours=(1, 6, 
             "mae_skill_confidence_interval_95": ci,
             "bootstrap_block_length": block_length,
             "per_strategy": per_strategy,
+            "per_strategy_independent_oos": independent_per_strategy,
             "release_blockers": forecast_release_blockers(
                 pairs, skill, ci, nonnegative, persistence_fallback_pairs,
                 insufficient_separated_origin_fallbacks),
