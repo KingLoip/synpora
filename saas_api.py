@@ -2240,6 +2240,7 @@ def install(app):
             return None
 
     def _optional_external_market_observed_at(payload,key,timestamp):
+        import math
         try:
             quality=payload.get("data_quality",{})
             fields=quality.get("fields",{}) if isinstance(quality,dict) else {}
