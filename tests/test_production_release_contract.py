@@ -33,6 +33,12 @@ class ProductionReleaseContractTests(unittest.TestCase):
         self.assertIn('"observed_at":float(meta.get("observed_at"))', source)
         self.assertIn('"age_seconds":round(max(0.0,age),1)', source)
 
+    def test_production_history_deduplicates_non_monotonic_source_observations(self):
+        source = function_source("_eligible_market_rows")
+        self.assertIn("_optional_external_market_observed_at", source)
+        self.assertIn("last_btc_observed_at", source)
+        self.assertIn("last_gpu_observed_at", source)
+
     def test_dispatch_training_readiness_never_means_empirical_release(self):
         source = function_source("dispatch_plan")
         self.assertIn("forecast_training_ready=all(", source)
