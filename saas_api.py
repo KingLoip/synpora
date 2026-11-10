@@ -2239,6 +2239,22 @@ def install(app):
         except (TypeError,ValueError,OverflowError):
             return None
 
+    def _optional_external_market_observed_at(payload,key,timestamp):
+        try:
+            quality=payload.get("data_quality",{})
+            fields=quality.get("fields",{}) if isinstance(quality,dict) else {}
+            field=fields.get(key,{}) if isinstance(fields,dict) else {}
+            if (not isinstance(field,dict) or field.get("source")!="external"
+                    or field.get("available") is not True):
+                return None
+            observed=field.get("observed_at")
+            if observed is None:
+                observed=float(timestamp)-float(field.get("age_seconds"))
+            observed=float(observed)
+            return observed if math.isfinite(observed) and observed>0 else None
+        except (TypeError,ValueError,OverflowError):
+            return None
+
     def _daily_network_hashrate_at(history_points, timestamp):
         # Mempool timestamps each daily bucket at its END (UTC midnight).
         # The timestamp itself is therefore the first safe availability time.
@@ -2307,11 +2323,28 @@ def install(app):
                     network_hashrate,
                     _optional_external_market_value(payload,"btc_difficulty"),
                     network_source)
-            rows.append(values if include_ts else values[1:])
+            btc_observed_at=_optional_external_market_observed_at(
+                payload,"btc_hashprice_usd_ph_day",float(row[0]))
+            gpu_observed_at=_optional_external_market_observed_at(
+                payload,"gpu_l40s_usd_hour",float(row[0]))
+            rows.append((values,btc_observed_at,gpu_observed_at))
         # SQL fetches the newest bounded window; restore chronological order before
         # fitting or evaluating any forward-looking model.
         rows.reverse()
-        return rows
+        # Do not count repeated cached quotes or out-of-order provider snapshots as
+        # independent training observations. Keep only jointly advancing BTC/GPU data.
+        deduped=[]
+        last_btc_observed_at=None
+        last_gpu_observed_at=None
+        for values,btc_observed_at,gpu_observed_at in rows:
+            if (btc_observed_at is None or gpu_observed_at is None
+                    or (last_btc_observed_at is not None and btc_observed_at<=last_btc_observed_at)
+                    or (last_gpu_observed_at is not None and gpu_observed_at<=last_gpu_observed_at)):
+                continue
+            deduped.append(values if include_ts else values[1:])
+            last_btc_observed_at=btc_observed_at
+            last_gpu_observed_at=gpu_observed_at
+        return deduped
 
     def _adaptive_model_weights(c, series_key):
         # Calibrate weights with rolling-origin errors from the same 48-observation
