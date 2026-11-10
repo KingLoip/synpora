@@ -2,6 +2,7 @@ import importlib.util
 import inspect
 import math
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 SPEC = importlib.util.spec_from_file_location(
@@ -309,6 +310,33 @@ class EconomicValidationTests(unittest.TestCase):
         self.assertIn("valid_base = errors[\"last_value\"][split:]", source)
         self.assertIn("holdout_skill < 0.05 or not stable", source)
         self.assertNotIn("ci[\"lower_95\"] <= 0.0", source)
+
+    def test_independent_series_metrics_survive_the_other_series_fallback(self):
+        rows = [
+            {
+                "ts": i * 300.0,
+                "btc": 40.0 + 0.001 * i,
+                "gpu": 1.0 + 0.0001 * i,
+                "fx": 1.1,
+                "gpu_power": 0.35,
+                "gpu_util": 0.70,
+                "gpu_fee": 0.15,
+            }
+            for i in range(1300)
+        ]
+
+        def select_one_series(values, sample_steps, interval_seconds, log_scale=False, **kwargs):
+            return {"ewma_05": 1.0} if log_scale else {"last_value": 1.0}
+
+        with patch.object(MODULE, "corrected_forecast_weights", side_effect=select_one_series):
+            report = MODULE.production_corrected_horizon_validation(rows, 0.05, horizons_hours=(1,))
+
+        horizon = report["horizons"]["1"]
+        independent = horizon["per_strategy_independent_oos"]
+        self.assertEqual(horizon["pairs"], 0)
+        self.assertGreater(independent["BTC Mining"]["pairs"], 0)
+        self.assertEqual(independent["AI Compute"]["pairs"], 0)
+        self.assertFalse(horizon["release_eligible"])
 
     def test_history_requirement_report_uses_same_ceiling_stride_as_selector(self):
         # At a 12-minute cadence, 6h is 30 samples: ceil(30/8) = 4,
