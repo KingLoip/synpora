@@ -137,6 +137,38 @@ jobs:
                   )
           lines += [
               "",
+              "## Independent BTC/GPU model diagnostics (not a release override)",
+              "",
+              "| Tariff scenario | Horizon | BTC independent pairs | BTC MAE skill | BTC 95% CI low | BTC eligible | GPU independent pairs | GPU MAE skill | GPU 95% CI low | GPU eligible |",
+              "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+          ]
+          for name, result in corrected.items():
+              validation = result.get("empirical_risk_aware_walk_forward", {}).get(
+                  "production_corrected_horizon_validation", {})
+              for horizon, metrics in validation.get("horizons", {}).items():
+                  independent = metrics.get("per_strategy_independent_oos", {})
+                  btc = independent.get("BTC Mining", {})
+                  gpu = independent.get("AI Compute", {})
+                  def diagnostic_cell(value, percent=False):
+                      if value is None:
+                          return "n/a"
+                      return f"{value:.3%}" if percent else str(value)
+                  btc_ci = btc.get("mae_skill_confidence_interval_95", {}).get("lower_95")
+                  gpu_ci = gpu.get("mae_skill_confidence_interval_95", {}).get("lower_95")
+                  lines.append(
+                      f"| {name} | {horizon}h | {btc.get('pairs', 0)} | "
+                      f"{diagnostic_cell(btc.get('mae_skill_vs_persistence'), True)} | "
+                      f"{diagnostic_cell(btc_ci, True)} | {btc.get('release_eligible', False)} | "
+                      f"{gpu.get('pairs', 0)} | "
+                      f"{diagnostic_cell(gpu.get('mae_skill_vs_persistence'), True)} | "
+                      f"{diagnostic_cell(gpu_ci, True)} | {gpu.get('release_eligible', False)} |"
+                  )
+          lines += [
+              "",
+              "Independent per-series diagnostics do not replace the joint non-overlapping horizon release gate. "
+              "A strategy-specific fallback is excluded from that strategy's independent sample; the overall "
+              "forecast release remains blocked until the joint gate passes.",
+              "",
               "Investment validation remains separate from technical production readiness. "
               "No realized GPU payouts, BTC pool settlements, all-in electricity invoices, "
               "or metered battery outcomes are inferred from market quotes.",
