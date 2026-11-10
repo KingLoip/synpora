@@ -28,6 +28,11 @@ def function_source(name):
 
 
 class ProductionReleaseContractTests(unittest.TestCase):
+    def test_market_quality_preserves_provider_observation_timestamps(self):
+        source = function_source("_market_quality")
+        self.assertIn('"observed_at":float(meta.get("observed_at"))', source)
+        self.assertIn('"age_seconds":round(max(0.0,age),1)', source)
+
     def test_dispatch_training_readiness_never_means_empirical_release(self):
         source = function_source("dispatch_plan")
         self.assertIn("forecast_training_ready=all(", source)
