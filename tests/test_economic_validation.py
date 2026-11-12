@@ -797,6 +797,8 @@ class EconomicValidationTests(unittest.TestCase):
         })
         self.assertIn("not country-specific market quotes", MODULE.INTERNATIONAL_TARIFF_NOTE)
         self.assertIn("site-specific energy contracts", MODULE.INTERNATIONAL_TARIFF_NOTE)
+        self.assertIn("not universal revenue rates", MODULE.INTERNATIONAL_TARIFF_NOTE)
+        self.assertIn("storage opportunity costs", MODULE.INTERNATIONAL_TARIFF_NOTE)
         self.assertFalse(any("salzburg" in name.lower() or "awattar" in name.lower()
                              for name in MODULE.TARIFFS))
 
