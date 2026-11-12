@@ -26,7 +26,9 @@ INTERNATIONAL_TARIFF_NOTE = (
     "International tariff scenarios are illustrative sensitivity bands from 0.05 to 0.30 EUR/kWh, "
     "not country-specific market quotes or the user's all-in tariff. Actual deployment economics "
     "must use site-specific energy contracts, network charges, taxes, metering and fixed fees, "
-    "export remuneration, connection limits and applicable discounts."
+    "export remuneration, connection limits and applicable discounts. The 0.071 EUR/kWh battery "
+    "value and 0.055 EUR/kWh grid-export value are illustrative model defaults, not universal "
+    "revenue rates; replace them with local storage opportunity costs and settled export terms."
 )
 WINDOW = 24
 MAX_BACKTEST_GAP_MINUTES = 60.0
