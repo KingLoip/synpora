@@ -16,19 +16,18 @@ from datetime import datetime, timezone
 
 MARKET_URL = "https://synpora-production.up.railway.app/api/v1/market/history?limit=10000&compact=true"
 TARIFFS = {
-    # Current public tariff page on 2026-10-30: supplier energy component only.
-    # The first 1,500 kWh rate is conditional on the 2026 household discount.
-    "salzburg_2026_current_energy_only_standard": 0.2028,
-    "salzburg_2026_current_energy_only_first_1500_discounted": 0.12,
-    # Official product sheet explicitly says valid from 2026-11-01. Its total
-    # variable price includes level-7 network charges/taxes in Salzburg Netz
-    # GmbH's area; the first-1,500-kWh discount subtracts 8.28 ct from energy.
-    # Metering charges, free days and annual fixed fees are excluded.
-    "salzburg_2026_11_01_future_all_in_standard": 0.299351,
-    "salzburg_2026_11_01_future_all_in_first_1500_discounted": 0.216551,
-    # Transparent international sensitivity point, not the user's tariff.
-    "low_cost_international_reference": 0.05,
+    # Illustrative international sensitivity bands, not country quotes or a user tariff.
+    "international_low_cost_reference": 0.05,
+    "international_moderate_reference": 0.10,
+    "international_high_cost_reference": 0.20,
+    "international_stress_reference": 0.30,
 }
+INTERNATIONAL_TARIFF_NOTE = (
+    "International tariff scenarios are illustrative sensitivity bands from 0.05 to 0.30 EUR/kWh, "
+    "not country-specific market quotes or the user's all-in tariff. Actual deployment economics "
+    "must use site-specific energy contracts, network charges, taxes, metering and fixed fees, "
+    "export remuneration, connection limits and applicable discounts."
+)
 WINDOW = 24
 MAX_BACKTEST_GAP_MINUTES = 60.0
 RISK_AVERSION_GRID = (0.0, 0.25, 0.50, 0.75, 1.0)
@@ -1471,7 +1470,7 @@ def main():
         "limitations": [
             "A public market snapshot is not proof of an executed GPU rental, mined BTC payout, grid export settlement, or battery cycle.",
             "The model's zero-capex defaults can materially overstate compute/mining profitability.",
-            "The 20.28 ct/kWh standard and 12.00 ct/kWh discounted supplier-energy rates are the current public Strom Privat 24 page values on 2026-10-30; they exclude network charges, taxes and duties and are not all-in dispatch prices. The 29.9351/21.6551 ct/kWh all-in cases come from the linked product sheet explicitly valid from 2026-11-01, and apply only to level-7 charges in the Salzburg Netz GmbH area. They may not match another distribution area. The 1,500-kWh discount is conditional on eligible natural-person household contracts. Metering charges, free-day discounts and annual fixed fees are excluded.",
+            INTERNATIONAL_TARIFF_NOTE,
             "No hardware action, financial trade, or wallet transaction is performed.",
         ],
     }
