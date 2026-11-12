@@ -38,3 +38,23 @@ Never interpret a successful HTTP 200 from collection as proof that the data is 
 - `autonomous_control=false`
 - Recommendation-only operation
 - No GPU instances are created as part of market-data collection.
+
+
+## Forecast evidence accumulation and release gates
+
+The economic validator uses timestamped, externally sourced market snapshots. Collection time and provider observation time are separate: repeated reads of a cached quote, a stale provider response, or a persistence fallback must not be counted as a new genuine model observation.
+
+The production forecast gate is evaluated independently at 1h, 6h, 24h and 72h. Each horizon requires at least 100 genuine, non-overlapping out-of-sample pairs, at least 5% MAE skill over persistence, a positive lower 95% bootstrap confidence bound, and eligible BTC and GPU strategy selectors. A horizon that lacks enough independent history remains blocked; elapsed calendar time alone never grants eligibility.
+
+The 2026-11-12 validation run (workflow run 43298516389) observed 12 genuine 1h pairs, 1 six-hour pair, 0 twenty-four-hour pairs and 0 seventy-two-hour pairs. The validator estimated about 77.92 additional days for the 24h horizon and 287.68 days for the 72h horizon to reach the 100-pair data-volume lower bound at the observed cadence. These are planning estimates only: model skill, confidence bounds and selector quality may still fail after the sample grows.
+
+Operational requirements:
+
+1. Keep the production collector running at its configured cadence; do not backfill repeated cached quotes as new observations.
+2. Preserve provider observation timestamps, collection timestamps, data-quality provenance and exclusions so each candidate pair can be audited.
+3. Track per-horizon genuine pair counts, persistence fallbacks, selector fallbacks, MAE skill and bootstrap lower confidence bounds.
+4. Treat any missing/insufficient horizon as blocked. Do not weaken the 100-pair, 5% skill, positive confidence-bound or per-strategy requirements to obtain a green release.
+5. Keep forecast technical validation separate from investment validation. Market asking prices are not realized GPU payouts or BTC pool settlements; modeled energy prices are not all-in site invoices; battery estimates are not metered battery outcomes.
+6. Keep recommendation-only safety invariants in force: `hardware_write=false` and `autonomous_control=false`.
+
+Actual investment validation additionally requires site-specific electricity invoices and export settlements, GPU payout statements, BTC pool settlement records, hardware/capex invoices, maintenance/overhead records and metered battery/degradation evidence.
