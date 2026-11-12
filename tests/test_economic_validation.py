@@ -743,8 +743,10 @@ class EconomicValidationTests(unittest.TestCase):
                     "AI Compute": 0.18, "BTC Mining": 0.17,
                     "Battery": 0.05, "Grid": 0.03,
                 }, "decision_risk_metrics": {
-                    "AI Compute": {"mean": 0.2, "p05": -0.1, "score": 0.05},
-                    "BTC Mining": {"mean": 0.18, "p05": 0.02, "score": 0.14},
+                    "AI Compute": {"mean": 0.48, "p05": -0.19, "score": -0.0225},
+                    "BTC Mining": {"mean": 0.18, "p05": 0.02, "score": 0.06},
+                    "Battery": {"mean": 0.04, "p05": 0.03, "score": 0.0325},
+                    "Grid": {"mean": 0.055, "p05": 0.055, "score": 0.055},
                 }, "gap_minutes": 5.0,
                 "decision_timestamp": 1000 + i * 300,
                 "settlement_timestamp": 1300 + i * 300,
@@ -757,7 +759,10 @@ class EconomicValidationTests(unittest.TestCase):
         self.assertEqual(result["worst_regret_cases"][0]["best_strategy"], "BTC Mining")
         self.assertEqual(result["worst_regret_cases"][0]["decision_value_chosen_eur_per_kwh"], 0.18)
         self.assertEqual(result["worst_regret_cases"][0]["decision_value_best_eur_per_kwh"], 0.17)
-        self.assertEqual(result["worst_regret_cases"][0]["chosen_risk_metrics"]["score"], 0.05)
+        sensitivity = result["worst_regret_cases"][0]["risk_aversion_sensitivity"]
+        self.assertEqual(result["worst_regret_cases"][0]["configured_risk_aversion"], 0.75)
+        self.assertEqual([row["selected_strategy"] for row in sensitivity], ["AI Compute", "AI Compute", "AI Compute", "Grid", "Grid"])
+        self.assertEqual(sensitivity[3]["risk_aversion"], 0.75)
         self.assertEqual(result["chosen_strategy_counts"]["AI Compute"], 3)
 
     def test_backtest_excludes_noncomparable_long_snapshot_gaps(self):
