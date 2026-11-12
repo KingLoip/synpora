@@ -788,6 +788,18 @@ class EconomicValidationTests(unittest.TestCase):
         self.assertTrue(all("mean_regret_eur_per_kwh" in value
                             for value in sensitivity["results"].values()))
 
+    def test_tariff_scenarios_are_global_illustrative_bands_not_austria_specific(self):
+        self.assertEqual(MODULE.TARIFFS, {
+            "international_low_cost_reference": 0.05,
+            "international_moderate_reference": 0.10,
+            "international_high_cost_reference": 0.20,
+            "international_stress_reference": 0.30,
+        })
+        self.assertIn("not country-specific market quotes", MODULE.INTERNATIONAL_TARIFF_NOTE)
+        self.assertIn("site-specific energy contracts", MODULE.INTERNATIONAL_TARIFF_NOTE)
+        self.assertFalse(any("salzburg" in name.lower() or "awattar" in name.lower()
+                             for name in MODULE.TARIFFS))
+
     def test_investment_readiness_fails_closed_without_realized_cashflow(self):
         gate = MODULE.investment_readiness()
         self.assertEqual(gate["status"], "not_investment_validated")
