@@ -335,6 +335,30 @@ def calibrated_shrinkage_weight(history, min_samples=24):
     return max(0.0, min(1.0, weight))
 
 
+def _risk_aversion_sensitivity(strategy_metrics, levels=(0.0, 0.25, 0.50, 0.75, 1.0)):
+    """Show how the same decision-time distributions rank under alternative risk weights."""
+    usable = {
+        name: metrics for name, metrics in strategy_metrics.items()
+        if isinstance(metrics, dict) and metrics.get("mean") is not None and metrics.get("p05") is not None
+    }
+    if not usable:
+        return []
+    rows = []
+    for aversion in levels:
+        scores = {
+            name: (1.0 - aversion) * float(metrics["mean"]) + aversion * float(metrics["p05"])
+            for name, metrics in usable.items()
+        }
+        selected = max(scores, key=scores.get)
+        rows.append({
+            "risk_aversion": aversion,
+            "selected_strategy": selected,
+            "selected_score_eur_per_kwh": round(scores[selected], 6),
+            "strategy_scores_eur_per_kwh": {name: round(score, 6) for name, score in scores.items()},
+        })
+    return rows
+
+
 def summarize_backtest(pairs, label):
     if not pairs:
         return {
@@ -378,6 +402,8 @@ def summarize_backtest(pairs, label):
         "decision_value_best_eur_per_kwh": round(float(pair.get("decision_values", {}).get(pair.get("best"), 0.0)), 6),
         "chosen_risk_metrics": pair.get("decision_risk_metrics", {}).get(pair.get("chosen"), {}),
         "best_risk_metrics": pair.get("decision_risk_metrics", {}).get(pair.get("best"), {}),
+        "configured_risk_aversion": RISK_AVERSION,
+        "risk_aversion_sensitivity": _risk_aversion_sensitivity(pair.get("decision_risk_metrics", {})),
     } for pair in worst_regret_cases]
     return {
         "model": label,
