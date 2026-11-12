@@ -12,8 +12,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: synpora-economic-validation
-  cancel-in-progress: false
+  # Keep independent PR validations parallel; only cancel superseded runs for the same PR/ref.
+  # This avoids a single global queue while preserving the latest strict validation per branch.
+  group: synpora-economic-validation-${{ github.event.pull_request.number || github.event.workflow_run.head_branch || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   empirical-economic-validation:

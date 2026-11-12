@@ -16,19 +16,20 @@ from datetime import datetime, timezone
 
 MARKET_URL = "https://synpora-production.up.railway.app/api/v1/market/history?limit=10000&compact=true"
 TARIFFS = {
-    # Current public tariff page on 2026-10-30: supplier energy component only.
-    # The first 1,500 kWh rate is conditional on the 2026 household discount.
-    "salzburg_2026_current_energy_only_standard": 0.2028,
-    "salzburg_2026_current_energy_only_first_1500_discounted": 0.12,
-    # Official product sheet explicitly says valid from 2026-11-01. Its total
-    # variable price includes level-7 network charges/taxes in Salzburg Netz
-    # GmbH's area; the first-1,500-kWh discount subtracts 8.28 ct from energy.
-    # Metering charges, free days and annual fixed fees are excluded.
-    "salzburg_2026_11_01_future_all_in_standard": 0.299351,
-    "salzburg_2026_11_01_future_all_in_first_1500_discounted": 0.216551,
-    # Transparent international sensitivity point, not the user's tariff.
-    "low_cost_international_reference": 0.05,
+    # Illustrative international sensitivity bands, not country quotes or a user tariff.
+    "international_low_cost_reference": 0.05,
+    "international_moderate_reference": 0.10,
+    "international_high_cost_reference": 0.20,
+    "international_stress_reference": 0.30,
 }
+INTERNATIONAL_TARIFF_NOTE = (
+    "International tariff scenarios are illustrative sensitivity bands from 0.05 to 0.30 EUR/kWh, "
+    "not country-specific market quotes or the user's all-in tariff. Actual deployment economics "
+    "must use site-specific energy contracts, network charges, taxes, metering and fixed fees, "
+    "export remuneration, connection limits and applicable discounts. The 0.071 EUR/kWh battery "
+    "value and 0.055 EUR/kWh grid-export value are illustrative model defaults, not universal "
+    "revenue rates; replace them with local storage opportunity costs and settled export terms."
+)
 WINDOW = 24
 MAX_BACKTEST_GAP_MINUTES = 60.0
 RISK_AVERSION_GRID = (0.0, 0.25, 0.50, 0.75, 1.0)
@@ -335,9 +336,39 @@ def calibrated_shrinkage_weight(history, min_samples=24):
     return max(0.0, min(1.0, weight))
 
 
+def _risk_aversion_sensitivity(strategy_metrics, levels=(0.0, 0.25, 0.50, 0.75, 1.0)):
+    """Show how the same decision-time distributions rank under alternative risk weights."""
+    usable = {
+        name: metrics for name, metrics in strategy_metrics.items()
+        if isinstance(metrics, dict) and metrics.get("mean") is not None and metrics.get("p05") is not None
+    }
+    if not usable:
+        return []
+    rows = []
+    for aversion in levels:
+        scores = {
+            name: (1.0 - aversion) * float(metrics["mean"]) + aversion * float(metrics["p05"])
+            for name, metrics in usable.items()
+        }
+        selected = max(scores, key=scores.get)
+        rows.append({
+            "risk_aversion": aversion,
+            "selected_strategy": selected,
+            "selected_score_eur_per_kwh": round(scores[selected], 6),
+            "strategy_scores_eur_per_kwh": {name: round(score, 6) for name, score in scores.items()},
+        })
+    return rows
+
+
 def summarize_backtest(pairs, label):
     if not pairs:
-        return {"status": "insufficient_data", "pairs": 0}
+        return {
+            "status": "insufficient_data",
+            "pairs": 0,
+            "regret_evidence_status": "insufficient_data_not_validated",
+            "regret_evidence_validated": False,
+            "worst_regret_cases": [],
+        }
     regrets = [p["regret"] for p in pairs]
     errors = [abs(p["actual"] - p["predicted"]) for p in pairs]
     baseline_errors = [abs(p["actual"] - p["baseline_predicted"]) for p in pairs]
@@ -351,9 +382,30 @@ def summarize_backtest(pairs, label):
         name: sum(p["best"] == name for p in pairs)
         for name in ("AI Compute", "BTC Mining", "Battery", "Grid")
     }
+    chosen_counts = {
+        name: sum(p["chosen"] == name for p in pairs)
+        for name in ("AI Compute", "BTC Mining", "Battery", "Grid")
+    }
     dominant_share = max(best_counts.values()) / len(pairs)
     mae = statistics.fmean(errors)
     baseline_mae = statistics.fmean(baseline_errors)
+    worst_regret_cases = sorted(pairs, key=lambda pair: float(pair.get("regret", 0.0)), reverse=True)[:5]
+    worst_regret_cases = [{
+        "decision_timestamp": pair.get("decision_timestamp"),
+        "settlement_timestamp": pair.get("settlement_timestamp"),
+        "chosen_strategy": pair.get("chosen"),
+        "best_strategy": pair.get("best"),
+        "regret_eur_per_kwh": round(float(pair.get("regret", 0.0)), 6),
+        "chosen_value_eur_per_kwh": round(float(pair.get("actual", 0.0)), 6),
+        "best_value_eur_per_kwh": round(float(pair.get("actual_values", {}).get(pair.get("best"), 0.0)), 6),
+        "snapshot_gap_minutes": round(float(pair.get("gap_minutes", 0.0)), 2),
+        "decision_value_chosen_eur_per_kwh": round(float(pair.get("decision_values", {}).get(pair.get("chosen"), 0.0)), 6),
+        "decision_value_best_eur_per_kwh": round(float(pair.get("decision_values", {}).get(pair.get("best"), 0.0)), 6),
+        "chosen_risk_metrics": pair.get("decision_risk_metrics", {}).get(pair.get("chosen"), {}),
+        "best_risk_metrics": pair.get("decision_risk_metrics", {}).get(pair.get("best"), {}),
+        "configured_risk_aversion": RISK_AVERSION,
+        "risk_aversion_sensitivity": _risk_aversion_sensitivity(pair.get("decision_risk_metrics", {})),
+    } for pair in worst_regret_cases]
     return {
         "model": label,
         "status": ("insufficient_data" if len(pairs) < 24 else
@@ -368,9 +420,13 @@ def summarize_backtest(pairs, label):
         "p90_regret_eur_per_kwh": round(quantile(regrets, 0.90), 6),
         "p95_regret_eur_per_kwh": round(quantile(regrets, 0.95), 6),
         "max_regret_eur_per_kwh": round(max(regrets), 6),
+        "worst_regret_cases": worst_regret_cases,
         "strategy_selection_accuracy": round(sum(p["chosen"] == p["best"] for p in pairs) / len(pairs), 4),
         "best_strategy_counts": best_counts,
+        "chosen_strategy_counts": chosen_counts,
         "selection_accuracy_information": "low_information_single_strategy_dominance" if dominant_share >= 0.95 else "multi_strategy_observations",
+        "regret_evidence_status": ("low_information_single_strategy_dominance" if dominant_share >= 0.95 else "historical_market_proxy_not_realized_farm_decisions"),
+        "regret_evidence_validated": False,
         "mean_next_snapshot_value_eur_per_kwh": strategy_means,
         "median_snapshot_gap_minutes": round(statistics.median(p["gap_minutes"] for p in pairs), 2),
         "p90_snapshot_gap_minutes": round(quantile([p["gap_minutes"] for p in pairs], 0.90), 2),
@@ -1134,7 +1190,11 @@ def run_backtest(rows, tariff, min_history=WINDOW):
                 "best": best,
                 "regret": max(0.0, actual[best] - actual[chosen]),
                 "actual_values": actual,
+                "decision_values": current_values,
+                "decision_risk_metrics": risk_metrics,
                 "gap_minutes": gap_minutes,
+                "decision_timestamp": decision["ts"],
+                "settlement_timestamp": next_row["ts"],
             })
             # Settle only after forecasting; these residuals calibrate later decisions.
             for strategy in calibration_history:
@@ -1161,7 +1221,11 @@ def run_backtest(rows, tariff, min_history=WINDOW):
                 "best": best,
                 "regret": max(0.0, actual[best] - actual[chosen]),
                 "actual_values": actual,
+                "decision_values": current_values,
+                "decision_risk_metrics": risk_metrics,
                 "gap_minutes": gap_minutes,
+                "decision_timestamp": decision["ts"],
+                "settlement_timestamp": next_row["ts"],
             })
         parametric, parametric_metrics = production_parametric_choice(
             decision, tariff, 42 + i, scenarios=200, shock=0.20
@@ -1175,7 +1239,11 @@ def run_backtest(rows, tariff, min_history=WINDOW):
             "best": best,
             "regret": max(0.0, actual[best] - actual[parametric]),
             "actual_values": actual,
+            "decision_values": current_values,
+            "decision_risk_metrics": parametric_metrics,
             "gap_minutes": gap_minutes,
+            "decision_timestamp": decision["ts"],
+            "settlement_timestamp": next_row["ts"],
         })
     warnings = [
         "Both tests are out-of-sample next-snapshot market mark-to-model tests, not realized cashflow.",
@@ -1404,7 +1472,7 @@ def main():
         "limitations": [
             "A public market snapshot is not proof of an executed GPU rental, mined BTC payout, grid export settlement, or battery cycle.",
             "The model's zero-capex defaults can materially overstate compute/mining profitability.",
-            "The 20.28 ct/kWh standard and 12.00 ct/kWh discounted supplier-energy rates are the current public Strom Privat 24 page values on 2026-10-30; they exclude network charges, taxes and duties and are not all-in dispatch prices. The 29.9351/21.6551 ct/kWh all-in cases come from the linked product sheet explicitly valid from 2026-11-01, and apply only to level-7 charges in the Salzburg Netz GmbH area. They may not match another distribution area. The 1,500-kWh discount is conditional on eligible natural-person household contracts. Metering charges, free-day discounts and annual fixed fees are excluded.",
+            INTERNATIONAL_TARIFF_NOTE,
             "No hardware action, financial trade, or wallet transaction is performed.",
         ],
     }
