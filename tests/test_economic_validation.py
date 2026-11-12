@@ -705,6 +705,31 @@ class EconomicValidationTests(unittest.TestCase):
         self.assertAlmostEqual(result["mae_skill_vs_persistence"], 0.0)
         self.assertAlmostEqual(result["chosen_strategy_win_probability_brier"], 0.04)
 
+    def test_regret_evidence_is_never_marked_validated_from_market_proxy_pairs(self):
+        def pair(chosen, best):
+            return {
+                "chosen": chosen, "predicted": 0.12, "baseline_predicted": 0.10,
+                "predicted_win_probability": 0.8, "actual": 0.11, "best": best,
+                "regret": 0.0, "actual_values": {
+                    "AI Compute": 0.11, "BTC Mining": 0.02,
+                    "Battery": 0.04, "Grid": 0.03,
+                }, "gap_minutes": 5.0,
+            }
+
+        dominant = MODULE.summarize_backtest([pair("AI Compute", "AI Compute")] * 5, "dominant")
+        self.assertEqual(dominant["regret_evidence_status"], "low_information_single_strategy_dominance")
+        self.assertFalse(dominant["regret_evidence_validated"])
+
+        varied = MODULE.summarize_backtest([
+            pair("AI Compute", "AI Compute"), pair("BTC Mining", "BTC Mining")
+        ], "varied")
+        self.assertEqual(varied["regret_evidence_status"], "historical_market_proxy_not_realized_farm_decisions")
+        self.assertFalse(varied["regret_evidence_validated"])
+
+        empty = MODULE.summarize_backtest([], "empty")
+        self.assertEqual(empty["regret_evidence_status"], "insufficient_data_not_validated")
+        self.assertFalse(empty["regret_evidence_validated"])
+
     def test_backtest_excludes_noncomparable_long_snapshot_gaps(self):
         rows = []
         for i in range(28):
