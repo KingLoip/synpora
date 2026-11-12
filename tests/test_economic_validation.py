@@ -734,17 +734,17 @@ class EconomicValidationTests(unittest.TestCase):
         pairs = []
         for i, regret in enumerate((0.1, 2.0, 0.4)):
             pairs.append({
-                "chosen": "AI Compute", "predicted": 0.1, "baseline_predicted": 0.1,
-                "predicted_win_probability": 0.8, "actual": 0.2, "best": "BTC Mining",
+                "chosen": "Grid", "predicted": 0.055, "baseline_predicted": 0.055,
+                "predicted_win_probability": 0.8, "actual": 0.2, "best": "AI Compute",
                 "regret": regret, "actual_values": {
-                    "AI Compute": 0.2, "BTC Mining": 0.2 + regret,
-                    "Battery": 0.05, "Grid": 0.03,
+                    "AI Compute": 0.2 + regret, "BTC Mining": 0.02,
+                    "Battery": 0.05, "Grid": 0.2,
                 }, "decision_values": {
-                    "AI Compute": 0.18, "BTC Mining": 0.17,
-                    "Battery": 0.05, "Grid": 0.03,
+                    "AI Compute": 0.18, "BTC Mining": 0.03,
+                    "Battery": 0.04, "Grid": 0.055,
                 }, "decision_risk_metrics": {
                     "AI Compute": {"mean": 0.48, "p05": -0.19, "score": -0.0225},
-                    "BTC Mining": {"mean": 0.18, "p05": 0.02, "score": 0.06},
+                    "BTC Mining": {"mean": 0.03, "p05": 0.01, "score": 0.015},
                     "Battery": {"mean": 0.04, "p05": 0.03, "score": 0.0325},
                     "Grid": {"mean": 0.055, "p05": 0.055, "score": 0.055},
                 }, "gap_minutes": 5.0,
@@ -756,14 +756,14 @@ class EconomicValidationTests(unittest.TestCase):
         self.assertEqual(result["worst_regret_cases"][0]["regret_eur_per_kwh"], 2.0)
         self.assertEqual(result["worst_regret_cases"][0]["decision_timestamp"], 1300)
         self.assertEqual(result["worst_regret_cases"][0]["settlement_timestamp"], 1600)
-        self.assertEqual(result["worst_regret_cases"][0]["best_strategy"], "BTC Mining")
-        self.assertEqual(result["worst_regret_cases"][0]["decision_value_chosen_eur_per_kwh"], 0.18)
-        self.assertEqual(result["worst_regret_cases"][0]["decision_value_best_eur_per_kwh"], 0.17)
+        self.assertEqual(result["worst_regret_cases"][0]["best_strategy"], "AI Compute")
+        self.assertEqual(result["worst_regret_cases"][0]["decision_value_chosen_eur_per_kwh"], 0.055)
+        self.assertEqual(result["worst_regret_cases"][0]["decision_value_best_eur_per_kwh"], 0.18)
         sensitivity = result["worst_regret_cases"][0]["risk_aversion_sensitivity"]
         self.assertEqual(result["worst_regret_cases"][0]["configured_risk_aversion"], 0.75)
         self.assertEqual([row["selected_strategy"] for row in sensitivity], ["AI Compute", "AI Compute", "AI Compute", "BTC Mining", "Grid"])
         self.assertEqual(sensitivity[3]["risk_aversion"], 0.75)
-        self.assertEqual(result["chosen_strategy_counts"]["AI Compute"], 3)
+        self.assertEqual(result["chosen_strategy_counts"]["Grid"], 3)
 
     def test_backtest_excludes_noncomparable_long_snapshot_gaps(self):
         rows = []
