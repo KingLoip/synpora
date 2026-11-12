@@ -359,6 +359,17 @@ def summarize_backtest(pairs, label):
     dominant_share = max(best_counts.values()) / len(pairs)
     mae = statistics.fmean(errors)
     baseline_mae = statistics.fmean(baseline_errors)
+    worst_regret_cases = sorted(pairs, key=lambda pair: float(pair.get("regret", 0.0)), reverse=True)[:5]
+    worst_regret_cases = [{
+        "decision_timestamp": pair.get("decision_timestamp"),
+        "settlement_timestamp": pair.get("settlement_timestamp"),
+        "chosen_strategy": pair.get("chosen"),
+        "best_strategy": pair.get("best"),
+        "regret_eur_per_kwh": round(float(pair.get("regret", 0.0)), 6),
+        "chosen_value_eur_per_kwh": round(float(pair.get("actual", 0.0)), 6),
+        "best_value_eur_per_kwh": round(float(pair.get("actual_values", {}).get(pair.get("best"), 0.0)), 6),
+        "snapshot_gap_minutes": round(float(pair.get("gap_minutes", 0.0)), 2),
+    } for pair in worst_regret_cases]
     return {
         "model": label,
         "status": ("insufficient_data" if len(pairs) < 24 else
@@ -373,6 +384,7 @@ def summarize_backtest(pairs, label):
         "p90_regret_eur_per_kwh": round(quantile(regrets, 0.90), 6),
         "p95_regret_eur_per_kwh": round(quantile(regrets, 0.95), 6),
         "max_regret_eur_per_kwh": round(max(regrets), 6),
+        "worst_regret_cases": worst_regret_cases,
         "strategy_selection_accuracy": round(sum(p["chosen"] == p["best"] for p in pairs) / len(pairs), 4),
         "best_strategy_counts": best_counts,
         "selection_accuracy_information": "low_information_single_strategy_dominance" if dominant_share >= 0.95 else "multi_strategy_observations",
@@ -1142,6 +1154,8 @@ def run_backtest(rows, tariff, min_history=WINDOW):
                 "regret": max(0.0, actual[best] - actual[chosen]),
                 "actual_values": actual,
                 "gap_minutes": gap_minutes,
+                "decision_timestamp": decision["ts"],
+                "settlement_timestamp": next_row["ts"],
             })
             # Settle only after forecasting; these residuals calibrate later decisions.
             for strategy in calibration_history:
@@ -1169,6 +1183,8 @@ def run_backtest(rows, tariff, min_history=WINDOW):
                 "regret": max(0.0, actual[best] - actual[chosen]),
                 "actual_values": actual,
                 "gap_minutes": gap_minutes,
+                "decision_timestamp": decision["ts"],
+                "settlement_timestamp": next_row["ts"],
             })
         parametric, parametric_metrics = production_parametric_choice(
             decision, tariff, 42 + i, scenarios=200, shock=0.20
@@ -1183,6 +1199,8 @@ def run_backtest(rows, tariff, min_history=WINDOW):
             "regret": max(0.0, actual[best] - actual[parametric]),
             "actual_values": actual,
             "gap_minutes": gap_minutes,
+            "decision_timestamp": decision["ts"],
+            "settlement_timestamp": next_row["ts"],
         })
     warnings = [
         "Both tests are out-of-sample next-snapshot market mark-to-model tests, not realized cashflow.",
