@@ -342,6 +342,7 @@ def summarize_backtest(pairs, label):
             "pairs": 0,
             "regret_evidence_status": "insufficient_data_not_validated",
             "regret_evidence_validated": False,
+            "worst_regret_cases": [],
         }
     regrets = [p["regret"] for p in pairs]
     errors = [abs(p["actual"] - p["predicted"]) for p in pairs]
