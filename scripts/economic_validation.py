@@ -337,7 +337,12 @@ def calibrated_shrinkage_weight(history, min_samples=24):
 
 def summarize_backtest(pairs, label):
     if not pairs:
-        return {"status": "insufficient_data", "pairs": 0}
+        return {
+            "status": "insufficient_data",
+            "pairs": 0,
+            "regret_evidence_status": "insufficient_data_not_validated",
+            "regret_evidence_validated": False,
+        }
     regrets = [p["regret"] for p in pairs]
     errors = [abs(p["actual"] - p["predicted"]) for p in pairs]
     baseline_errors = [abs(p["actual"] - p["baseline_predicted"]) for p in pairs]
@@ -371,6 +376,8 @@ def summarize_backtest(pairs, label):
         "strategy_selection_accuracy": round(sum(p["chosen"] == p["best"] for p in pairs) / len(pairs), 4),
         "best_strategy_counts": best_counts,
         "selection_accuracy_information": "low_information_single_strategy_dominance" if dominant_share >= 0.95 else "multi_strategy_observations",
+        "regret_evidence_status": ("low_information_single_strategy_dominance" if dominant_share >= 0.95 else "historical_market_proxy_not_realized_farm_decisions"),
+        "regret_evidence_validated": False,
         "mean_next_snapshot_value_eur_per_kwh": strategy_means,
         "median_snapshot_gap_minutes": round(statistics.median(p["gap_minutes"] for p in pairs), 2),
         "p90_snapshot_gap_minutes": round(quantile([p["gap_minutes"] for p in pairs], 0.90), 2),
