@@ -761,7 +761,7 @@ class EconomicValidationTests(unittest.TestCase):
         self.assertEqual(result["worst_regret_cases"][0]["decision_value_best_eur_per_kwh"], 0.17)
         sensitivity = result["worst_regret_cases"][0]["risk_aversion_sensitivity"]
         self.assertEqual(result["worst_regret_cases"][0]["configured_risk_aversion"], 0.75)
-        self.assertEqual([row["selected_strategy"] for row in sensitivity], ["AI Compute", "AI Compute", "AI Compute", "Grid", "Grid"])
+        self.assertEqual([row["selected_strategy"] for row in sensitivity], ["AI Compute", "AI Compute", "AI Compute", "BTC Mining", "Grid"])
         self.assertEqual(sensitivity[3]["risk_aversion"], 0.75)
         self.assertEqual(result["chosen_strategy_counts"]["AI Compute"], 3)
 
