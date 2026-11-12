@@ -357,6 +357,10 @@ def summarize_backtest(pairs, label):
         name: sum(p["best"] == name for p in pairs)
         for name in ("AI Compute", "BTC Mining", "Battery", "Grid")
     }
+    chosen_counts = {
+        name: sum(p["chosen"] == name for p in pairs)
+        for name in ("AI Compute", "BTC Mining", "Battery", "Grid")
+    }
     dominant_share = max(best_counts.values()) / len(pairs)
     mae = statistics.fmean(errors)
     baseline_mae = statistics.fmean(baseline_errors)
@@ -370,6 +374,10 @@ def summarize_backtest(pairs, label):
         "chosen_value_eur_per_kwh": round(float(pair.get("actual", 0.0)), 6),
         "best_value_eur_per_kwh": round(float(pair.get("actual_values", {}).get(pair.get("best"), 0.0)), 6),
         "snapshot_gap_minutes": round(float(pair.get("gap_minutes", 0.0)), 2),
+        "decision_value_chosen_eur_per_kwh": round(float(pair.get("decision_values", {}).get(pair.get("chosen"), 0.0)), 6),
+        "decision_value_best_eur_per_kwh": round(float(pair.get("decision_values", {}).get(pair.get("best"), 0.0)), 6),
+        "chosen_risk_metrics": pair.get("decision_risk_metrics", {}).get(pair.get("chosen"), {}),
+        "best_risk_metrics": pair.get("decision_risk_metrics", {}).get(pair.get("best"), {}),
     } for pair in worst_regret_cases]
     return {
         "model": label,
@@ -388,6 +396,7 @@ def summarize_backtest(pairs, label):
         "worst_regret_cases": worst_regret_cases,
         "strategy_selection_accuracy": round(sum(p["chosen"] == p["best"] for p in pairs) / len(pairs), 4),
         "best_strategy_counts": best_counts,
+        "chosen_strategy_counts": chosen_counts,
         "selection_accuracy_information": "low_information_single_strategy_dominance" if dominant_share >= 0.95 else "multi_strategy_observations",
         "regret_evidence_status": ("low_information_single_strategy_dominance" if dominant_share >= 0.95 else "historical_market_proxy_not_realized_farm_decisions"),
         "regret_evidence_validated": False,
@@ -1154,6 +1163,8 @@ def run_backtest(rows, tariff, min_history=WINDOW):
                 "best": best,
                 "regret": max(0.0, actual[best] - actual[chosen]),
                 "actual_values": actual,
+                "decision_values": current_values,
+                "decision_risk_metrics": risk_metrics,
                 "gap_minutes": gap_minutes,
                 "decision_timestamp": decision["ts"],
                 "settlement_timestamp": next_row["ts"],
@@ -1183,6 +1194,8 @@ def run_backtest(rows, tariff, min_history=WINDOW):
                 "best": best,
                 "regret": max(0.0, actual[best] - actual[chosen]),
                 "actual_values": actual,
+                "decision_values": current_values,
+                "decision_risk_metrics": risk_metrics,
                 "gap_minutes": gap_minutes,
                 "decision_timestamp": decision["ts"],
                 "settlement_timestamp": next_row["ts"],
@@ -1199,6 +1212,8 @@ def run_backtest(rows, tariff, min_history=WINDOW):
             "best": best,
             "regret": max(0.0, actual[best] - actual[parametric]),
             "actual_values": actual,
+            "decision_values": current_values,
+            "decision_risk_metrics": parametric_metrics,
             "gap_minutes": gap_minutes,
             "decision_timestamp": decision["ts"],
             "settlement_timestamp": next_row["ts"],
