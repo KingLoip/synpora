@@ -730,6 +730,26 @@ class EconomicValidationTests(unittest.TestCase):
         self.assertEqual(empty["regret_evidence_status"], "insufficient_data_not_validated")
         self.assertFalse(empty["regret_evidence_validated"])
 
+    def test_backtest_exposes_worst_regret_cases_with_settlement_timestamps(self):
+        pairs = []
+        for i, regret in enumerate((0.1, 2.0, 0.4)):
+            pairs.append({
+                "chosen": "AI Compute", "predicted": 0.1, "baseline_predicted": 0.1,
+                "predicted_win_probability": 0.8, "actual": 0.2, "best": "BTC Mining",
+                "regret": regret, "actual_values": {
+                    "AI Compute": 0.2, "BTC Mining": 0.2 + regret,
+                    "Battery": 0.05, "Grid": 0.03,
+                }, "gap_minutes": 5.0,
+                "decision_timestamp": 1000 + i * 300,
+                "settlement_timestamp": 1300 + i * 300,
+            })
+        result = MODULE.summarize_backtest(pairs, "tail-test")
+        self.assertEqual(len(result["worst_regret_cases"]), 3)
+        self.assertEqual(result["worst_regret_cases"][0]["regret_eur_per_kwh"], 2.0)
+        self.assertEqual(result["worst_regret_cases"][0]["decision_timestamp"], 1300)
+        self.assertEqual(result["worst_regret_cases"][0]["settlement_timestamp"], 1600)
+        self.assertEqual(result["worst_regret_cases"][0]["best_strategy"], "BTC Mining")
+
     def test_backtest_excludes_noncomparable_long_snapshot_gaps(self):
         rows = []
         for i in range(28):
