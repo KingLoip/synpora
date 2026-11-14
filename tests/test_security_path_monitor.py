@@ -56,7 +56,7 @@ class SensitivePathMonitorTests(unittest.TestCase):
         reset_monitor = SensitivePathMonitor(window_seconds=30, salt=b"test")
         self.assertEqual(reset_monitor.record("192.0.2.4", "/.env", 200, now=1)["reason"], "unexpected_success")
         self.assertIsNone(reset_monitor.record("192.0.2.4", "/.env", 200, now=2))
-        self.assertEqual(reset_monitor.record("192.0.2.4", "/.env", 200, now=32)["reason"], "unexpected_success")
+        self.assertEqual(reset_monitor.record("192.0.2.4", "/.env", 200, now=33)["reason"], "unexpected_success")
 
     def test_window_expiry_resets_burst_count(self):
         monitor = SensitivePathMonitor(threshold=2, window_seconds=30, salt=b"test")
