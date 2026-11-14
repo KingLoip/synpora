@@ -73,7 +73,7 @@ class SensitivePathMonitor:
                 self._sources.popitem(last=False)
             count = len(events)
             successful = 200 <= int(status_code) < 400
-            burst = count >= self.threshold
+            burst = count == self.threshold
             if not successful and not burst:
                 return None
             return {
