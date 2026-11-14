@@ -58,3 +58,12 @@ Operational requirements:
 6. Keep recommendation-only safety invariants in force: `hardware_write=false` and `autonomous_control=false`.
 
 Actual investment validation additionally requires site-specific electricity invoices and export settlements, GPU payout statements, BTC pool settlement records, hardware/capex invoices, maintenance/overhead records and metered battery/degradation evidence.
+
+
+## Sensitive-path reconnaissance monitoring
+
+The ASGI request middleware classifies common secret/configuration discovery paths (for example `.env`, `.git/config`, `.aws/credentials`, `.ssh`, PHP diagnostics and server-status probes). It emits a warning when one direct peer reaches the configured default threshold of 10 classified probes in a rolling five-minute window, or immediately if a classified path unexpectedly returns HTTP 2xx/3xx. Expected isolated 404 responses remain quiet. A threshold crossing emits one burst warning rather than one warning per subsequent request.
+
+The monitor is process-local and bounded to 2,048 source fingerprints. It retains only a short keyed hash of the direct ASGI peer, a low-cardinality path category and monotonic timestamps; raw paths and IP addresses are not written to these alerts. Counters reset on process restart and are not a substitute for a durable WAF or edge-level security log. Forwarded client-IP headers are deliberately ignored: do not enable proxy-header trust until the exact trusted Railway proxy chain is verified. This monitoring is alert-only; it does not block requests, change firewall rules, rotate secrets or alter production infrastructure.
+
+Tests cover encoded-path normalization, false positives, expected 404 noise suppression, threshold crossing, unexpected successful responses, expiry, bounded source cardinality and source fingerprint privacy.
