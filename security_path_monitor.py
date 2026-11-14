@@ -62,9 +62,9 @@ class SensitivePathMonitor:
         with self._lock:
             state = self._sources.pop(fingerprint, None)
             if state is None:
-                events, alerted = deque(maxlen=self.threshold), False
+                events, burst_alerted, success_alerted = deque(maxlen=self.threshold), False, False
             else:
-                events, alerted = state
+                events, burst_alerted, success_alerted = state
             events = deque(
                 (item for item in events if timestamp - item[0] <= self.window_seconds),
                 maxlen=self.threshold,
@@ -72,15 +72,19 @@ class SensitivePathMonitor:
             events.append((timestamp, category))
             count = len(events)
             if count < self.threshold:
-                alerted = False
+                burst_alerted = False
+                success_alerted = False
             successful = 200 <= int(status_code) < 400
-            burst = count >= self.threshold and not alerted
+            burst = count >= self.threshold and not burst_alerted
+            unexpected_success = successful and not success_alerted
             if burst:
-                alerted = True
-            self._sources[fingerprint] = (events, alerted)
+                burst_alerted = True
+            if unexpected_success:
+                success_alerted = True
+            self._sources[fingerprint] = (events, burst_alerted, success_alerted)
             while len(self._sources) > self.max_sources:
                 self._sources.popitem(last=False)
-            if not successful and not burst:
+            if not unexpected_success and not burst:
                 return None
             return {
                 "category": category,
@@ -88,7 +92,7 @@ class SensitivePathMonitor:
                 "count_in_window": count,
                 "window_seconds": self.window_seconds,
                 "status_code": int(status_code),
-                "reason": "unexpected_success" if successful else "repeated_reconnaissance",
+                "reason": "unexpected_success" if unexpected_success else "repeated_reconnaissance",
             }
 
 
