@@ -71,6 +71,7 @@ class SensitivePathMonitorTests(unittest.TestCase):
         for index in range(100):
             monitor.record("source-%s" % index, "/.env", 404, now=index)
         self.assertLessEqual(len(monitor._sources), 32)
+        self.assertTrue(all(len(state[0]) <= monitor.threshold for state in monitor._sources.values()))
 
 
 if __name__ == "__main__":
