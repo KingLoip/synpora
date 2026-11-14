@@ -69,11 +69,12 @@ class SensitivePathMonitor:
                 (item for item in events if timestamp - item[0] <= self.window_seconds),
                 maxlen=self.threshold,
             )
+            if not events:
+                success_alerted = False
             events.append((timestamp, category))
             count = len(events)
             if count < self.threshold:
                 burst_alerted = False
-                success_alerted = False
             successful = 200 <= int(status_code) < 400
             burst = count >= self.threshold and not burst_alerted
             unexpected_success = successful and not success_alerted
