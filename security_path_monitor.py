@@ -1,5 +1,5 @@
 """Bounded, privacy-conscious detection of repeated sensitive-path reconnaissance."""
-from collections import OrderedDict
+from collections import OrderedDict, deque
 import hashlib
 import hmac
 import logging
@@ -60,15 +60,26 @@ class SensitivePathMonitor:
         timestamp = time.monotonic() if now is None else float(now)
         fingerprint = self._fingerprint(source)
         with self._lock:
-            events = self._sources.pop(fingerprint, [])
-            events = [item for item in events if timestamp - item[0] <= self.window_seconds]
+            state = self._sources.pop(fingerprint, None)
+            if state is None:
+                events, alerted = deque(maxlen=self.threshold), False
+            else:
+                events, alerted = state
+            events = deque(
+                (item for item in events if timestamp - item[0] <= self.window_seconds),
+                maxlen=self.threshold,
+            )
             events.append((timestamp, category))
-            self._sources[fingerprint] = events
+            count = len(events)
+            if count < self.threshold:
+                alerted = False
+            successful = 200 <= int(status_code) < 400
+            burst = count >= self.threshold and not alerted
+            if burst:
+                alerted = True
+            self._sources[fingerprint] = (events, alerted)
             while len(self._sources) > self.max_sources:
                 self._sources.popitem(last=False)
-            count = len(events)
-            successful = 200 <= int(status_code) < 400
-            burst = count == self.threshold
             if not successful and not burst:
                 return None
             return {
