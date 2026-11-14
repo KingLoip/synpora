@@ -9,11 +9,6 @@ import threading
 import time
 from urllib.parse import unquote
 
-_SENSITIVE_SEGMENTS = (
-    ".env", ".git", ".aws", ".ssh", ".svn", ".hg", ".ds_store",
-    "wp-config.php", "phpinfo.php", "server-status", "id_rsa",
-    "config.php", "credentials", "secrets",
-)
 _CATEGORY_PATTERNS = (
     ("environment", re.compile(r"^\.env(?:\.|$)")),
     ("version_control", re.compile(r"^\.(?:git|svn|hg)(?:$|/)")),
@@ -38,7 +33,7 @@ def classify_sensitive_path(path):
         for category, pattern in _CATEGORY_PATTERNS:
             if pattern.search(segment):
                 return category
-    # Also catch a sensitive file immediately after a traversal component.
+    # Traversal components are discarded only for matching; no path is logged or retained.
     return None
 
 
