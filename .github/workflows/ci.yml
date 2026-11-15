@@ -242,6 +242,14 @@ jobs:
           assert extreme_energy.status_code==422, extreme_energy.text
           invalid_shock=c.post(f"/api/v1/farms/{farm}/risk-analysis",headers=h,json={"shock_pct":1.0})
           assert invalid_shock.status_code==422, invalid_shock.text
+          regret=c.post(f"/api/v1/farms/{farm}/regret-analysis",headers=h,json={"samples":100,"seed":7})
+          assert regret.status_code==200, regret.text
+          assert regret.json()["shock_model"]=={"btc_sigma":0.2,"gpu_sigma":0.2,"energy_sigma":0.13,"mean_preserving":True}, regret.json()
+          assert regret.json()["recommendation_only"] is True and regret.json()["hardware_write"] is False, regret.json()
+          assert regret.json()["regret_evidence_validated"] is False, regret.json()
+          assert regret.json()["regret_evidence_status"] in {"low_information_single_strategy_dominance","simulated_only_not_empirically_validated"}, regret.json()
+          if regret.json()["dominant_strategy_share"] >= 0.95:
+              assert regret.json()["regret_evidence_status"]=="low_information_single_strategy_dominance", regret.json()
           invalid_soc=c.post(f"/api/v1/farms/{farm}/dispatch-plan",headers=h,json={"battery_soc_pct":101})
           assert invalid_soc.status_code==422, invalid_soc.text
           # Loss-making compute/mining must stay negative rather than being hidden as break-even.
@@ -266,6 +274,8 @@ jobs:
           assert charging.status_code==200, charging.text
           assert charging.json()["forecast_source"]=="input_fallback_unverified", charging.json()
           assert charging.json()["forecast_quality"]["status"]=="degraded", charging.json()
+          assert charging.json()["forecast_quality"]["empirical_forecast_release_gate"]["status"]=="blocked", charging.json()
+          assert charging.json()["forecast_quality"]["status"] not in {"validated","ready"}, charging.json()
           cs=charging.json()["summary"]
           assert abs(cs["pv_balance_error_kwh"]) < 0.01, cs
           assert cs["battery_charge_kwh"] == 0, cs
@@ -415,7 +425,13 @@ jobs:
           db.commit()
           external_forecast=c.post(f"/api/v1/farms/{farm}/forecast-plan",headers=h,json={"horizon_hours":3})
           assert external_forecast.status_code==200, external_forecast.text
-          assert all(v["samples"]==1 for v in external_forecast.json()["models"].values()), external_forecast.json()["models"]
+          external_models=external_forecast.json()["models"]
+          # One valid observation can settle a learning label, but cannot train a forecast model.
+          assert external_models["btc"]["samples"]==0 and external_models["gpu"]["samples"]==0, external_models
+          assert not external_models["btc"]["ready"] and not external_models["gpu"]["ready"], external_models
+          assert external_forecast.json()["forecast_quality"]["status"]=="degraded", external_forecast.json()["forecast_quality"]
+          assert external_models["energy"]["model"]=="user_supplied_constant", external_models
+          assert external_models["energy"]["forecasted"] is False, external_models
           settled=c.post(f"/api/v1/farms/{farm}/learning/update",headers=h)
           assert settled.status_code==200, settled.text
           sb=settled.json()
