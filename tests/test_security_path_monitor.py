@@ -1,6 +1,11 @@
 import unittest
+from unittest.mock import Mock
 
-from security_path_monitor import SensitivePathMonitor, classify_sensitive_path
+from security_path_monitor import (
+    SensitivePathMonitor,
+    classify_sensitive_path,
+    observe_sensitive_path,
+)
 
 
 class SensitivePathClassificationTests(unittest.TestCase):
@@ -8,13 +13,22 @@ class SensitivePathClassificationTests(unittest.TestCase):
         cases = {
             "/.env": "environment",
             "/.env.production": "environment",
+            "/.env.production.backup": "environment",
             "/.git/config": "version_control",
             "/.aws/credentials": "cloud_credentials",
             "/.ssh/id_rsa": "cloud_credentials",
+            "/.claude/.credentials.json": "developer_credentials",
+            "/.cargo/credentials.toml": "developer_credentials",
+            "/.gem/credentials": "developer_credentials",
+            "/.dbeaver/credentials-config.json": "developer_credentials",
             "/wp-config.php": "php_diagnostics",
+            "/wp-config.php.bak": "php_diagnostics",
+            "/wp-config.php.save": "php_diagnostics",
+            "/symfony/_profiler/phpinfo": "php_diagnostics",
             "/phpinfo.php": "php_diagnostics",
             "/server-status": "server_diagnostics",
-            "/backup/credentials": "credential_file",
+            "/backup/credentials.json": "credential_file",
+            "/.credentials.yml": "credential_file",
         }
         for path, expected in cases.items():
             with self.subTest(path=path):
@@ -71,6 +85,17 @@ class SensitivePathMonitorTests(unittest.TestCase):
         alert = monitor.record("203.0.113.77", "/.env", 200, now=1)
         self.assertNotIn("203.0.113.77", str(alert))
         self.assertEqual(len(alert["source_fingerprint"]), 12)
+
+    def test_logs_never_include_raw_source_or_sensitive_path(self):
+        logger = Mock()
+        source = "198.51.100.201"
+        path = "/.env.production.backup"
+        observe_sensitive_path(source, path, 200, logger=logger)
+        logger.warning.assert_called_once()
+        logged = repr(logger.warning.call_args)
+        self.assertNotIn(source, logged)
+        self.assertNotIn(path, logged)
+        self.assertIn("source_fingerprint", logged)
 
     def test_source_cardinality_is_bounded(self):
         monitor = SensitivePathMonitor(max_sources=32, salt=b"test")
