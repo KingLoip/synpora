@@ -7,17 +7,20 @@ on:
     types: [completed]
     branches: [main]
   workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * *" # Daily evidence snapshot; GitHub schedules use UTC.
 
 permissions:
   contents: read
 
 concurrency:
-  group: synpora-economic-validation
-  cancel-in-progress: false
+  # Keep independent PR validations parallel; only cancel superseded runs for the same PR/ref.
+  group: synpora-economic-validation-${{ github.event.pull_request.number || github.event.workflow_run.head_branch || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   empirical-economic-validation:
-    if: github.head_ref != 'btc-history-export-readonly' && (github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'))
+    if: github.head_ref != 'btc-history-export-readonly' && (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || github.event_name == 'pull_request' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
