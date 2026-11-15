@@ -54,19 +54,27 @@ A horizon that lacks enough independent history remains blocked; elapsed calenda
 
 ### Latest strict validation snapshot
 
-Workflow: **SYNPORA Economic Validation #304**, commit `dc102aa6a883d2c38a9b10a27c0dc0dc63fed1e7`, completed 2026-11-14 21:02 UTC. The validation job exited non-zero because the strict empirical release gate correctly remained blocked; diagnostic artifact upload succeeded.
+Workflow: **SYNPORA Economic Validation #43698428728**, commit `82fae324e68bcb3fe76a336e53b5d2e6c3fe214d`, completed 2026-11-15 09:18 UTC. Unit/CI, browser smoke and isolated PostgreSQL recovery jobs passed for this commit. The empirical economic job exited non-zero because the strict horizon release gate correctly remained blocked; its diagnostic artifact uploaded successfully.
 
-International stress-reference joint BTC+GPU results:
-| Horizon | Genuine OOS pairs | MAE skill | Persistence/selector fallbacks | Additional observation lower bound | Status |
-|---|---:|---:|---:|---:|---|
-| 1h | 12 | +45.431% | 676 | Not sufficient to release | Blocked |
-| 6h | 1 | -0.039% | 115 | Not sufficient to release | Blocked |
-| 24h | 0 | Not available | 30 | 9,095 (~76.01 days) | Blocked |
-| 72h | 0 | Not available | 10 | 34,194 (~285.77 days) | Blocked |
+Production history contained 3,802 usable external market observations from 2026-10-10 through 2026-11-15, with a 12.03-minute median cadence. However, the validator found **zero** live external network-hashrate observations and used the BTC difficulty proxy instead. This limits BTC structural-model evidence and is now treated as a data-source remediation item, not as a reason to weaken forecast gates.
 
-The observation/day figures are only a data-volume lower bound at the observed cadence. They do not guarantee the 100 genuine pairs, model skill, selector eligibility or positive confidence bound. The 1h aggregate skill is not release evidence because the sample remains below 100, selector/persistence fallbacks are present, and the bootstrap lower bound is not proven positive.
+International tariff scenarios share the same market-price forecast diagnostics:
+| Horizon | Joint genuine OOS pairs | Joint MAE skill | Persistence/selector fallbacks | BTC independent pairs / skill | GPU independent pairs / skill | Status |
+|---|---:|---:|---:|---:|---:|---|
+| 1h | 12 | +45.431% | 687 / 662 selector rejects | 44 / -0.462% | 152 / +20.684% | Blocked |
+| 6h | 1 | -0.039% | 117 / 106 selector rejects | 4 / +4.570% | 38 / -108.252% | Blocked |
+| 24h | 0 | Not available | 30 / 23 selector rejects | 1 / -0.521% | 8 / -26.084% | Blocked |
+| 72h | 0 | Not available | 10 / 4 selector rejects | 0 / Not available | 2 / +51.802% | Blocked |
 
-Independent 1h per-series diagnostics are informative but do not replace the joint gate: BTC had 44 pairs, -0.462% skill and a -25.007% lower 95% CI; GPU had 151 pairs, +20.684% skill and a +8.795% lower 95% CI. The BTC series therefore remains a material weakness even though GPU diagnostics are positive.
+The 1h aggregate skill is not release evidence: the joint sample is only 12 pairs, the bootstrap lower confidence bound is unavailable, and BTC has not demonstrated positive independent skill. The 6h/24h/72h samples are also far below the 100-pair minimum. Per-series diagnostics never replace the joint BTC+GPU gate.
+
+### Historical BTC network-hashrate source
+
+The validator now has a branch-only, read-only backfill from Mempool's public `/api/v1/mining/hashrate/1y` endpoint. It normalizes `hashrates[].avgHashrate` from H/s to EH/s and aligns each daily bucket only to observations at or after the bucket-end timestamp, with a maximum age of 36 hours. Future buckets are never used. Existing fresh live hashrate values take precedence. If the endpoint is unavailable or malformed, the validator falls back to its existing provenance rules and does not relax any release gate.
+
+The Mempool REST documentation lists the network-wide hashrate endpoint and supported time periods including 1y: https://mempool.space/docs/api/rest
+
+This backfill and its regression tests were committed to PR #83 after workflow #43698428728. No GitHub Actions run for the newer head SHA has been observed yet; therefore the new backfill is not CI-verified and must not be described as production-active. It does not alter production collection or deploy anything.
 
 ### Operational requirements
 
@@ -81,7 +89,7 @@ Actual investment validation additionally requires site-specific electricity inv
 
 ## Sensitive-path reconnaissance monitoring
 
-The ASGI request middleware classifies common secret/configuration discovery paths (for example `.env`, `.git/config`, `.aws/credentials`, `.ssh`, PHP diagnostics and server-status probes). It emits a warning when one direct peer reaches the configured default threshold of 10 classified probes in a rolling five-minute window, or immediately if a classified path unexpectedly returns HTTP 2xx/3xx. Expected isolated 404 responses remain quiet. A threshold crossing emits one burst warning rather than one warning per subsequent request.
+The ASGI request middleware classifies common secret/configuration discovery paths (for example `.env` variants and backups, `.git/config`, `.aws`, `.ssh`, `.claude`, `.cargo`, `.gem`, `.dbeaver`, credential files, PHP diagnostics and server-status probes). It emits a warning when one direct peer reaches the configured default threshold of 10 classified probes in a rolling five-minute window, or immediately if a classified path unexpectedly returns HTTP 2xx/3xx. Expected isolated 404 responses remain quiet. A threshold crossing emits one burst warning rather than one warning per subsequent request.
 
 The monitor is process-local and bounded to 2,048 source fingerprints. It retains only a short keyed hash of the direct ASGI peer, a low-cardinality path category and monotonic timestamps; raw paths and IP addresses are not written to these alerts. Counters reset on process restart and are not a substitute for a durable WAF or edge-level security log. Forwarded client-IP headers are deliberately ignored: do not enable proxy-header trust until the exact trusted Railway proxy chain is verified. This monitoring is alert-only; it does not block requests, change firewall rules, rotate secrets or alter production infrastructure. It is branch-only until the associated pull request is deliberately reviewed, merged and deployed.
 
