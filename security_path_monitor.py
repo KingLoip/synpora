@@ -10,12 +10,14 @@ import time
 from urllib.parse import unquote
 
 _CATEGORY_PATTERNS = (
-    ("environment", re.compile(r"^\.env(?:\.|$)")),
-    ("version_control", re.compile(r"^\.(?:git|svn|hg)(?:$|/)")),
-    ("cloud_credentials", re.compile(r"^\.(?:aws|ssh)(?:$|/)")),
-    ("php_diagnostics", re.compile(r"^(?:phpinfo\.php|wp-config\.php)$")),
+    # Include deployment variants and backup suffixes commonly probed by scanners.
+    ("environment", re.compile(r"^\\.env(?:$|[._-].*)")),
+    ("version_control", re.compile(r"^\\.(?:git|svn|hg)(?:$|/)")),
+    ("cloud_credentials", re.compile(r"^\\.(?:aws|ssh|azure|gcloud)(?:$|/)")),
+    ("developer_credentials", re.compile(r"^\\.(?:claude|cargo|gem|dbeaver)(?:$|/)")),
+    ("php_diagnostics", re.compile(r"^(?:phpinfo(?:\\.php)?|wp-config(?:\\.php)?(?:\\..*)?)$")),
     ("server_diagnostics", re.compile(r"^server-status$")),
-    ("credential_file", re.compile(r"^(?:id_rsa|credentials|secrets|config\.php)$")),
+    ("credential_file", re.compile(r"^\\.?(?:id_rsa|credentials?|secrets?)(?:[._-].*)?$")),
 )
 
 
@@ -27,7 +29,7 @@ def classify_sensitive_path(path):
         if decoded == value:
             break
         value = decoded
-    value = value.replace("\\", "/").lower()
+    value = value.replace("\\\\", "/").lower()
     segments = [part for part in value.split("/") if part and part not in (".", "..")]
     for segment in segments:
         for category, pattern in _CATEGORY_PATTERNS:
