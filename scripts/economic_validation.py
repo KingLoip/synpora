@@ -15,6 +15,7 @@ import urllib.request
 from datetime import datetime, timezone
 
 MARKET_URL = "https://synpora-production.up.railway.app/api/v1/market/history?limit=10000&compact=true"
+NETWORK_HASHRATE_URL = "https://mempool.space/api/v1/mining/hashrate/1y"
 TARIFFS = {
     # Illustrative international sensitivity bands, not country quotes or a user tariff.
     "international_low_cost_reference": 0.05,
@@ -87,7 +88,44 @@ def daily_network_hashrate_at(history_points, timestamp):
     return max(eligible, key=lambda item: item[0])[1] if eligible else None
 
 
-def observations_from_history(raw):
+def normalize_network_hashrate_history(raw):
+    """Normalize Mempool's timestamped daily hashrate buckets into EH/s."""
+    if not isinstance(raw, dict) or not isinstance(raw.get("hashrates"), list):
+        return []
+    points = {}
+    for item in raw["hashrates"]:
+        if not isinstance(item, dict):
+            continue
+        stamp = finite(item.get("timestamp"))
+        hashrate_hs = finite(item.get("avgHashrate"))
+        value_eh = hashrate_hs / 1e18 if hashrate_hs is not None else None
+        if stamp is None or stamp <= 0 or value_eh is None or value_eh <= 0:
+            continue
+        points[stamp] = {
+            "timestamp": stamp,
+            "hashrate_eh": value_eh,
+            "provider": "Mempool.space live network hashrate API",
+        }
+    return [points[stamp] for stamp in sorted(points)[-400:]]
+
+
+def fetch_network_hashrate_history(url=NETWORK_HASHRATE_URL, timeout=12):
+    """Fetch public daily network-hashrate history; failure never weakens the release gate."""
+    request = urllib.request.Request(
+        url, headers={"User-Agent": "SYNPORA-Economic-Validation/1.0", "Accept": "application/json"}
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            raw = json.loads(response.read(2_000_001).decode("utf-8"))
+        if not isinstance(raw, dict):
+            return [], "invalid_response"
+        points = normalize_network_hashrate_history(raw)
+        return points, "available" if points else "empty_or_invalid_history"
+    except Exception as exc:
+        return [], "unavailable:" + type(exc).__name__
+
+
+def observations_from_history(raw, external_network_hashrate_history=None):
     result = []
     rejected = 0
     history_points = []
@@ -105,6 +143,16 @@ def observations_from_history(raw):
                             "timestamp": stamp, "hashrate_eh": value,
                             "provider": "Mempool.space live network hashrate API",
                         })
+    for point in external_network_hashrate_history or []:
+        if isinstance(point, dict):
+            stamp = finite(point.get("timestamp"))
+            value = finite(point.get("hashrate_eh"))
+            if (point.get("provider") == "Mempool.space live network hashrate API"
+                    and stamp is not None and value is not None and stamp > 0 and value > 0):
+                history_points.append({
+                    "timestamp": stamp, "hashrate_eh": value,
+                    "provider": "Mempool.space live network hashrate API",
+                })
     history_points = list({point["timestamp"]: point for point in history_points}.values())
     for item in raw if isinstance(raw, list) else []:
         payload = item.get("data") if isinstance(item, dict) else None
@@ -1420,7 +1468,8 @@ def main():
     request = urllib.request.Request(MARKET_URL, headers={"User-Agent": "SYNPORA-Economic-Validation/1.0"})
     with urllib.request.urlopen(request, timeout=25) as response:
         raw = json.loads(response.read(20_000_001).decode("utf-8"))
-    rows, rejected = observations_from_history(raw)
+    network_history, network_history_status = fetch_network_hashrate_history()
+    rows, rejected = observations_from_history(raw, network_history)
     # Optional short-lived CI artifact for model diagnostics; contains only
     # public, provenance-filtered market observations (no user or farm data).
     import os
@@ -1442,6 +1491,15 @@ def main():
             "last_timestamp": datetime.fromtimestamp(rows[-1]["ts"], timezone.utc).isoformat(),
             "median_gap_minutes": round(statistics.median(gaps), 2),
             "p90_gap_minutes": round(quantile(gaps, 0.90), 2),
+        },
+        "network_hashrate_history": {
+            "source": NETWORK_HASHRATE_URL,
+            "status": network_history_status,
+            "points_received": len(network_history),
+            "observations_backfilled": sum(
+                row.get("network_hashrate_source") == "mempool_daily_hashrate_history" for row in rows
+            ),
+            "time_alignment": "latest completed daily bucket at or before each market observation; maximum age 36h; no look-ahead",
         },
         "assumptions": {
             "risk_aversion": RISK_AVERSION,
