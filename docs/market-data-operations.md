@@ -39,31 +39,50 @@ Never interpret a successful HTTP 200 from collection as proof that the data is 
 - Recommendation-only operation
 - No GPU instances are created as part of market-data collection.
 
-
 ## Forecast evidence accumulation and release gates
 
 The economic validator uses timestamped, externally sourced market snapshots. Collection time and provider observation time are separate: repeated reads of a cached quote, a stale provider response, or a persistence fallback must not be counted as a new genuine model observation.
 
-The production forecast gate is evaluated independently at 1h, 6h, 24h and 72h. Each horizon requires at least 100 genuine, non-overlapping out-of-sample pairs, at least 5% MAE skill over persistence, a positive lower 95% bootstrap confidence bound, and eligible BTC and GPU strategy selectors. A horizon that lacks enough independent history remains blocked; elapsed calendar time alone never grants eligibility.
+The production forecast gate is evaluated independently at 1h, 6h, 24h and 72h. Each horizon requires all of:
+- At least 100 genuine, non-overlapping out-of-sample BTC+GPU pairs.
+- At least 5% MAE skill over persistence.
+- A positive lower 95% block-bootstrap confidence bound.
+- At least 32 horizon-separated training origins (24 fit and 8 holdout), with no more than 8 overlapping origins per horizon.
+- No BTC or GPU persistence fallback counted as a genuine model pair.
 
-The 2026-11-12 validation run (workflow run 43298516389) observed 12 genuine 1h pairs, 1 six-hour pair, 0 twenty-four-hour pairs and 0 seventy-two-hour pairs. The validator estimated about 77.92 additional days for the 24h horizon and 287.68 days for the 72h horizon to reach the 100-pair data-volume lower bound at the observed cadence. These are planning estimates only: model skill, confidence bounds and selector quality may still fail after the sample grows.
+A horizon that lacks enough independent history remains blocked; elapsed calendar time alone never grants eligibility.
 
-Operational requirements:
+### Latest strict validation snapshot
+
+Workflow: **SYNPORA Economic Validation #304**, commit `dc102aa6a883d2c38a9b10a27c0dc0dc63fed1e7`, completed 2026-11-14 21:02 UTC. The validation job exited non-zero because the strict empirical release gate correctly remained blocked; diagnostic artifact upload succeeded.
+
+International stress-reference joint BTC+GPU results:
+| Horizon | Genuine OOS pairs | MAE skill | Persistence/selector fallbacks | Additional observation lower bound | Status |
+|---|---:|---:|---:|---:|---|
+| 1h | 12 | +45.431% | 676 | Not sufficient to release | Blocked |
+| 6h | 1 | -0.039% | 115 | Not sufficient to release | Blocked |
+| 24h | 0 | Not available | 30 | 9,095 (~76.01 days) | Blocked |
+| 72h | 0 | Not available | 10 | 34,194 (~285.77 days) | Blocked |
+
+The observation/day figures are only a data-volume lower bound at the observed cadence. They do not guarantee the 100 genuine pairs, model skill, selector eligibility or positive confidence bound. The 1h aggregate skill is not release evidence because the sample remains below 100, selector/persistence fallbacks are present, and the bootstrap lower bound is not proven positive.
+
+Independent 1h per-series diagnostics are informative but do not replace the joint gate: BTC had 44 pairs, -0.462% skill and a -25.007% lower 95% CI; GPU had 151 pairs, +20.684% skill and a +8.795% lower 95% CI. The BTC series therefore remains a material weakness even though GPU diagnostics are positive.
+
+### Operational requirements
 
 1. Keep the production collector running at its configured cadence; do not backfill repeated cached quotes as new observations.
 2. Preserve provider observation timestamps, collection timestamps, data-quality provenance and exclusions so each candidate pair can be audited.
 3. Track per-horizon genuine pair counts, persistence fallbacks, selector fallbacks, MAE skill and bootstrap lower confidence bounds.
-4. Treat any missing/insufficient horizon as blocked. Do not weaken the 100-pair, 5% skill, positive confidence-bound or per-strategy requirements to obtain a green release.
+4. Treat any missing/insufficient horizon as blocked. Do not weaken the 100-pair, 5% skill, positive confidence-bound, training-origin or per-strategy requirements to obtain a green release.
 5. Keep forecast technical validation separate from investment validation. Market asking prices are not realized GPU payouts or BTC pool settlements; modeled energy prices are not all-in site invoices; battery estimates are not metered battery outcomes.
 6. Keep recommendation-only safety invariants in force: `hardware_write=false` and `autonomous_control=false`.
 
 Actual investment validation additionally requires site-specific electricity invoices and export settlements, GPU payout statements, BTC pool settlement records, hardware/capex invoices, maintenance/overhead records and metered battery/degradation evidence.
 
-
 ## Sensitive-path reconnaissance monitoring
 
 The ASGI request middleware classifies common secret/configuration discovery paths (for example `.env`, `.git/config`, `.aws/credentials`, `.ssh`, PHP diagnostics and server-status probes). It emits a warning when one direct peer reaches the configured default threshold of 10 classified probes in a rolling five-minute window, or immediately if a classified path unexpectedly returns HTTP 2xx/3xx. Expected isolated 404 responses remain quiet. A threshold crossing emits one burst warning rather than one warning per subsequent request.
 
-The monitor is process-local and bounded to 2,048 source fingerprints. It retains only a short keyed hash of the direct ASGI peer, a low-cardinality path category and monotonic timestamps; raw paths and IP addresses are not written to these alerts. Counters reset on process restart and are not a substitute for a durable WAF or edge-level security log. Forwarded client-IP headers are deliberately ignored: do not enable proxy-header trust until the exact trusted Railway proxy chain is verified. This monitoring is alert-only; it does not block requests, change firewall rules, rotate secrets or alter production infrastructure.
+The monitor is process-local and bounded to 2,048 source fingerprints. It retains only a short keyed hash of the direct ASGI peer, a low-cardinality path category and monotonic timestamps; raw paths and IP addresses are not written to these alerts. Counters reset on process restart and are not a substitute for a durable WAF or edge-level security log. Forwarded client-IP headers are deliberately ignored: do not enable proxy-header trust until the exact trusted Railway proxy chain is verified. This monitoring is alert-only; it does not block requests, change firewall rules, rotate secrets or alter production infrastructure. It is branch-only until the associated pull request is deliberately reviewed, merged and deployed.
 
 Tests cover encoded-path normalization, false positives, expected 404 noise suppression, threshold crossing, unexpected successful responses, expiry, bounded source cardinality and source fingerprint privacy.
