@@ -54,27 +54,27 @@ A horizon that lacks enough independent history remains blocked; elapsed calenda
 
 ### Latest strict validation snapshot
 
-Workflow: **SYNPORA Economic Validation #43698428728**, commit `82fae324e68bcb3fe76a336e53b5d2e6c3fe214d`, completed 2026-11-15 09:18 UTC. Unit/CI, browser smoke and isolated PostgreSQL recovery jobs passed for this commit. The empirical economic job exited non-zero because the strict horizon release gate correctly remained blocked; its diagnostic artifact uploaded successfully.
+Workflow: **SYNPORA Economic Validation #43761952828**, commit `9568c1f03497dc349e1f7132c45d910a4767d0dc`, completed 2026-11-15 21:09 UTC. SYNPORA CI, browser smoke and isolated PostgreSQL recovery passed. The strict economic job exited non-zero because the empirical forecast gate remained blocked; its diagnostic artifact uploaded successfully.
 
-Production history contained 3,802 usable external market observations from 2026-10-10 through 2026-11-15, with a 12.03-minute median cadence. However, the validator found **zero** live external network-hashrate observations and used the BTC difficulty proxy instead. This limits BTC structural-model evidence and is now treated as a data-source remediation item, not as a reason to weaken forecast gates.
+Production history contained 3,858 usable external market observations from 2026-10-10 through 2026-11-15, with a 12.03-minute median cadence. The new Mempool historical network-hashrate backfill succeeded: 365 daily points received and 2,838 market observations backfilled. Alignment uses only the latest completed daily bucket at or before each market observation, with a maximum age of 36 hours and no look-ahead. This resolves the missing historical hash-rate input for this validator run, but it does not create additional GPU price observations or prove settled mining revenue.
 
-International tariff scenarios share the same market-price forecast diagnostics:
-| Horizon | Joint genuine OOS pairs | Joint MAE skill | Persistence/selector fallbacks | BTC independent pairs / skill | GPU independent pairs / skill | Status |
+International tariff scenarios share the same market-price forecast diagnostics. The moderate reference scenario reported:
+| Horizon | Joint genuine BTC+GPU OOS pairs | Joint MAE skill | BTC independent pairs / skill | GPU independent pairs / skill | Persistence selector fallbacks (BTC / GPU) | Status |
 |---|---:|---:|---:|---:|---:|---|
-| 1h | 12 | +45.431% | 687 / 662 selector rejects | 44 / -0.462% | 152 / +20.684% | Blocked |
-| 6h | 1 | -0.039% | 117 / 106 selector rejects | 4 / +4.570% | 38 / -108.252% | Blocked |
-| 24h | 0 | Not available | 30 / 23 selector rejects | 1 / -0.521% | 8 / -26.084% | Blocked |
-| 72h | 0 | Not available | 10 / 4 selector rejects | 0 / Not available | 2 / +51.802% | Blocked |
+| 1h | 11 | +46.360% | 42 / -0.042% | 157 / +21.041% | 643 / 528 | Blocked |
+| 6h | 0 | Not available | 3 / +12.747% | 38 / -108.252% | 106 / 71 | Blocked |
+| 24h | 0 | Not available | 1 / -0.521% | 9 / -128.217% | 23 / 15 | Blocked |
+| 72h | 0 | Not available | 0 / Not available | 2 / +51.802% | 4 / 2 | Blocked |
 
-The 1h aggregate skill is not release evidence: the joint sample is only 12 pairs, the bootstrap lower confidence bound is unavailable, and BTC has not demonstrated positive independent skill. The 6h/24h/72h samples are also far below the 100-pair minimum. Per-series diagnostics never replace the joint BTC+GPU gate.
+The 1h GPU-only diagnostic has 157 pairs and a positive lower 95% bootstrap bound (+9.563%), but BTC-only evidence has 42 pairs and slightly negative skill. The combined BTC+GPU gate has only 11 genuine pairs, below the 100-pair minimum, with 643 BTC and 528 GPU persistence-selector fallbacks; its confidence bound is unavailable. Therefore the aggregate 1h skill is not release evidence. All longer joint horizons have zero genuine paired samples. Per-series diagnostics never replace the joint BTC+GPU gate.
+
+The backfill improved BTC data provenance but did **not** make the BTC model forecast independently useful: 1h BTC independent skill remains slightly negative, and the combined sample remains very small. Next work should focus on the source-quality and model-selection causes of persistence fallbacks, while preserving timestamp provenance and all current gates. Do not synthesize observations, count persistence fallbacks as genuine pairs, or lower the 100-pair / 5% skill / positive-confidence-bound criteria.
 
 ### Historical BTC network-hashrate source
 
-The validator now has a branch-only, read-only backfill from Mempool's public `/api/v1/mining/hashrate/1y` endpoint. It normalizes `hashrates[].avgHashrate` from H/s to EH/s and aligns each daily bucket only to observations at or after the bucket-end timestamp, with a maximum age of 36 hours. Future buckets are never used. Existing fresh live hashrate values take precedence. If the endpoint is unavailable or malformed, the validator falls back to its existing provenance rules and does not relax any release gate.
+The validator has a branch-only, read-only backfill from Mempool's public `/api/v1/mining/hashrate/1y` endpoint. It normalizes `hashrates[].avgHashrate` from H/s to EH/s, deduplicates timestamps, and aligns each completed daily bucket only to observations at or after its timestamp, with a maximum age of 36 hours. Future buckets are never used. Existing fresh live hashrate values take precedence. If the endpoint is unavailable or malformed, the validator falls back to its existing provenance rules and does not relax any release gate.
 
-The Mempool REST documentation lists the network-wide hashrate endpoint and supported time periods including 1y: https://mempool.space/docs/api/rest
-
-This backfill and its regression tests were committed to PR #83 after workflow #43698428728. No GitHub Actions run for the newer head SHA has been observed yet; therefore the new backfill is not CI-verified and must not be described as production-active. It does not alter production collection or deploy anything.
+Workflow #43761952828 confirms that the endpoint returned 365 points and that 2,838 historical observations were backfilled. This is verified for the PR branch's CI validator only; it does not alter the production collector, production database or deployed service. The Mempool REST documentation lists the network-wide hashrate endpoint and supported time periods including 1y: https://mempool.space/docs/api/rest
 
 ### Operational requirements
 
