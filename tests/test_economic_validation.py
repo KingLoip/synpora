@@ -414,6 +414,53 @@ class EconomicValidationTests(unittest.TestCase):
         self.assertEqual(result["model_history_required_observations"], 240 + 30 + 32 * 4)
         self.assertEqual(result["minimum_total_observations_for_horizon_validation"], 240 + 60 + 32 * 4)
 
+    def test_mempool_history_normalizes_hs_to_eh_s_and_rejects_bad_points(self):
+        points = MODULE.normalize_network_hashrate_history({
+            "hashrates": [
+                {"timestamp": 1000, "avgHashrate": 9.0e20},
+                {"timestamp": 2000, "avgHashrate": 1.0e21},
+                {"timestamp": 2000, "avgHashrate": 1.1e21},
+                {"timestamp": "bad", "avgHashrate": 1.0e21},
+                {"timestamp": 3000, "avgHashrate": -1},
+            ]
+        })
+        self.assertEqual(len(points), 2)
+        self.assertEqual(points[0]["hashrate_eh"], 900.0)
+        self.assertEqual(points[1]["hashrate_eh"], 1100.0)
+        self.assertEqual(points[0]["provider"], "Mempool.space live network hashrate API")
+        self.assertEqual(MODULE.normalize_network_hashrate_history({"hashrates": "invalid"}), [])
+
+    def test_external_mempool_history_backfills_without_lookahead(self):
+        fields = {
+            "btc_hashprice_usd_ph_day": external_field(1),
+            "gpu_l40s_usd_hour": external_field(1),
+            "eur_usd": external_field(1),
+            "btc_price_usd": external_field(1),
+            "btc_difficulty": external_field(1),
+        }
+        def row(ts):
+            return {"timestamp": ts, "data": {
+                "btc_hashprice_usd_ph_day": 40.0, "gpu_l40s_usd_hour": 1.1,
+                "eur_usd": 1.1, "btc_price_usd": 60000.0, "btc_difficulty": 100.0,
+                "data_quality": {"fields": fields},
+            }}
+        history = MODULE.normalize_network_hashrate_history({
+            "hashrates": [
+                {"timestamp": 86400, "avgHashrate": 9.0e20},
+                {"timestamp": 172800, "avgHashrate": 9.5e20},
+                {"timestamp": 200000, "avgHashrate": 1.0e21},
+            ]
+        })
+        rows, rejected = MODULE.observations_from_history(
+            [row(50000), row(90000), row(181000)], history
+        )
+        self.assertEqual(rejected, 0)
+        self.assertIsNone(rows[0]["network_hashrate"])
+        self.assertEqual(rows[1]["network_hashrate"], 900.0)
+        self.assertEqual(rows[1]["network_hashrate_source"], "mempool_daily_hashrate_history")
+        self.assertEqual(rows[2]["network_hashrate"], 950.0)
+        self.assertEqual(rows[2]["network_hashrate_source"], "mempool_daily_hashrate_history")
+
     def test_daily_hashrate_history_is_used_only_after_full_bucket_and_within_age_limit(self):
         points = [
             {"timestamp": 0.0, "hashrate_eh": 900.0, "provider": "Mempool.space live network hashrate API"},
