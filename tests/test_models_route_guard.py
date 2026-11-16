@@ -1,23 +1,63 @@
-"""Regression coverage for the legacy /api/v1/models NameError guard."""
+"""Regression coverage for the legacy /api/v1/models NameError guard.
 
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
+This test intentionally uses a tiny router double so the unit-test phase can
+run before the CI workflow installs the application requirements.
+"""
+import sys
+import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from backend.app.saas_api import _install_models_route_guard
 
 
-def test_models_route_returns_controlled_503_before_legacy_handler():
-    app = FastAPI()
+class FakeHTTPException(Exception):
+    def __init__(self, status_code, detail):
+        super().__init__(detail)
+        self.status_code = status_code
+        self.detail = detail
 
-    @app.get("/api/v1/models")
-    def broken_legacy_handler():
-        # Mirrors the deployed route's undefined-helper failure without relying
-        # on the packaged ZIP's internal source layout.
-        raise NameError("name 'list_models' is not defined")
 
-    _install_models_route_guard(app)
+class FakeRoute:
+    def __init__(self, path, endpoint):
+        self.path = path
+        self.endpoint = endpoint
 
-    response = TestClient(app).get("/api/v1/models")
-    assert response.status_code == 503
-    assert response.json()["detail"]["code"] == "model_registry_unavailable"
-    assert "temporarily unavailable" in response.json()["detail"]["message"]
+
+class FakeApp:
+    def __init__(self):
+        self.router = SimpleNamespace(routes=[])
+
+    def get(self, path):
+        def register(endpoint):
+            self.router.routes.append(FakeRoute(path, endpoint))
+            return endpoint
+        return register
+
+
+class ModelsRouteGuardTests(unittest.TestCase):
+    def test_controlled_503_precedes_broken_legacy_handler(self):
+        app = FakeApp()
+
+        def broken_legacy_handler():
+            raise NameError("name 'list_models' is not defined")
+
+        app.router.routes.append(FakeRoute("/api/v1/models", broken_legacy_handler))
+
+        with patch.dict(sys.modules, {"fastapi": SimpleNamespace(HTTPException=FakeHTTPException)}):
+            _install_models_route_guard(app)
+
+        self.assertEqual(len(app.router.routes), 2)
+        self.assertEqual(app.router.routes[0].path, "/api/v1/models")
+        self.assertIsNot(app.router.routes[0].endpoint, broken_legacy_handler)
+
+        with self.assertRaises(FakeHTTPException) as raised:
+            app.router.routes[0].endpoint()
+
+        self.assertEqual(raised.exception.status_code, 503)
+        self.assertEqual(raised.exception.detail["code"], "model_registry_unavailable")
+        self.assertIn("temporarily unavailable", raised.exception.detail["message"])
+
+
+if __name__ == "__main__":
+    unittest.main()
