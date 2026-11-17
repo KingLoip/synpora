@@ -22,7 +22,7 @@ class DispatchFailClosedContractTests(unittest.TestCase):
     def test_release_gate_explains_missing_empirical_evidence(self):
         block = self._dispatch_block()
         self.assertIn("No independently validated all-horizon release result", block)
-        self.assertIn("Fresh market data and persistence fallbacks do not qualify", block)
+        self.assertIn("Forecast freshness and provenance do not establish empirical forecast validation", block)
 
 
     def test_regret_log_normal_shocks_are_mean_preserving_without_floor_bias(self):
