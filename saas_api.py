@@ -1656,8 +1656,8 @@ def install(app):
         for _ in range(n):
             # Mean-one lognormal multipliers preserve the supplied expected price.
             # Preserve signed site tariffs too; negative prices must not be clamped away.
-            btc=max(0.01,float(x.btc_hashprice_usd_ph_day)*rng.lognormvariate(-0.5*shock*shock,shock))
-            gpu=max(0.01,float(x.gpu_hourly_usd)*rng.lognormvariate(-0.5*shock*shock,shock))
+            btc=float(x.btc_hashprice_usd_ph_day)*rng.lognormvariate(-0.5*shock*shock,shock)
+            gpu=float(x.gpu_hourly_usd)*rng.lognormvariate(-0.5*shock*shock,shock)
             energy=float(x.energy_cost_eur_kwh)*rng.lognormvariate(-0.5*energy_shock*energy_shock,energy_shock)
             s=x.model_copy(update={"energy_cost_eur_kwh":energy,
                          "btc_hashprice_usd_ph_day":btc,"gpu_hourly_usd":gpu})
