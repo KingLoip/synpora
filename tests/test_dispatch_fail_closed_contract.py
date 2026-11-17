@@ -25,5 +25,14 @@ class DispatchFailClosedContractTests(unittest.TestCase):
         self.assertIn("Fresh market data and persistence fallbacks do not qualify", block)
 
 
+    def test_regret_log_normal_shocks_are_mean_preserving_without_floor_bias(self):
+        source = Path("saas_api.py").read_text(encoding="utf-8")
+        self.assertIn("btc_sigma=0.20; gpu_sigma=0.20; energy_sigma=0.13", source)
+        self.assertIn("rng.lognormvariate(-0.5*shock*shock,shock)", source)
+        self.assertIn("rng.lognormvariate(-0.5*energy_shock*energy_shock,energy_shock)", source)
+        self.assertNotIn("btc=max(0.01,float(x.btc_hashprice_usd_ph_day)*rng.lognormvariate", source)
+        self.assertNotIn("gpu=max(0.01,float(x.gpu_hourly_usd)*rng.lognormvariate", source)
+
+
 if __name__ == "__main__":
     unittest.main()
