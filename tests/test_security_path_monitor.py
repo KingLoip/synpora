@@ -105,5 +105,19 @@ class SensitivePathMonitorTests(unittest.TestCase):
         self.assertTrue(all(len(state[0]) <= monitor.threshold for state in monitor._sources.values()))
 
 
+    def test_observed_128_probe_wave_emits_one_bounded_alert(self):
+        monitor = SensitivePathMonitor(threshold=10, window_seconds=300, salt=b"test")
+        alerts = []
+        paths = ("/.env", "/.git/config", "/.aws/credentials", "/.env.production")
+        for index in range(128):
+            alert = monitor.record("scanner-source", paths[index % len(paths)], 404, now=100 + index / 10)
+            if alert is not None:
+                alerts.append(alert)
+        self.assertEqual(len(alerts), 1)
+        self.assertEqual(alerts[0]["reason"], "repeated_reconnaissance")
+        self.assertEqual(alerts[0]["count_in_window"], 10)
+        self.assertLessEqual(len(monitor._sources), 32)
+
+
 if __name__ == "__main__":
     unittest.main()
