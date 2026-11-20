@@ -59,5 +59,25 @@ class ModelsRouteGuardTests(unittest.TestCase):
         self.assertIn("temporarily unavailable", raised.exception.detail["message"])
 
 
+    def test_fastapi_client_gets_controlled_503_before_broken_legacy_route(self):
+        try:
+            from fastapi import FastAPI
+            from fastapi.testclient import TestClient
+        except ImportError:
+            self.skipTest("FastAPI test dependencies are installed in the integration CI phase")
+
+        app = FastAPI()
+
+        @app.get("/api/v1/models")
+        def broken_legacy_handler():
+            raise NameError("name 'list_models' is not defined")
+
+        _install_models_route_guard(app)
+        response = TestClient(app).get("/api/v1/models")
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["detail"]["code"], "model_registry_unavailable")
+
+
 if __name__ == "__main__":
     unittest.main()
