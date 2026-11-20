@@ -46,7 +46,7 @@ class SensitivePathClassificationTests(unittest.TestCase):
             ("//.git///config", "version_control"),
             ("/assets//../.env", "environment"),
             ("/%2e%2e//.aws///credentials", "cloud_credentials"),
-            ("/backup/%252e%252egit%252fconfig", "version_control"),
+            ("/backup/%252e%252e%252f%252egit%252fconfig", "version_control"),
         )
         for path, expected in cases:
             with self.subTest(path=path):
