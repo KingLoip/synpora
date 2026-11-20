@@ -41,6 +41,17 @@ class SensitivePathClassificationTests(unittest.TestCase):
         )
         self.assertEqual(classify_sensitive_path(r"\\.aws\\credentials"), "cloud_credentials")
 
+    def test_normalizes_duplicate_slashes_and_traversal_before_matching(self):
+        cases = (
+            ("//.git///config", "version_control"),
+            ("/assets//../.env", "environment"),
+            ("/%2e%2e//.aws///credentials", "cloud_credentials"),
+            ("/backup/%252e%252egit%252fconfig", "version_control"),
+        )
+        for path, expected in cases:
+            with self.subTest(path=path):
+                self.assertEqual(classify_sensitive_path(path), expected)
+
     def test_ignores_ordinary_application_paths(self):
         for path in ("/", "/health", "/api/v1/configuration", "/assets/app.js", "/docs"):
             with self.subTest(path=path):
