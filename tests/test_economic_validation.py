@@ -414,6 +414,53 @@ class EconomicValidationTests(unittest.TestCase):
         self.assertEqual(result["model_history_required_observations"], 240 + 30 + 32 * 4)
         self.assertEqual(result["minimum_total_observations_for_horizon_validation"], 240 + 60 + 32 * 4)
 
+    def test_mempool_history_normalizes_hs_to_eh_s_and_rejects_bad_points(self):
+        points = MODULE.normalize_network_hashrate_history({
+            "hashrates": [
+                {"timestamp": 1000, "avgHashrate": 9.0e20},
+                {"timestamp": 2000, "avgHashrate": 1.0e21},
+                {"timestamp": 2000, "avgHashrate": 1.1e21},
+                {"timestamp": "bad", "avgHashrate": 1.0e21},
+                {"timestamp": 3000, "avgHashrate": -1},
+            ]
+        })
+        self.assertEqual(len(points), 2)
+        self.assertEqual(points[0]["hashrate_eh"], 900.0)
+        self.assertEqual(points[1]["hashrate_eh"], 1100.0)
+        self.assertEqual(points[0]["provider"], "Mempool.space live network hashrate API")
+        self.assertEqual(MODULE.normalize_network_hashrate_history({"hashrates": "invalid"}), [])
+
+    def test_external_mempool_history_backfills_without_lookahead(self):
+        fields = {
+            "btc_hashprice_usd_ph_day": external_field(1),
+            "gpu_l40s_usd_hour": external_field(1),
+            "eur_usd": external_field(1),
+            "btc_price_usd": external_field(1),
+            "btc_difficulty": external_field(1),
+        }
+        def row(ts):
+            return {"timestamp": ts, "data": {
+                "btc_hashprice_usd_ph_day": 40.0, "gpu_l40s_usd_hour": 1.1,
+                "eur_usd": 1.1, "btc_price_usd": 60000.0, "btc_difficulty": 100.0,
+                "data_quality": {"fields": fields},
+            }}
+        history = MODULE.normalize_network_hashrate_history({
+            "hashrates": [
+                {"timestamp": 86400, "avgHashrate": 9.0e20},
+                {"timestamp": 172800, "avgHashrate": 9.5e20},
+                {"timestamp": 200000, "avgHashrate": 1.0e21},
+            ]
+        })
+        rows, rejected = MODULE.observations_from_history(
+            [row(50000), row(90000), row(181000)], history
+        )
+        self.assertEqual(rejected, 0)
+        self.assertIsNone(rows[0]["network_hashrate"])
+        self.assertEqual(rows[1]["network_hashrate"], 900.0)
+        self.assertEqual(rows[1]["network_hashrate_source"], "mempool_daily_hashrate_history")
+        self.assertEqual(rows[2]["network_hashrate"], 950.0)
+        self.assertEqual(rows[2]["network_hashrate_source"], "mempool_daily_hashrate_history")
+
     def test_daily_hashrate_history_is_used_only_after_full_bucket_and_within_age_limit(self):
         points = [
             {"timestamp": 0.0, "hashrate_eh": 900.0, "provider": "Mempool.space live network hashrate API"},
@@ -705,6 +752,66 @@ class EconomicValidationTests(unittest.TestCase):
         self.assertAlmostEqual(result["mae_skill_vs_persistence"], 0.0)
         self.assertAlmostEqual(result["chosen_strategy_win_probability_brier"], 0.04)
 
+    def test_regret_evidence_is_never_marked_validated_from_market_proxy_pairs(self):
+        def pair(chosen, best):
+            return {
+                "chosen": chosen, "predicted": 0.12, "baseline_predicted": 0.10,
+                "predicted_win_probability": 0.8, "actual": 0.11, "best": best,
+                "regret": 0.0, "actual_values": {
+                    "AI Compute": 0.11, "BTC Mining": 0.02,
+                    "Battery": 0.04, "Grid": 0.03,
+                }, "gap_minutes": 5.0,
+            }
+
+        dominant = MODULE.summarize_backtest([pair("AI Compute", "AI Compute")] * 5, "dominant")
+        self.assertEqual(dominant["regret_evidence_status"], "low_information_single_strategy_dominance")
+        self.assertFalse(dominant["regret_evidence_validated"])
+
+        varied = MODULE.summarize_backtest([
+            pair("AI Compute", "AI Compute"), pair("BTC Mining", "BTC Mining")
+        ], "varied")
+        self.assertEqual(varied["regret_evidence_status"], "historical_market_proxy_not_realized_farm_decisions")
+        self.assertFalse(varied["regret_evidence_validated"])
+
+        empty = MODULE.summarize_backtest([], "empty")
+        self.assertEqual(empty["regret_evidence_status"], "insufficient_data_not_validated")
+        self.assertFalse(empty["regret_evidence_validated"])
+
+    def test_backtest_exposes_worst_regret_cases_with_settlement_timestamps(self):
+        pairs = []
+        for i, regret in enumerate((0.1, 2.0, 0.4)):
+            pairs.append({
+                "chosen": "Grid", "predicted": 0.055, "baseline_predicted": 0.055,
+                "predicted_win_probability": 0.8, "actual": 0.2, "best": "AI Compute",
+                "regret": regret, "actual_values": {
+                    "AI Compute": 0.2 + regret, "BTC Mining": 0.02,
+                    "Battery": 0.05, "Grid": 0.2,
+                }, "decision_values": {
+                    "AI Compute": 0.18, "BTC Mining": 0.03,
+                    "Battery": 0.04, "Grid": 0.055,
+                }, "decision_risk_metrics": {
+                    "AI Compute": {"mean": 0.48, "p05": -0.19, "score": -0.0225},
+                    "BTC Mining": {"mean": 0.03, "p05": 0.01, "score": 0.015},
+                    "Battery": {"mean": 0.04, "p05": 0.03, "score": 0.0325},
+                    "Grid": {"mean": 0.055, "p05": 0.055, "score": 0.055},
+                }, "gap_minutes": 5.0,
+                "decision_timestamp": 1000 + i * 300,
+                "settlement_timestamp": 1300 + i * 300,
+            })
+        result = MODULE.summarize_backtest(pairs, "tail-test")
+        self.assertEqual(len(result["worst_regret_cases"]), 3)
+        self.assertEqual(result["worst_regret_cases"][0]["regret_eur_per_kwh"], 2.0)
+        self.assertEqual(result["worst_regret_cases"][0]["decision_timestamp"], 1300)
+        self.assertEqual(result["worst_regret_cases"][0]["settlement_timestamp"], 1600)
+        self.assertEqual(result["worst_regret_cases"][0]["best_strategy"], "AI Compute")
+        self.assertEqual(result["worst_regret_cases"][0]["decision_value_chosen_eur_per_kwh"], 0.055)
+        self.assertEqual(result["worst_regret_cases"][0]["decision_value_best_eur_per_kwh"], 0.18)
+        sensitivity = result["worst_regret_cases"][0]["risk_aversion_sensitivity"]
+        self.assertEqual(result["worst_regret_cases"][0]["configured_risk_aversion"], 0.75)
+        self.assertEqual([row["selected_strategy"] for row in sensitivity], ["AI Compute", "AI Compute", "AI Compute", "Grid", "Grid"])
+        self.assertEqual(sensitivity[3]["risk_aversion"], 0.75)
+        self.assertEqual(result["chosen_strategy_counts"]["Grid"], 3)
+
     def test_backtest_excludes_noncomparable_long_snapshot_gaps(self):
         rows = []
         for i in range(28):
@@ -727,6 +834,20 @@ class EconomicValidationTests(unittest.TestCase):
         self.assertEqual(set(sensitivity["results"]), {"0.0", "0.25", "0.5", "0.75", "1.0"})
         self.assertTrue(all("mean_regret_eur_per_kwh" in value
                             for value in sensitivity["results"].values()))
+
+    def test_tariff_scenarios_are_global_illustrative_bands_not_austria_specific(self):
+        self.assertEqual(MODULE.TARIFFS, {
+            "international_low_cost_reference": 0.05,
+            "international_moderate_reference": 0.10,
+            "international_high_cost_reference": 0.20,
+            "international_stress_reference": 0.30,
+        })
+        self.assertIn("not country-specific market quotes", MODULE.INTERNATIONAL_TARIFF_NOTE)
+        self.assertIn("site-specific energy contracts", MODULE.INTERNATIONAL_TARIFF_NOTE)
+        self.assertIn("not universal revenue rates", MODULE.INTERNATIONAL_TARIFF_NOTE)
+        self.assertIn("storage opportunity costs", MODULE.INTERNATIONAL_TARIFF_NOTE)
+        self.assertFalse(any("salzburg" in name.lower() or "awattar" in name.lower()
+                             for name in MODULE.TARIFFS))
 
     def test_investment_readiness_fails_closed_without_realized_cashflow(self):
         gate = MODULE.investment_readiness()
