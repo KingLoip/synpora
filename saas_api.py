@@ -3384,7 +3384,11 @@ def install(app):
     def database():
         return {"persistent_database":"postgresql" if DB_URL else "sqlite_fallback","configured":bool(DB_URL)}
 
-    # Prevent the packaged legacy model endpoint from raising NameError until\n    # its registry implementation is restored and covered by a package-level test.\n    _install_models_route_guard(app)\n\n    # Prefer these explicit SaaS API handlers over legacy duplicate routes,
+    # Prevent the packaged legacy model endpoint from raising NameError until
+    # its registry implementation is restored and covered by a package-level test.
+    _install_models_route_guard(app)
+
+    # Prefer these explicit SaaS API handlers over legacy duplicate routes,
     # and keep the frontend root mount last so it cannot shadow API methods.
     try:
         from starlette.routing import Mount
