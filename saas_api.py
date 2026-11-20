@@ -444,6 +444,45 @@ def _vastai_l40s_offers(api_key, get_json, post_json):
     return offers_from(raw)
 
 
+
+def _install_models_route_guard(app):
+    """Shadow the legacy packaged model route until its missing helpers are restored.
+
+    The packaged main.py currently registers /api/v1/models with undefined
+    list_models/select_best symbols. This explicit 503 route is inserted ahead
+    of that legacy route, preventing an externally-triggerable NameError/500
+    while accurately reporting that the model registry is unavailable.
+    """
+    from fastapi import HTTPException
+
+    @app.get("/api/v1/models")
+    def models_registry_unavailable():
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "model_registry_unavailable",
+                "message": "The model registry is temporarily unavailable.",
+            },
+        )
+
+    # FastAPI matches routes in order. Put this controlled response ahead of
+    # any older packaged route with the same path, including the broken one.
+    routes = list(app.router.routes)
+    guarded = [
+        route for route in routes
+        if getattr(route, "endpoint", None) is models_registry_unavailable
+    ]
+    if guarded:
+        remaining = [route for route in routes if route not in guarded]
+        index = next(
+            (i for i, route in enumerate(remaining)
+             if getattr(route, "path", None) == "/api/v1/models"),
+            len(remaining),
+        )
+        remaining[index:index] = guarded
+        app.router.routes = remaining
+    return app
+
 def install(app):
     from fastapi import BackgroundTasks, Header, HTTPException
     from pydantic import BaseModel
@@ -3344,6 +3383,10 @@ def install(app):
     @app.get("/api/v1/system/database")
     def database():
         return {"persistent_database":"postgresql" if DB_URL else "sqlite_fallback","configured":bool(DB_URL)}
+
+    # Prevent the packaged legacy model endpoint from raising NameError until
+    # its registry implementation is restored and covered by a package-level test.
+    _install_models_route_guard(app)
 
     # Prefer these explicit SaaS API handlers over legacy duplicate routes,
     # and keep the frontend root mount last so it cannot shadow API methods.
