@@ -59,6 +59,9 @@ jobs:
           from auth_pages import install_auth_pages
           install_auth_pages(app)
           c=TestClient(app)
+          models=c.get("/api/v1/models")
+          assert models.status_code==503, models.text
+          assert models.json()["detail"]["code"]=="model_registry_unavailable", models.text
           email="ci-smoke@example.com"
           reg=c.post("/api/v1/auth/register",json={"email":email,"password":"ci-password-123"})
           assert reg.status_code==200, reg.text
