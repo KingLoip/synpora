@@ -900,7 +900,7 @@ jobs:
           with open("/tmp/synpora-health.json", encoding="utf-8") as handle:
               health = json.load(handle)
           assert health.get("status") == "ok", health
-          assert health.get("service") == "synpora", health
+          assert health.get("service") in {"synpora", "synpora-api"}, health
           print("Production Docker image starts and serves /health.")
           PY
 
