@@ -1,4 +1,5 @@
 import uvicorn, threading, time
+from security_path_monitor import observe_sensitive_path
 from backend.app.main import app
 from backend.app.saas_api import install
 from auth_pages import install_auth_pages
@@ -14,6 +15,16 @@ def favicon():
 @app.middleware("http")
 async def security_headers(request, call_next):
     response = await call_next(request)
+    # Use the direct ASGI peer only. Forwarded headers are intentionally not trusted here:
+    # Railway/proxy trust must be configured explicitly before client-IP attribution.
+    try:
+        peer = request.client.host if request.client else "unknown"
+        raw_path = request.scope.get("raw_path", b"")
+        observed_path = raw_path.decode("latin-1") if raw_path else request.url.path
+        observe_sensitive_path(peer, observed_path, response.status_code)
+    except Exception:
+        # Monitoring must never interfere with application responses.
+        pass
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
