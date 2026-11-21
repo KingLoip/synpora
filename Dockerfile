@@ -17,6 +17,7 @@ PY
 COPY synpora_enhancement.py /tmp/synpora_enhancement.py
 RUN python /tmp/synpora_enhancement.py
 COPY saas_api.py /app/backend/app/saas_api.py
+COPY security_path_monitor.py /app/security_path_monitor.py
 COPY server.py /app/server.py
 COPY auth_pages.py /app/auth_pages.py
 RUN pip install --no-cache-dir -r backend/requirements.txt psycopg[binary] psycopg2-binary
