@@ -880,11 +880,38 @@ jobs:
       - name: Docker build smoke test
         run: docker build --pull=false -t synpora-ci .
 
+      - name: Run the production image and verify container startup
+        run: |
+          set -euo pipefail
+          docker run -d --name synpora-ci-smoke -p 127.0.0.1:18080:8000 -e PORT=8000 synpora-ci
+          cleanup() {
+            docker logs --tail 80 synpora-ci-smoke || true
+            docker rm -f synpora-ci-smoke >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:18080/health -o /tmp/synpora-health.json; then
+              break
+            fi
+            sleep 1
+          done
+          python - <<'PY'
+          import json
+          with open("/tmp/synpora-health.json", encoding="utf-8") as handle:
+              health = json.load(handle)
+          assert health.get("status") == "ok", health
+          assert health.get("service") == "synpora", health
+          print("Production Docker image starts and serves /health.")
+          PY
+
       - name: Verify release invariants
         run: |
           python - <<'PY'
           from pathlib import Path
           s=Path("saas_api.py").read_text()
+          dockerfile=Path("Dockerfile").read_text()
+          assert "COPY security_path_monitor.py /app/security_path_monitor.py" in dockerfile
+          assert Path("security_path_monitor.py").is_file()
           assert 'hardware_write":False' in s
           assert 'recommendation_only":True' in s
           assert 'SYNPORA_JWT_SECRET' in s
