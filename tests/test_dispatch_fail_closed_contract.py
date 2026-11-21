@@ -15,7 +15,7 @@ class DispatchFailClosedContractTests(unittest.TestCase):
 
     def test_fresh_market_provenance_cannot_mark_dispatch_validated(self):
         block = self._dispatch_block()
-        self.assertIn('"status":"unvalidated" if forecast_source=="adaptive_market_with_site_tariff_input" else "degraded"', block)
+        self.assertIn('"status":"unvalidated" if forecast_source=="adaptive_market_with_site_tariff_input" and forecast_training_ready else "degraded"', block)
         self.assertIn('"empirical_forecast_release_gate":{"status":"blocked"', block)
         self.assertNotIn('"status":"validated"', block)
 
