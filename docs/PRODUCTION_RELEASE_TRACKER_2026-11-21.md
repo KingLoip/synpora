@@ -67,3 +67,24 @@ Status remains `not_investment_validated`. Validation requires verified settled 
 - No hardware writes, autonomous control, trades, wallet actions, or purchases.
 - A green CI run proves only the tested code paths; a live HTTP 200 proves reachability, not economic quality, email delivery, or durable database recovery.
 - Keep the model-registry guard in place until a real implementation is restored and tested.
+
+
+## Production verification update — 2026-11-22
+
+This update records the live checks performed after the 2026-11-22 fallback-monitor deployment.
+
+- Railway fallback monitor deployment `e3eae19c-4a24-4b4b-8de3-62e73fbcd258` completed successfully.
+- The first post-deployment cron execution and subsequent five-minute executions completed successfully. Latest observed execution: 2026-11-22 09:06:00 UTC.
+- Fallback runtime logs repeatedly reported `SYNPORA fallback monitor PASS`, including `mode= recommendation_only`, `collector_quality=live`, `readiness=ready`, and fresh collector/market-data observations. Latest observed data age was approximately 414 seconds, below the 900-second limit.
+- Railway production API and PostgreSQL remained online (1/1 running replica each); no active Railway warning or critical notifications were reported. No pending Railway changes remained.
+- GitHub Production Monitor scheduled run #319 completed successfully at 2026-11-22 07:46 UTC.
+- The latest 500 captured API HTTP records contained 215 responses with HTTP 200, 284 with HTTP 404, and 2 with HTTP 405; no HTTP 5xx response was present. The sampled 404/405 traffic was dominated by generic internet scanning paths (for example `.env`, `.git`, `wp-admin`, and `xmlrpc.php`), not successful access to those resources.
+- API resource metrics over 24 hours: average memory approximately 0.128 GB (maximum 0.250 GB); average CPU approximately 0.0015 cores (maximum 0.0317 cores).
+- Email provider configuration variable names are present in Railway, but this does not prove provider acceptance, mailbox receipt, or one-time verification-token behavior. Those remain open acceptance tests.
+
+### Remaining release blockers — unchanged
+
+- The legacy `/api/v1/models` route remains guarded with controlled HTTP 503 until the packaged registry source and its actual response contract can be restored and tested. Do not remove the guard based on the separate adaptive forecast selector alone.
+- The strict joint BTC+GPU forecast gate remains blocked. Latest available evidence still shows only 11 genuine joint 1h OOS pairs and zero qualifying pairs at 6h, 24h, and 72h; all four horizons must meet the unchanged sample, skill, and confidence-bound criteria.
+- Production email receipt/token lifecycle, live PostgreSQL restart durability and backup/restore drill, trusted proxy-chain verification, sustained operations observation, and realized investment/business validation remain open.
+- Keep `hardware_write=false`, `autonomous_control=false`, and recommendation-only operation. No forecast or investment release approval is implied by these operational checks.
