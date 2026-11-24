@@ -30,7 +30,7 @@ def load_functions(source, names):
 class ProductionValidatorSelectorParityTests(unittest.TestCase):
     def setUp(self):
         helpers = ("_horizon_candidate_values", "_btc_price_network_candidate",
-                   "select_btc_network_proxy")
+                   "_select_btc_network_proxy")
         self.production = load_functions(
             PRODUCTION_SOURCE, helpers + ("_adaptive_horizon_weights",))
         self.validator = load_functions(
@@ -70,8 +70,8 @@ class ProductionValidatorSelectorParityTests(unittest.TestCase):
         difficulty = [90.0, 90.0, 91.0]
         sources = ["network_hashrate"] * 3
         expected = (live, "network_hashrate")
-        self.assertEqual(self.production["select_btc_network_proxy"](live, difficulty, sources), expected)
-        self.assertEqual(self.validator["select_btc_network_proxy"](live, difficulty, sources), expected)
+        self.assertEqual(self.production["_select_btc_network_proxy"](live, difficulty, sources), expected)
+        self.assertEqual(self.validator["_select_btc_network_proxy"](live, difficulty, sources), expected)
 
     def test_network_proxy_uses_difficulty_instead_of_daily_or_mixed_hashrate(self):
         daily = [500.0, 500.0, 501.0]
@@ -83,15 +83,15 @@ class ProductionValidatorSelectorParityTests(unittest.TestCase):
         for sources in cases:
             with self.subTest(sources=sources):
                 expected = (difficulty, "btc_difficulty_proxy")
-                self.assertEqual(self.production["select_btc_network_proxy"](daily, difficulty, sources), expected)
-                self.assertEqual(self.validator["select_btc_network_proxy"](daily, difficulty, sources), expected)
+                self.assertEqual(self.production["_select_btc_network_proxy"](daily, difficulty, sources), expected)
+                self.assertEqual(self.validator["_select_btc_network_proxy"](daily, difficulty, sources), expected)
 
     def test_network_proxy_disables_structural_inputs_when_no_safe_proxy_exists(self):
         daily = [500.0, 500.0, 501.0]
         sources = ["mempool_daily_hashrate_history"] * 3
         expected = (None, "non_live_hashrate_excluded")
-        self.assertEqual(self.production["select_btc_network_proxy"](daily, [None, None, None], sources), expected)
-        self.assertEqual(self.validator["select_btc_network_proxy"](daily, [None, None, None], sources), expected)
+        self.assertEqual(self.production["_select_btc_network_proxy"](daily, [None, None, None], sources), expected)
+        self.assertEqual(self.validator["_select_btc_network_proxy"](daily, [None, None, None], sources), expected)
 
     def test_production_and_validator_select_same_gpu_candidates_at_each_horizon(self):
         for sample_steps in (1, 6, 12, 72, 288, 864):
