@@ -602,20 +602,34 @@ def select_btc_network_proxy(rows):
     if not rows:
         return None, "unavailable"
     hashrate = [row.get("network_hashrate") for row in rows]
-    if all(value is not None and math.isfinite(float(value)) and float(value) > 0
-           for value in hashrate):
-        sources = {row.get("network_hashrate_source", "network_hashrate") for row in rows}
-        if sources == {"network_hashrate"}:
-            source = "network_hashrate"
-        elif sources == {"mempool_daily_hashrate_history"}:
-            source = "mempool_daily_hashrate_history"
-        else:
-            source = "mixed_live_and_daily_hashrate_history"
-        return hashrate, source
     difficulty = [row.get("btc_difficulty") for row in rows]
-    if all(value is not None and math.isfinite(float(value)) and float(value) > 0
-           for value in difficulty):
-        return difficulty, "btc_difficulty_proxy"
+    sources = [row.get("network_hashrate_source", "network_hashrate") for row in rows]
+    return select_btc_network_proxy(hashrate, difficulty, sources)
+
+
+def select_btc_network_proxy(hashrate, difficulty, sources):
+    """Use only genuinely live hashrate for high-frequency BTC features.
+
+    Daily backfilled Mempool buckets are useful historical context, but repeating
+    them across intraday snapshots creates false high-frequency observations.
+    Prefer a complete difficulty proxy when the hashrate series is backfilled or
+    mixed; otherwise disable the exogenous structural candidates.
+    """
+    import math
+
+    if (hashrate and len(sources) == len(hashrate)
+            and all(value is not None and math.isfinite(float(value)) and float(value) > 0
+                    for value in hashrate)
+            and set(sources) == {"network_hashrate"}):
+        return list(hashrate), "network_hashrate"
+
+    if (difficulty and all(value is not None and math.isfinite(float(value)) and float(value) > 0
+                           for value in difficulty)):
+        return list(difficulty), "btc_difficulty_proxy"
+
+    if (hashrate and all(value is not None and math.isfinite(float(value)) and float(value) > 0
+                         for value in hashrate)):
+        return None, "non_live_hashrate_excluded"
     return None, "unavailable"
 
 
