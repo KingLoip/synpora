@@ -444,7 +444,7 @@ def _vastai_l40s_offers(api_key, get_json, post_json):
     return offers_from(raw)
 
 
-def select_btc_network_proxy(hashrate, difficulty, sources):
+def _select_btc_network_proxy(hashrate, difficulty, sources):
     """Use only genuinely live hashrate for high-frequency BTC features.
 
     Daily backfilled Mempool buckets are useful historical context, but repeating
@@ -2649,7 +2649,7 @@ def install(app):
             hashrate=[r[5] for r in valid]
             difficulty=[r[6] for r in valid]
             hashrate_sources=[r[7] if len(r)>7 else "unavailable" for r in valid]
-            network_values,network_source=select_btc_network_proxy(
+            network_values,network_source=_select_btc_network_proxy(
                 hashrate,difficulty,hashrate_sources)
         model_values=[math.log(max(v,1e-12)) for v in y] if log_scale else y
         weights_by_horizon={}
