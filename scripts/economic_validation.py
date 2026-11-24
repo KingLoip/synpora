@@ -601,13 +601,10 @@ def select_btc_network_proxy(rows):
     """Return a complete BTC network series and its explicit source provenance."""
     if not rows:
         return None, "unavailable"
-    hashrate = [row.get("network_hashrate") for row in rows]
-    difficulty = [row.get("btc_difficulty") for row in rows]
-    sources = [row.get("network_hashrate_source", "network_hashrate") for row in rows]
-    return select_btc_network_proxy(hashrate, difficulty, sources)
+    return select_btc_network_proxy(rows)
 
 
-def select_btc_network_proxy(hashrate, difficulty, sources):
+def _select_btc_network_proxy(hashrate, difficulty, sources):
     """Use only genuinely live hashrate for high-frequency BTC features.
 
     Daily backfilled Mempool buckets are useful historical context, but repeating
@@ -631,6 +628,16 @@ def select_btc_network_proxy(hashrate, difficulty, sources):
                          for value in hashrate)):
         return None, "non_live_hashrate_excluded"
     return None, "unavailable"
+
+
+def select_btc_network_proxy(rows):
+    """Extract aligned network inputs and apply the production provenance policy."""
+    if not rows:
+        return None, "unavailable"
+    hashrate = [row.get("network_hashrate") for row in rows]
+    difficulty = [row.get("btc_difficulty") for row in rows]
+    sources = [row.get("network_hashrate_source", "network_hashrate") for row in rows]
+    return _select_btc_network_proxy(hashrate, difficulty, sources)
 
 
 def forecast_release_blockers(pairs, skill, ci, nonnegative, persistence_fallback_pairs,
