@@ -506,8 +506,8 @@ class EconomicValidationTests(unittest.TestCase):
             {"network_hashrate": 900.0, "network_hashrate_source": "mempool_daily_hashrate_history"},
         ]
         values, source = MODULE.select_btc_network_proxy(rows)
-        self.assertEqual(values, [950.0, 900.0])
-        self.assertEqual(source, "mixed_live_and_daily_hashrate_history")
+        self.assertIsNone(values)
+        self.assertEqual(source, "non_live_hashrate_excluded")
 
     def test_btc_network_proxy_uses_difficulty_only_as_explicit_fallback(self):
         rows = [{"network_hashrate": None, "btc_difficulty": 100.0 + i}

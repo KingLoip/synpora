@@ -444,6 +444,32 @@ def _vastai_l40s_offers(api_key, get_json, post_json):
     return offers_from(raw)
 
 
+def _select_btc_network_proxy(hashrate, difficulty, sources):
+    """Use only genuinely live hashrate for high-frequency BTC features.
+
+    Daily backfilled Mempool buckets are useful historical context, but repeating
+    them across intraday snapshots creates false high-frequency observations.
+    Prefer a complete difficulty proxy when the hashrate series is backfilled or
+    mixed; otherwise disable the exogenous structural candidates.
+    """
+    import math
+
+    if (hashrate and len(sources) == len(hashrate)
+            and all(value is not None and math.isfinite(float(value)) and float(value) > 0
+                    for value in hashrate)
+            and set(sources) == {"network_hashrate"}):
+        return list(hashrate), "network_hashrate"
+
+    if (difficulty and all(value is not None and math.isfinite(float(value)) and float(value) > 0
+                           for value in difficulty)):
+        return list(difficulty), "btc_difficulty_proxy"
+
+    if (hashrate and all(value is not None and math.isfinite(float(value)) and float(value) > 0
+                         for value in hashrate)):
+        return None, "non_live_hashrate_excluded"
+    return None, "unavailable"
+
+
 def _install_models_route_guard(app):
     """Shadow the legacy packaged model route until its missing helpers are restored.
 
@@ -2623,20 +2649,8 @@ def install(app):
             hashrate=[r[5] for r in valid]
             difficulty=[r[6] for r in valid]
             hashrate_sources=[r[7] if len(r)>7 else "unavailable" for r in valid]
-            if hashrate and all(v is not None and float(v)>0 for v in hashrate):
-                network_values=hashrate
-                source_set=set(hashrate_sources)
-                if source_set=={"network_hashrate"}:
-                    network_source="network_hashrate"
-                elif source_set=={"mempool_daily_hashrate_history"}:
-                    network_source="mempool_daily_hashrate_history"
-                else:
-                    network_source="mixed_live_and_daily_hashrate_history"
-            elif difficulty and all(v is not None and float(v)>0 for v in difficulty):
-                # Difficulty is a slower protocol-adjusted proxy, not an observed
-                # high-frequency network-hashrate series. Keep its provenance explicit.
-                network_values=difficulty
-                network_source="btc_difficulty_proxy"
+            network_values,network_source=_select_btc_network_proxy(
+                hashrate,difficulty,hashrate_sources)
         model_values=[math.log(max(v,1e-12)) for v in y] if log_scale else y
         weights_by_horizon={}
         training_ready_by_horizon={}
