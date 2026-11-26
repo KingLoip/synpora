@@ -597,13 +597,6 @@ def _btc_price_network_candidate(hashprice_values, price_values, network_values,
                * (current_network / predicted_network))
 
 
-def select_btc_network_proxy(rows):
-    """Return a complete BTC network series and its explicit source provenance."""
-    if not rows:
-        return None, "unavailable"
-    return select_btc_network_proxy(rows)
-
-
 def _select_btc_network_proxy(hashrate, difficulty, sources):
     """Use only genuinely live hashrate for high-frequency BTC features.
 
